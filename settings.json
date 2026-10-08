@@ -1,26 +1,4 @@
 {
-  "permissions": {
-    "defaultMode": "bypassPermissions"
-  },
-  "model": "fable",
-  "statusLine": {
-    "type": "command",
-    "command": "python ~/.claude/statusline.py"
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/block-dangerous-git.sh",
-            "shell": "bash"
-          }
-        ]
-      }
-    ]
-  },
   "enabledPlugins": {
     "frontend-design@claude-plugins-official": true,
     "superpowers@claude-plugins-official": true,
@@ -47,6 +25,39 @@
     "adobe-for-creativity@claude-plugins-official": false,
     "mattpocock-skills@claude-plugins-official": true
   },
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "model": "fable",
+  "statusLine": {
+    "type": "command",
+    "command": "python ~/.claude/statusline.py"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/block-dangerous-git.sh",
+            "shell": "bash"
+          }
+        ]
+      }
+    ]
+  },
+  "deniedMcpServers": [
+    { "serverUrl": "https://mcp.slack.com/*" },
+    { "serverUrl": "https://mcp.linear.app/*" },
+    { "serverUrl": "https://mcp.atlassian.com/*" },
+    { "serverUrl": "https://mcp.notion.com/*" },
+    { "serverUrl": "https://mcp.figma.com/*" },
+    { "serverUrl": "https://mcp.intercom.com/*" },
+    { "serverUrl": "https://adobe-creativity.adobe.io/*" },
+    { "serverUrl": "https://mcp.canva.com/*" },
+    { "serverCommand": ["npx", "-y", "@wonderwhy-er/desktop-commander@latest"] }
+  ],
   "modelSettings": {
     "claude-opus-5-5": {
       "effortLevel": "high"
