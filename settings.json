@@ -1,0 +1,61 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "model": "fable",
+  "statusLine": {
+    "type": "command",
+    "command": "python ~/.claude/statusline.py"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/block-dangerous-git.sh",
+            "shell": "bash"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "code-review@claude-plugins-official": false,
+    "context7@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": false,
+    "code-simplifier@claude-plugins-official": false,
+    "playwright@claude-plugins-official": true,
+    "github@claude-plugins-official": false,
+    "claude-md-management@claude-plugins-official": false,
+    "feature-dev@claude-plugins-official": false,
+    "security-guidance@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "claude-code-setup@claude-plugins-official": false,
+    "supabase@claude-plugins-official": true,
+    "telegram@claude-plugins-official": false,
+    "vercel@claude-plugins-official": false,
+    "ralph-loop@claude-plugins-official": false,
+    "chrome-devtools-mcp@claude-plugins-official": false,
+    "remember@claude-plugins-official": true,
+    "claude-security@claude-plugins-official": false,
+    "cloudflare@claude-plugins-official": false,
+    "shopify-ai-toolkit@claude-plugins-official": false,
+    "adobe-for-creativity@claude-plugins-official": false,
+    "mattpocock-skills@claude-plugins-official": true
+  },
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "high"
+    },
+    "claude-fable-5-1": {
+      "effortLevel": "xhigh"
+    }
+  },
+  "autoUpdatesChannel": "latest",
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "auto"
+}
