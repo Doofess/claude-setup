@@ -85,6 +85,30 @@ if (-not $SkipPlugins) {
   }
 }
 
+# 4b. BigQuery MCP server (user scope lives in ~/.claude.json, which this repo doesn't copy).
+# Auth comes from the Google Cloud CLI sign-in through hooks/bigquery-headers.py, so no OAuth client or secret.
+Write-Step 'BigQuery MCP server'
+$gcloud = Get-Command gcloud -ErrorAction SilentlyContinue
+if (-not $gcloud) {
+  foreach ($base in @($env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+    $candidate = Join-Path $base 'Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd'
+    if ($base -and (Test-Path $candidate)) { $gcloud = $candidate; break }
+  }
+}
+if ($gcloud) {
+  $helper = (Join-Path $claudeDir 'hooks\bigquery-headers.py') -replace '\\', '/'
+  # headersHelper gets no ~ expansion, so the path must be absolute.
+  $json = '{"type":"http","url":"https://bigquery.googleapis.com/mcp","headersHelper":"python ' + $helper + '"}'
+  & claude mcp remove bigquery -s user 2>&1 | Out-Null
+  $out = & claude mcp add-json --scope user bigquery $json 2>&1
+  if ($LASTEXITCODE -ne 0) { $failures += "bigquery mcp add-json: $out" } else { Write-Host '    registered' }
+  if (-not (Test-Path (Join-Path $env:APPDATA 'gcloud\application_default_credentials.json'))) {
+    Write-Host '    not signed in yet: run  gcloud config set project bookandry; gcloud auth login --update-adc' -ForegroundColor Yellow
+  }
+} else {
+  Write-Host '    skipped: Google Cloud CLI not installed (winget install Google.CloudSDK), see README' -ForegroundColor Yellow
+}
+
 # 5. Verify
 Write-Step 'Self-testing git guardrail hook'
 $hook = (Join-Path $claudeDir 'hooks\block-dangerous-git.sh') -replace '\\', '/'

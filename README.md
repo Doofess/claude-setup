@@ -8,9 +8,26 @@ My Claude Code configuration, versioned so every machine runs the same setup.
 | `settings.json` | merged into `~/.claude/settings.json` (plugins, hooks, status line, model) |
 | `hooks/block-dangerous-git.sh` | `~/.claude/hooks/` (blocks `git push`, `reset --hard`, `clean -f`, `branch -D`, `checkout .`) |
 | `statusline.py` | `~/.claude/statusline.py` |
+| `hooks/bigquery-headers.py` | `~/.claude/hooks/` (turns the `gcloud` sign-in into the bearer token for the BigQuery MCP server) |
 
-Not versioned on purpose: `~/.claude.json` (login state), `.credentials.json`, `history.jsonl`, `~/.remember/`.
+Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers), `.credentials.json`, `history.jsonl`, `~/.remember/`.
 Synced plugins and claude.ai connectors follow the account, so they need no setup here.
+
+## BigQuery MCP server
+
+Google's remote MCP server (`https://bigquery.googleapis.com/mcp`) supports neither dynamic client
+registration nor a built-in client, so instead of creating an OAuth client and storing its secret, the
+Google Cloud CLI signs in once and `hooks/bigquery-headers.py` hands Claude Code a fresh token on each
+connection (cached 45 minutes, owner-only file). Project: `bookandry` (the app's own Google Cloud
+project, BigQuery sandbox, no billing needed).
+
+1. `winget install Google.CloudSDK`, then open a new terminal.
+2. `gcloud config set project bookandry` and `gcloud auth login --update-adc` (one browser approval).
+3. `.\install.ps1 -SkipPlugins` registers the server (`claude mcp get bigquery` should say Connected).
+
+The signed-in account needs `roles/mcp.toolUser`, `roles/bigquery.jobUser` and `roles/bigquery.dataViewer`
+on the project; they were granted on 2026-10-09. Tools: `list_dataset_ids`, `get_table_info`,
+`execute_sql_readonly`, `execute_sql`, and job helpers.
 
 ## New machine (Windows)
 
