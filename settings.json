@@ -56,7 +56,15 @@
     { "serverUrl": "https://mcp.intercom.com/*" },
     { "serverUrl": "https://adobe-creativity.adobe.io/*" },
     { "serverUrl": "https://mcp.canva.com/*" },
-    { "serverCommand": ["npx", "-y", "@wonderwhy-er/desktop-commander@latest"] }
+    { "serverCommand": ["npx", "-y", "@wonderwhy-er/desktop-commander@latest"] },
+    { "serverName": "plugin:finance:snowflake" },
+    { "serverName": "plugin:finance:databricks" },
+    { "serverName": "plugin:finance:gmail" },
+    { "serverName": "plugin:finance:google calendar" },
+    { "serverName": "plugin:engineering:gmail" },
+    { "serverName": "plugin:engineering:google calendar" },
+    { "serverName": "plugin:design:gmail" },
+    { "serverName": "plugin:design:google calendar" }
   ],
   "modelSettings": {
     "claude-opus-5-5": {
