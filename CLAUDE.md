@@ -15,8 +15,12 @@ Two skill plugins are installed. Use each where it is stronger; call the named s
 - Before saying anything is done, fixed, or passing: `verification-before-completion`.
 - Skip `brainstorming` and `systematic-debugging`; the Matt equivalents above own those.
 
+## Photo editing (paid work)
+- Underwater or macro photo edits, ARW/RAW, Camera Raw, backscatter, "pop", PSD deliverables: `underwater-photoshop` skill. Local Photoshop via COM, never the Adobe cloud tools for the edit itself. Nothing is uploaded to Adobe cloud.
+
 ## Defaults
 - Issue tracker: GitHub Issues via `gh`. Docs, specs, ADRs: `docs/` in the repo.
 - Run `/setup-matt-pocock-skills` once per repo before the engineering skills.
 - Destructive git (`push`, `reset --hard`, `clean -f`, `branch -D`, `checkout .`) is blocked by a hook. Tell the user the exact command to run.
+- MCP servers for one project go in that repo's `.mcp.json` (start from `mcp-presets/` in the setup repo), never in user settings.
 - Setup lives in `C:/dev/claude-setup` (repo `Doofess/claude-setup`); change config there and run `install.ps1`, so the desktop stays identical.

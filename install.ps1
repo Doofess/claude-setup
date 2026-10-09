@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusline.py} to ~/.claude/backups/claude-setup-<stamp>/
-  2. Copies CLAUDE.md, statusline.py and hooks/ into ~/.claude
+  2. Copies CLAUDE.md, statusline.py, hooks/ and skills/ into ~/.claude
   3. Merges settings.json keys into the existing file (machine-local keys survive)
   4. Installs + enables every plugin marked true in enabledPlugins, then updates them
   5. Self-tests the git guardrail hook and lists MCP health
@@ -47,11 +47,17 @@ foreach ($f in 'CLAUDE.md', 'settings.json', 'statusline.py') {
 }
 
 # 2. Copy files
-Write-Step 'Copying CLAUDE.md, statusline.py, hooks/'
+Write-Step 'Copying CLAUDE.md, statusline.py, hooks/, skills/'
 New-Item -ItemType Directory -Force (Join-Path $claudeDir 'hooks') | Out-Null
 Copy-Item (Join-Path $repo 'CLAUDE.md') $claudeDir -Force
 Copy-Item (Join-Path $repo 'statusline.py') $claudeDir -Force
 Copy-Item (Join-Path $repo 'hooks\*') (Join-Path $claudeDir 'hooks') -Force
+# Skills: each folder under skills/ becomes ~/.claude/skills/<name>. Copy keeps a skill's local .venv.
+foreach ($skill in Get-ChildItem (Join-Path $repo 'skills') -Directory -ErrorAction SilentlyContinue) {
+  $dest = Join-Path $claudeDir "skills\$($skill.Name)"
+  New-Item -ItemType Directory -Force $dest | Out-Null
+  Copy-Item (Join-Path $skill.FullName '*') $dest -Recurse -Force
+}
 
 # 3. Merge settings.json
 Write-Step 'Merging settings.json'

@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy to a web project's root as .mcp.json. Delete the servers the project does not use. Each HTTP server signs in with OAuth on first use (/mcp).",
+  "mcpServers": {
+    "supabase": { "type": "http", "url": "https://mcp.supabase.com/mcp" },
+    "neon": { "type": "http", "url": "https://mcp.neon.tech/mcp" },
+    "prisma": { "type": "http", "url": "https://mcp.prisma.io/mcp" },
+    "postgres": {
+      "_comment": "Generic Postgres/MySQL/SQLite introspection. Point DSN at a read-only role.",
+      "command": "npx", "args": ["-y", "@bytebase/dbhub", "--dsn", "${DATABASE_URL}"]
+    },
+    "vercel": { "type": "http", "url": "https://mcp.vercel.com" },
+    "sentry": { "type": "http", "url": "https://mcp.sentry.dev/mcp" },
+    "posthog": { "type": "http", "url": "https://mcp.posthog.com/mcp", "headers": { "x-posthog-mcp-consumer": "plugin" } }
+  }
+}

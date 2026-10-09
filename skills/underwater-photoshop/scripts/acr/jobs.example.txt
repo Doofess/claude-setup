@@ -1,0 +1,3 @@
+# srcRaw|outJpg|maxEdge(0 = full size)|quality   -- one job per line; preview pass first, then a full-size q12
+C:\Photos\Trip\DSC05771.ARW|C:\Photos\Trip\.claude-work\preview\DSC05771_v1.jpg|1300|10
+C:\Photos\Trip\DSC05771.ARW|C:\Photos\Trip\edited\DSC05771_edit.jpg|0|12

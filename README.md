@@ -9,6 +9,8 @@ My Claude Code configuration, versioned so every machine runs the same setup.
 | `hooks/block-dangerous-git.sh` | `~/.claude/hooks/` (blocks `git push`, `reset --hard`, `clean -f`, `branch -D`, `checkout .`) |
 | `statusline.py` | `~/.claude/statusline.py` |
 | `hooks/bigquery-headers.py` | `~/.claude/hooks/` (turns the `gcloud` sign-in into the bearer token for the BigQuery MCP server) |
+| `skills/<name>/` | `~/.claude/skills/<name>/` (personal skills; `underwater-photoshop` drives local Photoshop) |
+| `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see its README) |
 
 Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers), `.credentials.json`, `history.jsonl`, `~/.remember/`.
 Synced plugins and claude.ai connectors follow the account, so they need no setup here.
@@ -28,6 +30,12 @@ project, BigQuery sandbox, no billing needed).
 The signed-in account needs `roles/mcp.toolUser`, `roles/bigquery.jobUser` and `roles/bigquery.dataViewer`
 on the project; they were granted on 2026-10-09. Tools: `list_dataset_ids`, `get_table_info`,
 `execute_sql_readonly`, `execute_sql`, and job helpers.
+## Plugin and MCP policy
+
+- Always-on (user scope): the skills plugins, three LSPs, context7, playwright, chrome-devtools-mcp, remember. About five live MCP servers.
+- Everything tied to one project (databases, deploy target, observability, Kubernetes) is project scope: `mcp-presets/`.
+- The GitHub MCP server stays off; `gh` covers it with far less context.
+- `deniedMcpServers` blocks the claude.ai connectors nobody uses. Adobe is **not** blocked: the "Adobe for creativity" claude.ai connector is the only route to Adobe tools from the CLI (the plugin copies 403). Photo edits themselves run in local Photoshop via the `underwater-photoshop` skill.
 
 ## New machine (Windows)
 
@@ -40,6 +48,7 @@ on the project; they were granted on 2026-10-09. Tools: `list_dataset_ids`, `get
    .\install.ps1
    ```
 4. Restart Claude Code. In any repo, run `/setup-matt-pocock-skills` once.
+5. Photo work: `python -m venv ~/.claude/skills/underwater-photoshop/.venv` and `pip install -r skills/underwater-photoshop/requirements.txt` into it. Needs Photoshop 2026 installed (COM `Photoshop.Application`).
 
 ## Changing config
 
