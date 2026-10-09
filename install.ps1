@@ -109,7 +109,8 @@ if (-not $gcloud) {
 if ($gcloud) {
   $helper = (Join-Path $claudeDir 'hooks\bigquery-headers.py') -replace '\\', '/'
   # headersHelper gets no ~ expansion, so the path must be absolute.
-  $json = '{"type":"http","url":"https://bigquery.googleapis.com/mcp","headersHelper":"python ' + $helper + '"}'
+  # Quoted, because a user folder with a space ("Home Office") otherwise splits the path at the space.
+  $json = '{"type":"http","url":"https://bigquery.googleapis.com/mcp","headersHelper":"python \"' + $helper + '\""}'
   & claude mcp remove bigquery -s user 2>&1 | Out-Null
   $out = & claude mcp add-json --scope user bigquery $json 2>&1
   if ($LASTEXITCODE -ne 0) { $failures += "bigquery mcp add-json: $out" } else { Write-Host '    registered' }
