@@ -7,7 +7,8 @@
   1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusline.py} to ~/.claude/backups/claude-setup-<stamp>/
   2. Copies CLAUDE.md, statusline.py, hooks/ and skills/ into ~/.claude
   3. Merges settings.json keys into the existing file (machine-local keys survive)
-  4. Installs + enables every plugin marked true in enabledPlugins, updates them, then disables every plugin marked false
+  4. Adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in enabledPlugins,
+     updates them, then disables every plugin marked false
   5. Self-tests the git guardrail hook and lists MCP health
 
 .PARAMETER SkipPlugins
@@ -84,6 +85,11 @@ Write-Utf8NoBom $settingsPath (($current | ConvertTo-Json -Depth 20) + "`n")
 $savedEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 if (-not $SkipPlugins) {
+  # Plugins from outside the official marketplace (good-css) need their marketplace known first.
+  foreach ($mp in $template.extraKnownMarketplaces.PSObject.Properties) {
+    $out = & claude plugin marketplace add $mp.Value.source.repo 2>&1
+    if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') { $failures += "marketplace $($mp.Name): $out" }
+  }
   Write-Step 'Installing and enabling plugins'
   foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
     if ($plugin.Value -ne $true) { continue }

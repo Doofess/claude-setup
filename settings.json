@@ -27,6 +27,7 @@
     "modern-web-guidance@claude-plugins-official": true,
     "hookify@claude-plugins-official": true,
     "mcp-server-dev@claude-plugins-official": true,
+    "good-css@good-css": true,
     "frontend-design@anthropic-plugin-directory": false,
     "superpowers@anthropic-plugin-directory": false,
     "code-review-anthropics@anthropic-plugin-directory": false,
@@ -39,6 +40,9 @@
     "security-guidance@anthropic-plugin-directory": false,
     "feature-dev@anthropic-plugin-directory": false,
     "imessage@anthropic-plugin-directory": false
+  },
+  "extraKnownMarketplaces": {
+    "good-css": { "source": { "source": "github", "repo": "vojtaholik/good-css" } }
   },
   "permissions": {
     "defaultMode": "bypassPermissions"

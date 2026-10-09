@@ -33,7 +33,7 @@ on the project; they were granted on 2026-10-09. Tools: `list_dataset_ids`, `get
 
 ## Plugin and MCP policy
 
-- Always-on (user scope): the skills plugins, three LSPs, context7, playwright, chrome-devtools-mcp, remember. About five live MCP servers.
+- Always-on (user scope): the skills plugins, three LSPs, context7, playwright, chrome-devtools-mcp, remember, and `good-css` from its own marketplace (`vojtaholik/good-css`, declared in `extraKnownMarketplaces`). About five live MCP servers.
 - Everything tied to one project (databases, deploy target, observability, Kubernetes) is project scope: `mcp-presets/`.
 - The GitHub MCP server stays off; `gh` covers it with far less context.
 - `deniedMcpServers` blocks the claude.ai connectors nobody uses (Slack, Linear, Atlassian, Notion, Figma, Intercom, desktop-commander). Adobe and Canva are **not** blocked; both are in use. Adobe: the "Adobe for creativity" claude.ai connector is the only route to Adobe tools from the CLI (the plugin copies 403). Photo edits themselves run in local Photoshop via the `underwater-photoshop` skill.
