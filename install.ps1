@@ -7,7 +7,7 @@
   1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusline.py} to ~/.claude/backups/claude-setup-<stamp>/
   2. Copies CLAUDE.md, statusline.py, hooks/ and skills/ into ~/.claude
   3. Merges settings.json keys into the existing file (machine-local keys survive)
-  4. Installs + enables every plugin marked true in enabledPlugins, then updates them
+  4. Installs + enables every plugin marked true in enabledPlugins, updates them, then disables every plugin marked false
   5. Self-tests the git guardrail hook and lists MCP health
 
 .PARAMETER SkipPlugins
@@ -88,6 +88,11 @@ if (-not $SkipPlugins) {
     & claude plugin enable $name 2>&1 | Out-Null
     & claude plugin update $name 2>&1 | Out-Null
     Write-Host "    $name"
+  }
+  # Enabling a plugin by name also flips on a same-named copy from another marketplace, so pin the false ones off afterwards.
+  foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
+    if ($plugin.Value -ne $false) { continue }
+    & claude plugin disable $plugin.Name 2>&1 | Out-Null
   }
 }
 
