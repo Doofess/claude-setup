@@ -45,12 +45,18 @@
     "good-css": { "source": { "source": "github", "repo": "vojtaholik/good-css" } }
   },
   "permissions": {
-    "defaultMode": "bypassPermissions"
+    "defaultMode": "bypassPermissions",
+    "deny": ["Skill(mattpocock-skills:grilling)", "Skill(grilling)"]
   },
   "model": "fable",
+  "env": {
+    "CLAUDE_CODE_PLUGIN_DIRS": "C:/dev/claude-setup/mods/readable-session",
+    "CLAUDE_CODE_NATIVE_CURSOR": "1"
+  },
   "statusLine": {
     "type": "command",
-    "command": "python ~/.claude/statusline.py"
+    "command": "python ~/.claude/statusline.py --icons nerd",
+    "refreshInterval": 1
   },
   "hooks": {
     "PreToolUse": [

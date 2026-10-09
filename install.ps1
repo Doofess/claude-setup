@@ -4,9 +4,10 @@
   Applies this repo's Claude Code config to the current machine. Safe to re-run.
 
 .DESCRIPTION
-  1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusline.py} to ~/.claude/backups/claude-setup-<stamp>/
+  1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusline.py,keybindings.json} to ~/.claude/backups/claude-setup-<stamp>/
   2. Copies CLAUDE.md, statusline.py, hooks/ and skills/ into ~/.claude
-  3. Merges settings.json keys into the existing file (machine-local keys survive)
+  3. Merges settings.json keys into the existing file (machine-local keys survive), and keybindings.json
+     bindings into ~/.claude/keybindings.json per context (other contexts and keys survive)
   4. Adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in enabledPlugins,
      updates them, then disables every plugin marked false
   5. Self-tests the git guardrail hook and lists MCP health
@@ -42,7 +43,7 @@ if (-not (Test-Path $gitBash)) { throw "Git Bash not found at $gitBash. Install 
 # 1. Backup
 Write-Step "Backing up current config to $backup"
 New-Item -ItemType Directory -Force $backup | Out-Null
-foreach ($f in 'CLAUDE.md', 'settings.json', 'statusline.py') {
+foreach ($f in 'CLAUDE.md', 'settings.json', 'statusline.py', 'keybindings.json') {
   $p = Join-Path $claudeDir $f
   if (Test-Path $p) { Copy-Item $p $backup }
 }
@@ -77,6 +78,28 @@ foreach ($prop in $template.PSObject.Properties) {
   }
 }
 Write-Utf8NoBom $settingsPath (($current | ConvertTo-Json -Depth 20) + "`n")
+
+# 3b. Merge keybindings.json: each repo context block's keys win; the machine's other blocks and keys stay.
+# Alt+S is the status line toggle (the readable-session mod's hidden Button on app:toggleDiffPreSession);
+# Windows Terminal maps Ctrl+Alt+S to it (sendInput ESC s), since Claude Code can't bind a raw Ctrl+Alt chord.
+Write-Step 'Merging keybindings.json'
+$kbPath = Join-Path $claudeDir 'keybindings.json'
+$kbTemplate = Get-Content (Join-Path $repo 'keybindings.json') -Raw | ConvertFrom-Json
+$kbCurrent = if (Test-Path $kbPath) { Get-Content $kbPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
+$blocks = [System.Collections.ArrayList]::new()
+foreach ($b in @($kbCurrent.bindings)) { if ($b) { [void]$blocks.Add($b) } }
+foreach ($tb in $kbTemplate.bindings) {
+  $cb = $blocks | Where-Object { $_.context -eq $tb.context } | Select-Object -First 1
+  if (-not $cb) { [void]$blocks.Add($tb); continue }
+  foreach ($kb in $tb.bindings.PSObject.Properties) {
+    $cb.bindings | Add-Member -NotePropertyName $kb.Name -NotePropertyValue $kb.Value -Force
+  }
+}
+$kbMerged = [ordered]@{ '$schema' = $kbTemplate.'$schema'; '$docs' = $kbTemplate.'$docs'; bindings = $blocks.ToArray() }
+foreach ($prop in $kbCurrent.PSObject.Properties) {
+  if (-not $kbMerged.Contains($prop.Name)) { $kbMerged[$prop.Name] = $prop.Value }
+}
+Write-Utf8NoBom $kbPath (([pscustomobject]$kbMerged | ConvertTo-Json -Depth 10) + "`n")
 
 # 4. Plugins
 # Windows PowerShell 5.1 turns a native command's stderr into a terminating error under
