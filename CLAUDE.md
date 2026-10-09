@@ -8,6 +8,9 @@ Two skill plugins are installed. Use each where it is stronger; call the named s
 - Bugs, failures, slowness: `diagnosing-bugs` (feedback loop first, then hypotheses).
 - Reviewing a diff: `code-review` (Standards and Spec axes, reported separately).
 - Writing or editing CLAUDE.md, skills, agent docs: `writing-for-agents`.
+- Ticket-driven work: `to-spec` → `to-tickets` → `implement` (or `implement-spec` for a whole spec on one branch). Work bigger than one session: `wayfinder`.
+- End of a long session: `retro` (environment improvements). Before context runs out: `handoff`, not compaction. Unclear message from me: user runs `/wait-what`.
+- Every few days on a live codebase: `improve-codebase-architecture`. PR bodies: `pr`. Lost? `ask-matt` routes.
 
 ## superpowers: execution
 - Turning an agreed design into steps: `writing-plans`, then `executing-plans` or `subagent-driven-development`.

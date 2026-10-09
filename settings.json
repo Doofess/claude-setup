@@ -69,7 +69,6 @@
     { "serverUrl": "https://mcp.notion.com/*" },
     { "serverUrl": "https://mcp.figma.com/*" },
     { "serverUrl": "https://mcp.intercom.com/*" },
-    { "serverUrl": "https://mcp.canva.com/*" },
     { "serverCommand": ["npx", "-y", "@wonderwhy-er/desktop-commander@latest"] },
     { "serverName": "plugin:finance:snowflake" },
     { "serverName": "plugin:finance:databricks" },
