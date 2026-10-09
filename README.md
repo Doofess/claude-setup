@@ -59,4 +59,10 @@ lives; other directories already in that variable (`;`-separated) are kept and o
 
 Edit the files here, run `.\install.ps1` (add `-SkipPlugins` when only config changed), commit, push. On the other machine: `git pull` then `.\install.ps1`.
 
+From Claude Code's `!` prompt (which is Git Bash, so backslashes don't work):
+
+```bash
+git -C C:/dev/claude-setup pull && powershell -ExecutionPolicy Bypass -File C:/dev/claude-setup/install.ps1
+```
+
 The installer backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` every run.
