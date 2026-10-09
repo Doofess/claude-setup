@@ -78,6 +78,11 @@ foreach ($prop in $template.PSObject.Properties) {
 Write-Utf8NoBom $settingsPath (($current | ConvertTo-Json -Depth 20) + "`n")
 
 # 4. Plugins
+# Windows PowerShell 5.1 turns a native command's stderr into a terminating error under
+# $ErrorActionPreference = 'Stop' ("plugin is already enabled" would abort the script), so the
+# plugin calls run with 'Continue' and their stderr is captured, not thrown.
+$savedEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 if (-not $SkipPlugins) {
   Write-Step 'Installing and enabling plugins'
   foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
@@ -95,6 +100,7 @@ if (-not $SkipPlugins) {
     & claude plugin disable $plugin.Name 2>&1 | Out-Null
   }
 }
+$ErrorActionPreference = $savedEap
 
 # 4b. BigQuery MCP server (user scope lives in ~/.claude.json, which this repo doesn't copy).
 # Auth comes from the Google Cloud CLI sign-in through hooks/bigquery-headers.py, so no OAuth client or secret.
@@ -108,12 +114,22 @@ if (-not $gcloud) {
 }
 if ($gcloud) {
   $helper = (Join-Path $claudeDir 'hooks\bigquery-headers.py') -replace '\\', '/'
-  # headersHelper gets no ~ expansion, so the path must be absolute.
-  # Quoted, because a user folder with a space ("Home Office") otherwise splits the path at the space.
-  $json = '{"type":"http","url":"https://bigquery.googleapis.com/mcp","headersHelper":"python \"' + $helper + '\""}'
-  & claude mcp remove bigquery -s user 2>&1 | Out-Null
-  $out = & claude mcp add-json --scope user bigquery $json 2>&1
-  if ($LASTEXITCODE -ne 0) { $failures += "bigquery mcp add-json: $out" } else { Write-Host '    registered' }
+  # headersHelper gets no ~ expansion, so the path must be absolute, and quoted: a user folder with a
+  # space ("Home Office") otherwise splits it. Python does the registration because Windows PowerShell 5.1
+  # strips the quotes out of a JSON argument before a native command sees it (PowerShell 7 does not).
+  $register = @'
+import json, subprocess, sys
+helper, claude = sys.argv[1], sys.argv[2]
+cfg = {"type": "http", "url": "https://bigquery.googleapis.com/mcp", "headersHelper": 'python "%s"' % helper}
+subprocess.run([claude, "mcp", "remove", "bigquery", "-s", "user"], capture_output=True, text=True)
+r = subprocess.run([claude, "mcp", "add-json", "--scope", "user", "bigquery", json.dumps(cfg)], capture_output=True, text=True)
+sys.stdout.write((r.stdout + r.stderr).strip())
+sys.exit(r.returncode)
+'@
+  $ErrorActionPreference = 'Continue'
+  $out = $register | & python - $helper (Get-Command claude).Source 2>&1
+  $ErrorActionPreference = $savedEap
+  if ($LASTEXITCODE -ne 0) { $failures += "bigquery registration: $out" } else { Write-Host '    registered' }
   if (-not (Test-Path (Join-Path $env:APPDATA 'gcloud\application_default_credentials.json'))) {
     Write-Host '    not signed in yet: run  gcloud config set project bookandry; gcloud auth login --update-adc' -ForegroundColor Yellow
   }
@@ -123,6 +139,7 @@ if ($gcloud) {
 
 # 5. Verify
 Write-Step 'Self-testing git guardrail hook'
+$ErrorActionPreference = 'Continue'   # the hook writes BLOCKED to stderr on purpose
 $hook = (Join-Path $claudeDir 'hooks\block-dangerous-git.sh') -replace '\\', '/'
 # Built by concatenation so the live hook doesn't block this script when Claude runs it.
 $dangerous = 'git pu' + 'sh origin main'
