@@ -30,6 +30,7 @@ project, BigQuery sandbox, no billing needed).
 The signed-in account needs `roles/mcp.toolUser`, `roles/bigquery.jobUser` and `roles/bigquery.dataViewer`
 on the project; they were granted on 2026-10-09. Tools: `list_dataset_ids`, `get_table_info`,
 `execute_sql_readonly`, `execute_sql`, and job helpers.
+
 ## Plugin and MCP policy
 
 - Always-on (user scope): the skills plugins, three LSPs, context7, playwright, chrome-devtools-mcp, remember. About five live MCP servers.
