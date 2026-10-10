@@ -3,7 +3,7 @@
 Two skill plugins are installed. Use each where it is stronger; call the named skill, don't improvise a blend.
 
 ## mattpocock-skills: thinking
-- Planning or any non-trivial change: `grilling` (user runs `/grill-me` or `/grill-with-docs`). Replaces Superpowers' brainstorming.
+- Planning or any non-trivial change: no skill. Ask the open design questions through the `AskUserQuestion` tool, up to four per call with the recommended option first, never as numbered questions in chat. Don't call `grilling` or Superpowers' brainstorming.
 - Module/interface design: `codebase-design`. Project vocabulary: `domain-modeling` (`GLOSSARY.md`, ADRs).
 - Bugs, failures, slowness: `diagnosing-bugs` (feedback loop first, then hypotheses).
 - Reviewing a diff: `code-review` (Standards and Spec axes, reported separately).

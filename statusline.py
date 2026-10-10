@@ -1268,8 +1268,9 @@ def git_status(cwd):
     return [branch, stg, mod, unt]
 
 
-MIN_NAME = 14      # a shortened project or branch name keeps at least this many characters
+MIN_NAME = 14      # a shortened project name keeps at least this many characters
 SHORT_BRANCH = 11  # a tight line shows 'live-usage…': this many characters, then the ellipsis
+BRANCH_MIN = 8     # the shortest cut branch, ellipsis included: 'live-us…'
 
 
 def _where_text(proj, branch, flags):
@@ -1283,22 +1284,32 @@ def _where_text(proj, branch, flags):
 
 
 def shrink_where(proj, branch, flags, width):
-    """(project, branch) with the longer one losing characters from its middle
-    ('claude-co…statusline') until 'project › branch flags' fits `width`. Neither
-    goes below MIN_NAME characters. width None: unchanged."""
-    p_len, b_len = len(proj), len(branch)
-    p, b = proj, branch
-    while width and visible_width(_where_text(p, b, flags)) > width:
-        if b_len >= p_len and b_len > MIN_NAME:
-            b_len -= 1
-        elif p_len > MIN_NAME:
-            p_len -= 1
-        elif b_len > MIN_NAME:
-            b_len -= 1
-        else:
-            break  # as short as it gets
-        p, b = mid_trunc(proj, p_len), mid_trunc(branch, b_len)
-    return p, b
+    """(project, branch) made to fit `width` as 'project › branch flags'.
+
+    The project name is what tells windows apart, so it stays whole as long as it
+    can: the branch gives way first, cut from its end ('live-us…', never below
+    BRANCH_MIN), then dropped with its counts; only then the project loses
+    characters from its middle ('claude-co…statusline'), never below MIN_NAME.
+    width None: unchanged."""
+    if not width:
+        return proj, branch
+
+    def fits(p, b):
+        return visible_width(_where_text(p, b, flags if b else [])) <= width
+
+    b = branch
+    n = len(branch)
+    while n > BRANCH_MIN and not fits(proj, b):
+        n -= 1
+        b = branch[:n - 1] + "…"
+    if fits(proj, b):
+        return proj, b
+    p = proj
+    m = len(proj)
+    while m > MIN_NAME and not fits(p, ""):
+        m -= 1
+        p = mid_trunc(proj, m)
+    return p, ""
 
 
 def where_item(proj, git, width=None):
@@ -1632,9 +1643,12 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
         if s["marker"] and marker and marker[2]:
             # The bare marker says why when there is room: '▲discord'.
             color, glyph, word = marker
+            # Nerd glyphs draw past their cell: a space keeps '󰀦 discord' from overlapping.
+            gap = " " if ICON.get("segment") else ""
             free = MARKER_REASON_ROOM + len(word) if width is None else width - visible_width(SEP.join(line))
             if free >= MARKER_REASON_ROOM:
-                line[line.index(f"{color}{glyph}{RST}")] = f"{color}{glyph}{mid_trunc(word, free)}{RST}"
+                line[line.index(f"{color}{glyph}{RST}")] = (
+                    f"{color}{glyph}{gap}{mid_trunc(word, free - len(gap))}{RST}")
         return line
 
     # The drop order, as patches applied one after the other to the state.
