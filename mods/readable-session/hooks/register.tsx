@@ -1,8 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { Register } from 'claude-code'
 
 import type { Activity } from '../types'
-import { registerSessionLabel } from './session-label'
 
 const running = atom({ plugin: 'readable-session', key: 'running' } as const, [])
 
@@ -158,90 +157,17 @@ export function brief(input: unknown): Record<string, string> {
   return out
 }
 
-export type StatusMode = 'compact' | 'full'
-
-/** The status line mode a toggle switches to; anything but `full` reads as compact, the default. */
-export function nextMode(current: string | undefined): StatusMode {
-  return current?.trim().toLowerCase() === 'full' ? 'compact' : 'full'
-}
-
-/** `<Claude config dir>/statusline-mode`: CLAUDE_CONFIG_DIR, else the user's home + `.claude`. */
-async function modeFile($: { env: { get: (name: string) => Promise<string | undefined> } }): Promise<string> {
-  const config = await $.env.get('CLAUDE_CONFIG_DIR')
-  if (config) return `${config.replace(/[\\/]+$/, '')}/statusline-mode`
-  const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
-  // Neither variable set: this machine's own home.
-  return `${(home || 'C:/Users/Home Office').replace(/[\\/]+$/, '')}/.claude/statusline-mode`
-}
-
-/**
- * The engine keybinding action Alt+S is bound to in ~/.claude/keybindings.json.
- * Windows Terminal turns Ctrl+Alt+S into Alt+S (ESC s): a raw Ctrl+Alt chord
- * reaches Claude Code as ESC + a control byte, which no keybinding matches.
- * The action's engine handler lives in the diff panel alone, so everywhere
- * else the always-mounted Button below takes the chord: pressed from the
- * prompt at once, even mid-turn, where a typed `/statusline-toggle` waits.
- */
-export const TOGGLE_ACTION = 'app:toggleDiffPreSession'
-
-/** Flips <config dir>/statusline-mode and toasts the new mode. */
-async function toggleStatusline($: EngineInterface): Promise<StatusMode> {
-  const path = await modeFile($)
-  const current = await $.fs.read(path).then(t => (typeof t === 'string' ? t : ''), () => '')
-  const mode = nextMode(current)
-  await $.fs.write(path, mode)
-  $.ui.toast(`Status line: ${mode}`, { timeoutMs: 2000 })
-  return mode
-}
-
 /** Calls that an expanded ToolGroup draws inline, output included. Module
  * memory: a hot reload empties it and the next group drawing refills it. */
 const inGroup = new Set<string>()
 
 export const register: Register = on => {
-  // The prompt bar: the session's name always shown, orange by default.
-  registerSessionLabel(on)
-
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'readable-session',
       description: 'Show what readable-session tracks (running tools)',
     })
-    await $.command.register({
-      name: 'statusline-toggle',
-      description: 'Switch the status line between full and compact (Ctrl+Alt+S or Alt+S)',
-    })
     return next(e)
-  })
-
-  // Flips <config dir>/statusline-mode. Quiet: a toast says the new mode, and
-  // no `text` means no output row and nothing for the model to read.
-  on('command.run', { command: 'statusline-toggle' }, async $ => {
-    await toggleStatusline($)
-    return {}
-  })
-
-  // Alt+S (Ctrl+Alt+S) at any time: the footer's mode labels (`focus`, ...), drawn
-  // as the engine draws them, plus an undrawn Button holding the chord's
-  // action. Mounted while the prompt is, so the chord works mid-turn too.
-  on('ui.render', { component: 'SessionMode' }, ($, e, next) => {
-    if (e.surface !== 'terminal') return next(e)
-    const { Box, Text, Button } = $.ui.resolve(e)
-    return (
-      <Box>
-        {e.props.modes.length > 0 ? <Text dimColor>{e.props.modes.join(' & ')}</Text> : null}
-        <Box display="none">
-          <Button
-            key="statusline-toggle"
-            label="Toggle status line"
-            action={TOGGLE_ACTION}
-            onPress={() => {
-              void toggleStatusline($).catch(noop)
-            }}
-          />
-        </Box>
-      </Box>
-    )
   })
 
   on('command.run', { command: 'readable-session' }, async $ => {

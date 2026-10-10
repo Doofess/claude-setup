@@ -4,15 +4,15 @@
 
 """Unified status line for Claude Code.
 
-Sections (left to right):
-    model · effort │ ctx ↔ N% bar used/size │ 5h ↔ N% bar reset │ 7d ↔ N% bar reset │ $cost │ session time │ project › git │ venv │ :ports
+One line, always (Claude Code draws its own mode line below it), left to right:
+    project › branch ~N “session-name” │ model · effort │ ctx N% bar used/size │
+    5h N% bar reset │ 7d N% bar reset │ $cost │ session time │ health marks │
+    skills │ venv │ :ports
 
-Every section after model + ctx is auto-detected and shown only when relevant.
+It is designed for a 120-column window and fits itself to COLUMNS: wider windows show
+more, narrower ones drop items by priority (see format_statusline). It never wraps.
+Items with nothing to show (no session name, no ports, no venv) are left out.
 Standalone: no external dependencies.
-
-Compact mode: when ~/.claude/statusline-mode contains "compact" (a companion mod
-toggles it on TOGGLE_KEY), exactly one line shows model, ctx/5h/7d as % + bar, cost,
-then the health items that need attention and the toggle hint while they fit.
 
 Usage numbers: Claude Code only pipes in the rate limits from *this* session's
 last reply, so they lag whenever other sessions (or claude.ai) use the shared
@@ -72,8 +72,7 @@ RED = fg(203)
 # Meter colors by percentage: (below this %, color), then RED.
 STAGES = ((50, fg(114)), (70, fg(221)), (85, fg(208)))
 
-SEP = f"  {DIM}│{RST}  "
-COMPACT_SEP = f" {DIM}│{RST} "  # compact mode: room for three bars on one 120-column line
+SEP = f" {DIM}│{RST} "  # one space each side: room for three bars on one 120-column line
 # Columns kept free at the window's right edge (Claude Code pads the status line).
 EDGE = 4
 ANSI_RE = re.compile(r"\033\[[0-9;]*m")
@@ -81,27 +80,6 @@ ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 def visible_width(s):
     return len(ANSI_RE.sub("", s))
-
-
-def flow(items, width, sep=SEP):
-    """Join items with `sep` into lines no wider than `width`; an item never splits.
-
-    After packing greedily, a last line holding a single item borrows the
-    previous line's last item when that still fits, so it does not sit alone.
-    """
-    lines, cur = [], []
-    for item in items:
-        if cur and visible_width(sep.join(cur + [item])) > width:
-            lines.append(cur)
-            cur = []
-        cur.append(item)
-    if cur:
-        lines.append(cur)
-    if len(lines) >= 2 and len(lines[-1]) == 1 and len(lines[-2]) >= 3:
-        moved = [lines[-2][-1]] + lines[-1]
-        if visible_width(sep.join(moved)) <= width:
-            lines[-2], lines[-1] = lines[-2][:-1], moved
-    return [sep.join(line) for line in lines]
 
 
 def mid_trunc(s, n):
@@ -117,10 +95,11 @@ BAR = "\u2588"          # full block: fills the whole cell height
 BAR_TRACK = fg(238)      # the empty part of a bar
 EFFORT = {"low": DIM, "medium": GREEN, "high": AMBER, "xhigh": fg(209), "max": fg(203)}
 
-# Second line: Claude Code version, plugin reload and MCP server status.
+# Health marks: MCP servers, Claude Code version and plugin reload state.
 SHOW_HEALTH = True
 # Extra line listing running subagents (model, effort, context tokens). Off by default:
-# the agent list under the prompt is the better place, see the companion mod.
+# the agent list under the prompt is the better place, see the companion mod. It is the
+# one way to get a second line.
 SHOW_AGENTS = False
 
 # Edit this list to match the dev ports you care about.
@@ -134,11 +113,6 @@ USAGE_CACHE = CLAUDE_DIR / "statusline-usage.json"
 USAGE_LOCK = CLAUDE_DIR / "statusline-usage.lock"
 WINDOWS = ("five_hour", "seven_day")
 
-# Layout mode: a companion mod writes "compact" or "full" to CLAUDE_DIR/statusline-mode
-# when you press TOGGLE_KEY. Missing, unreadable or anything else means full.
-MODE_FILE_NAME = "statusline-mode"
-TOGGLE_KEY = "ctrl+alt+s"
-
 # Release check: newest Claude Code on your update channel. Seconds between fetches.
 RELEASE_TTL = 3600
 RELEASE_URL = "https://registry.npmjs.org/-/package/@anthropic-ai/claude-code/dist-tags"
@@ -147,7 +121,7 @@ NATIVE_VERSIONS = Path.home() / ".local" / "share" / "claude" / "versions"
 # Icons. "none" uses plain text; "nerd" needs a Nerd Font in the terminal
 # (e.g. CaskaydiaMono Nerd Font). Pick with --icons nerd or STATUSLINE_ICONS=nerd.
 # Plain mode also serves the classic Windows console (Consolas), so only glyphs it has.
-PLAIN_ICONS = {"ok": "\u2713", "up": "\u2191", "warn": "\u25b2", "reload": "~", "toggle": "\u2192"}
+PLAIN_ICONS = {"ok": "\u2713", "up": "\u2191", "warn": "\u25b2", "reload": "~"}
 NERD_ICONS = {
     "model": "\U000F167A",    # md-robot_outline
     "ctx": "\U000F0830",      # md-poker_chip (tokens)
@@ -168,8 +142,7 @@ NERD_ICONS = {
     "up": "\U000F0CE1",       # md-arrow_up_circle
     "reload": "\U000F0453",   # md-reload
     "warn": "\U000F0026",     # md-alert
-    "toggle": "→",       # plain arrow: CaskaydiaMono has no dashed one (U+21E2)
-    "keyboard": "\U000F030C",  # md-keyboard: compact mode's toggle hint
+    "tag": "\U000F04FC",      # md-tag_outline: the session name
     "segment": "",  # powerline slants: one tilted full-height bar segment
 }
 ICON = dict(PLAIN_ICONS)
@@ -235,9 +208,9 @@ def color_pct(p):
     return RED
 
 
-def bar(p, width=8, segments=5):
+def bar(p, width=5, segments=3):
+    """A bar of `width` full blocks, or `segments` slanted segments with Nerd icons."""
     if ICON.get("segment"):
-        # Nerd Font: slanted full-height segments, five by default.
         seg, width = ICON["segment"], segments
     else:
         seg = BAR
@@ -246,17 +219,20 @@ def bar(p, width=8, segments=5):
     return f"{color_pct(p)}{seg * filled}{RST}{BAR_TRACK}{seg * (width - filled)}{RST}"
 
 
-def meter(label, p, suffix="", icon=None, pct_first=False):
-    """'label ▰▰▱▱ N% suffix' ('label N% ▰▰▱▱ suffix' with pct_first), or 'label --' when unknown."""
-    head = ic(icon, color_pct(p) if p is not None else DIM) if icon else ""
+def meter(label, p, icon, with_bar=True, suffix=""):
+    """'ctx 43% ▰▰▱ 430k/1M': label and value in the stage color, then bar and a light-grey suffix.
+
+    'ctx --' (no bar, no suffix) when the reading is unknown.
+    """
     if p is None:
-        return f"{head}{DIM}{label} --{RST}"
-    tail = f" {DIM}{suffix}{RST}" if suffix else ""
-    pct = f"{color_pct(p)}{p:.0f}%{RST}"
-    if pct_first:
-        # Usage windows: the label shares the percentage's color, joined by an arrow.
-        return f"{head}{color_pct(p)}{label}{RST} {DIM}↔{RST} {pct} {bar(p)}{tail}"
-    return f"{head}{DIM}{label}{RST} {bar(p)} {pct}{tail}"
+        return f"{ic(icon)}{DIM}{label} --{RST}"
+    c = color_pct(p)
+    out = f"{ic(icon, c)}{c}{label}{RST} {c}{p:.0f}%{RST}"
+    if with_bar:
+        out += f" {bar(p)}"
+    if suffix:
+        out += f" {DIM}{suffix}{RST}"
+    return out
 
 
 def fmt_duration(ms):
@@ -335,14 +311,15 @@ def run(cmd, timeout=1.0):
 # --- probe cache -------------------------------------------------------------
 # With a 1-second refreshInterval every render must be cheap, so the slow probes
 # (git, port scan, health) keep their results for a few seconds in one JSON file
-# shared by all sessions. Only probe results go in: never the mode or anything from
-# the stdin payload's live numbers, so a mode switch shows on the very next render.
+# shared by all sessions. Only probe results go in, never the stdin payload's live
+# numbers (percentages, cost, session time), so those are always current.
 
 PROBE_CACHE_NAME = "statusline-probe-cache.json"
 GIT_TTL = 3        # git status, per directory
 PORTS_TTL = 10     # dev port scan
 HEALTH_TTL = 10    # version status, plugins to reload, MCP status, per session and project
 SKILLS_TTL = 60    # skill count (a folder scan), per project
+NAME_REFRESH = 30  # the session name is keyed by transcript size, not a TTL; it is re-stored this often so it never expires
 
 
 class ProbeCache:
@@ -433,6 +410,11 @@ class ProbeCache:
         """A copy of the dict stored under key (even an expired one), or {}."""
         e = self.entries.get(key)
         return dict(e["v"]) if self._at(e) is not None and isinstance(e["v"], dict) else {}
+
+    def age(self, key):
+        """Seconds since key was stored, or None when it is missing or malformed."""
+        at = self._at(self.entries.get(key))
+        return None if at is None else self.now - at
 
     def put(self, key, value):
         """Store value under key now, without any TTL check."""
@@ -943,48 +925,43 @@ def count_skills(installed, enabled, claude_dir, project_dir=None):
     return n
 
 
-def format_health(running, version, reload_plugins, mcp, skills=None):
-    """Health items: Claude Code version, plugin reload, skills, MCP servers. '' when nothing is known."""
-    parts = []
-    if running:
-        state, newer = version
-        cc = f"{ic('cc', MODEL)}{DIM}Claude Code{RST} {running}"  # logo in Claude orange
-        if state == "ok":
-            parts.append(f"{cc} {GREEN}{ICON['ok']}{RST}")
-        elif state == "restart":  # newer build already downloaded; this window still runs the old one
-            parts.append(f"{cc} {AMBER}{ICON['up']} restart for {newer}{RST}")
-        elif state == "update":
-            parts.append(f"{cc} {AMBER}{ICON['up']} {newer} available{RST}")
-        else:
-            parts.append(cc)
-    if reload_plugins is not None:
-        label = f"{ic('plugins')}{DIM}plugins{RST}"
-        if reload_plugins:
-            parts.append(f"{label} {AMBER}{ICON['reload']} {len(reload_plugins)} updated{RST}"
-                         f" {DIM}·{RST} run {AMBER}/reload-plugins{RST}")
-        else:
-            parts.append(f"{label} {GREEN}{ICON['ok']}{RST}")
-    if skills:
-        parts.append(f"{ic('skills')}{DIM}skills{RST} {skills}")
+def health_marks(running, version, reload_plugins, mcp):
+    """Health marks as [(text, level)] in line order: MCP servers, Claude Code, plugins.
+
+    Level 0 is healthy (a green check), 1 needs attention (amber), 2 is a failure (red).
+    A mark that needs attention says so by name: '▲ Gmail failed', '↑ 2.2 available',
+    '~ reload'. Marks without data (no logs, no version, no plugin list) are left out.
+    """
+    marks = []
     if mcp is not None:
         ok, failed = mcp
-        if ok or failed:
-            bits = [f"{len(ok)} connected"] if ok else []
-            if failed:
-                more = f" +{len(failed) - 1}" if len(failed) > 1 else ""
-                bits.append(f"{RED}{ICON['warn']} {failed[0]}{more} failed{RST}")
-            parts.append(f"{ic('mcp')}{DIM}mcp{RST} " + f" {DIM}·{RST} ".join(bits))
-    return SEP.join(parts)
+        if failed:
+            more = f" +{len(failed) - 1}" if len(failed) > 1 else ""
+            marks.append((f"{RED}{ICON['warn']} {mid_trunc(failed[0], 12)}{more} failed{RST}", 2))
+        elif ok:
+            marks.append((f"{ic('mcp')}{DIM}mcp{RST} {len(ok)} {GREEN}{ICON['ok']}{RST}", 0))
+    if running:
+        state, newer = version
+        cc = f"{ic('cc', MODEL)}{DIM}CC{RST} {running}"  # logo in Claude orange
+        if state == "ok":
+            marks.append((f"{cc} {GREEN}{ICON['ok']}{RST}", 0))
+        elif state == "restart":  # newer build already downloaded; this window still runs the old one
+            marks.append((f"{AMBER}{ICON['up']} restart{f' for {newer}' if newer else ''}{RST}", 1))
+        elif state == "update":
+            marks.append((f"{AMBER}{ICON['up']} {f'{newer} available' if newer else 'update'}{RST}", 1))
+        else:
+            marks.append((cc, 0))
+    if reload_plugins is not None:
+        if reload_plugins:
+            marks.append((f"{AMBER}{ICON['reload']} reload{RST}", 1))
+        else:
+            marks.append((f"{ic('plugins')}{DIM}plugins{RST} {GREEN}{ICON['ok']}{RST}", 0))
+    return marks
 
 
-def health_line(data, cache=None):
-    return format_health(*health_state(data, cache=cache))
+def health_state(data, cache=None):
+    """(running, version, reload_plugins, mcp, skills) for health_marks and the skills item.
 
-
-def health_state(data, with_skills=True, cache=None):
-    """(running, version, reload_plugins, mcp, skills) for format_health / compact_problems.
-
-    with_skills=False skips the skill count (a folder scan) when it will not be shown.
     cache: the render's ProbeCache; the probes are kept HEALTH_TTL seconds per session
     and project (SKILLS_TTL for the skill count, per project).
     """
@@ -994,12 +971,11 @@ def health_state(data, with_skills=True, cache=None):
     key = json.dumps([data.get("session_id"), ws.get("project_dir") or data.get("cwd"),
                       data.get("transcript_path"), running])
     version, reload_plugins, mcp = cache.get("health:" + key, HEALTH_TTL, lambda: _health_probe(data, cache))
-    skills = None
-    if with_skills:
-        def skill_count():
-            settings, installed = _settings_and_plugins()
-            return count_skills(installed, _enabled(settings), CLAUDE_DIR, ws.get("project_dir"))
-        skills = cache.get("skills:" + json.dumps(ws.get("project_dir")), SKILLS_TTL, skill_count)
+
+    def skill_count():
+        settings, installed = _settings_and_plugins()
+        return count_skills(installed, _enabled(settings), CLAUDE_DIR, ws.get("project_dir"))
+    skills = cache.get("skills:" + json.dumps(ws.get("project_dir")), SKILLS_TTL, skill_count)
     return running, version, reload_plugins, mcp, skills
 
 
@@ -1189,26 +1165,27 @@ def git_status(cwd):
     return [branch, stg, mod, unt]
 
 
-MIN_NAME = 8  # a shortened project or branch name keeps at least this many characters
+MIN_NAME = 14      # a shortened project or branch name keeps at least this many characters
+SHORT_BRANCH = 11  # a tight line shows 'live-usage…': this many characters, then the ellipsis
 
 
-def where_item(proj, git, width=None):
-    """'project › branch flags'. When wider than `width`, the longer of project and
-    branch loses characters from its middle ('claude-co…statusline') until it fits."""
-    branch, flags = git or ("", [])
+def _where_text(proj, branch, flags):
+    parts = []
+    if proj:
+        parts.append(f"{ic('project', PROJECT)}{PROJECT}{proj}{RST}")
+    if branch:
+        color = AMBER if flags else GREEN
+        parts.append(" ".join([f"{ic('branch', color)}{color}{branch}{RST}"] + list(flags)))
+    return f" {DIM}›{RST} ".join(parts)
 
-    def render(p, b):
-        where = []
-        if p:
-            where.append(f"{ic('project', PROJECT)}{PROJECT}{p}{RST}")
-        if b:
-            color = AMBER if flags else GREEN
-            where.append(" ".join([f"{ic('branch', color)}{color}{b}{RST}"] + flags))
-        return f"  {DIM}›{RST}  ".join(where)
 
+def shrink_where(proj, branch, flags, width):
+    """(project, branch) with the longer one losing characters from its middle
+    ('claude-co…statusline') until 'project › branch flags' fits `width`. Neither
+    goes below MIN_NAME characters. width None: unchanged."""
     p_len, b_len = len(proj), len(branch)
-    item = render(proj, branch)
-    while width and visible_width(item) > width:
+    p, b = proj, branch
+    while width and visible_width(_where_text(p, b, flags)) > width:
         if b_len >= p_len and b_len > MIN_NAME:
             b_len -= 1
         elif p_len > MIN_NAME:
@@ -1216,9 +1193,107 @@ def where_item(proj, git, width=None):
         elif b_len > MIN_NAME:
             b_len -= 1
         else:
-            break  # as short as it gets; it takes a line of its own
-        item = render(mid_trunc(proj, p_len), mid_trunc(branch, b_len))
-    return item
+            break  # as short as it gets
+        p, b = mid_trunc(proj, p_len), mid_trunc(branch, b_len)
+    return p, b
+
+
+def where_item(proj, git, width=None):
+    """'project › branch flags', shrunk to `width` by shrink_where. git: git_info()'s result."""
+    branch, flags = git or ("", [])
+    return _where_text(*shrink_where(proj, branch, flags, width), flags)
+
+
+def short_branch(branch):
+    """'live-usage-and-redesign' -> 'live-usage…'; short names stay."""
+    return branch if len(branch) <= SHORT_BRANCH + 1 else branch[:SHORT_BRANCH] + "…"
+
+
+# --- session name --------------------------------------------------------------
+
+NAME_MAX = 28           # longest name shown (a hyphenated slug)
+TAIL_BYTES = 262_144    # how much of the transcript's end is searched for a title
+TITLE_KEYS = (("ai-title", "aiTitle"), ("agent-name", "agentName"), ("custom-title", "customTitle"))
+
+
+def slugify(text, cap=NAME_MAX):
+    """'Statusline.py: usage accuracy' -> 'statusline-py-usage-accuracy', cut at a word boundary
+    within `cap` characters (a single longer word is cut hard)."""
+    slug = re.sub(r"[\W_]+", "-", str(text).lower()).strip("-")
+    if len(slug) <= cap:
+        return slug
+    if slug[cap] == "-":
+        return slug[:cap]
+    head = slug[:cap]
+    cut = head.rfind("-")
+    return head[:cut] if cut > 0 else head
+
+
+def tail_title(path, max_bytes=TAIL_BYTES):
+    """The newest session title in the last `max_bytes` of a transcript, '' when there is none.
+
+    A title is an {"type": "ai-title", "aiTitle": ...} entry (or agent-name / custom-title).
+    Transcripts can be 100 MB, so only the end is read; the first, maybe cut, line and a
+    half-written last line are skipped because they do not parse.
+    """
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        f.seek(max(0, size - max_bytes))
+        raw = f.read(max_bytes)
+    lines = raw.split(b"\n")
+    if size > max_bytes:
+        lines = lines[1:]
+    markers = [f'"{kind}"'.encode() for kind, _ in TITLE_KEYS]
+    for line in reversed(lines):
+        if not any(m in line for m in markers):
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        for kind, key in TITLE_KEYS:
+            title = entry.get(key) if entry.get("type") == kind else None
+            if isinstance(title, str) and title.strip():
+                return title.strip()
+    return ""
+
+
+def session_name(data, cache=None):
+    """The session's name as a short slug, or '' when it has none.
+
+    The payload's session_name (set with /rename) wins; otherwise the newest title in the
+    transcript's tail. The transcript is only searched again when its size changed: the
+    result is kept in the probe cache under (path, size), and a grown transcript with no
+    title in its tail keeps the name found before.
+    """
+    given = data.get("session_name")
+    if isinstance(given, str) and given.strip():
+        return slugify(given)
+    path = data.get("transcript_path")
+    if not path:
+        return ""
+    try:
+        size = os.stat(path).st_size
+    except (OSError, ValueError, TypeError):
+        return ""
+    cache = _probe_cache(cache)
+    key = "name:" + str(path)
+    saved = cache.peek(key)
+    old = saved.get("name") if isinstance(saved.get("name"), str) else ""
+    if saved.get("size") == size and "name" in saved:
+        if (cache.age(key) or 0) > NAME_REFRESH:
+            cache.put(key, saved)  # keep the entry from expiring while the transcript sits still
+        return old
+    try:
+        title = tail_title(path)
+    except OSError:
+        title = ""
+    name = slugify(title) if title else old
+    cache.put(key, {"size": size, "name": name})
+    return name
 
 
 def line_width():
@@ -1288,21 +1363,6 @@ def ports_tag(cache=None):
 
 # --- layout ------------------------------------------------------------------
 
-def read_mode():
-    """'compact' or 'full' from the mode file. Never raises: compact unless the file says full."""
-    try:
-        text = (CLAUDE_DIR / MODE_FILE_NAME).read_text(encoding="utf-8")
-    except Exception:
-        return "compact"
-    return "full" if text.strip().lower() == "full" else "compact"
-
-
-def toggle_hint(target):
-    """'ctrl+alt+s → compact': the key that switches to the other layout."""
-    arrow = ICON.get("toggle", "→")
-    return f"{DIM}{TOGGLE_KEY} {arrow} {target}{RST}"
-
-
 def model_head(data):
     """'Opus 5.5 · high' in the model family's color and the effort's color."""
     model = data.get("model", {}) or {}
@@ -1315,102 +1375,7 @@ def model_head(data):
     return head
 
 
-def compact_bar(p):
-    """Slimmer than full mode's bar (6 cells or 4 segments), so the hint fits at 120 columns."""
-    return bar(p, width=6, segments=4)
-
-
-def compact_hint():
-    """Compact mode's always-shown hint: keyboard icon and the key, or 'ctrl+alt+s → full'."""
-    if ICON.get("keyboard"):
-        return f"{ic('keyboard')}{DIM}{TOGGLE_KEY}{RST}"
-    return toggle_hint("full")
-
-
-def compact_meter(label, p, icon, with_bar=True, suffix=""):
-    """'ctx 43% ▰▰▱▱ 430k/1M' with label and value in the stage color, or 'ctx --' (no bar) when unknown."""
-    if p is None:
-        return meter(label, None, icon=icon)
-    c = color_pct(p)
-    tail = f" {compact_bar(p)}" if with_bar else ""
-    if suffix:
-        tail += f" {DIM}{suffix}{RST}"
-    return f"{ic(icon, c)}{c}{label}{RST} {c}{p:.0f}%{RST}{tail}"
-
-
-def compact_problems(version, reload_plugins, mcp):
-    """Health items worth showing in compact mode, short: only the ones that need you."""
-    out = []
-    if mcp is not None and mcp[1]:
-        failed = mcp[1]
-        more = f" +{len(failed) - 1}" if len(failed) > 1 else ""
-        out.append(f"{RED}{ICON['warn']} {mid_trunc(failed[0], 12)}{more} failed{RST}")
-    state, newer = version
-    if state == "restart":
-        out.append(f"{AMBER}{ICON['up']} restart{f' for {newer}' if newer else ''}{RST}")
-    elif state == "update":
-        out.append(f"{AMBER}{ICON['up']} {f'{newer} available' if newer else 'update'}{RST}")
-    if reload_plugins:
-        out.append(f"{AMBER}{ICON['reload']} reload{RST}")
-    return out
-
-
-def format_compact(data, usage=None, show_usage=True, problems=(), width=None):
-    """Items for ONE compact line no wider than `width` (None: no limit), joined by COMPACT_SEP.
-
-    Model, ctx/5h/7d as % + bar (ctx with its tokens), cost, session time, problems,
-    then the toggle hint. When it does not fit, things go in this order until it
-    does: session time, problems from the last, the hint, the ctx tokens, the bars
-    (7d, then 5h, then ctx), cost. Model and the percentages always stay; the line
-    never wraps. When the problem texts had to go, a bare warn icon takes their place
-    (it outlasts the hint, tokens, bars and cost) so a failure is never invisible.
-    """
-    cw = data.get("context_window", {}) or {}
-    meters = [("ctx", context_pct(cw), "ctx")]
-    if show_usage:
-        usage = usage or {}
-        for label, key in (("5h", "five_hour"), ("7d", "seven_day")):
-            w = usage.get(key)
-            meters.append((label, w["pct"] if w else None, key))
-    cost = fmt_cost(float((data.get("cost", {}) or {}).get("total_cost_usd", 0.0) or 0.0))
-
-    def fits(items):
-        return width is None or visible_width(COMPACT_SEP.join(items)) <= width
-
-    session = compact_session(data)
-    tokens = context_tokens(cw)
-    problems = list(problems)
-
-    marker = f"{RED if any(RED in p for p in problems) else AMBER}{ICON['warn']}{RST}"
-
-    def line(bars, with_session=True, n_problems=len(problems), with_hint=True, with_cost=True,
-             with_tokens=True, with_marker=True):
-        """The line with only the first `bars` meters keeping their bar."""
-        items = [model_head(data)] + [
-            compact_meter(label, p, icon, with_bar=i < bars, suffix=tokens if i == 0 and with_tokens else "")
-            for i, (label, p, icon) in enumerate(meters)]
-        if with_cost:
-            items.append(cost)
-            if with_session and session:
-                items.append(session)
-        items += problems[:n_problems]
-        if problems and n_problems == 0 and with_marker:
-            items.append(marker)
-        if with_hint:
-            items.append(compact_hint())
-        return items
-
-    every = len(meters)
-    shrinking = [line(every), line(every, with_session=False)]
-    shrinking += [line(every, False, n) for n in range(len(problems) - 1, -1, -1)]
-    shrinking.append(line(every, False, 0, with_hint=False))
-    shrinking += [line(b, False, 0, False, with_tokens=False) for b in range(every, -1, -1)]
-    shrinking.append(line(0, False, 0, False, with_cost=False, with_tokens=False))
-    shrinking.append(line(0, False, 0, False, with_cost=False, with_tokens=False, with_marker=False))
-    return next((c for c in shrinking if fits(c)), shrinking[-1])
-
-
-def compact_session(data):
+def session_time(data):
     """Session time: clock icon and number, or 'session 12m' without icons; '' before any time."""
     dur = fmt_duration(int((data.get("cost", {}) or {}).get("total_duration_ms", 0) or 0))
     if not dur:
@@ -1418,54 +1383,155 @@ def compact_session(data):
     return f"{ic('duration')}{DIM}{dur}{RST}" if ICON.get("duration") else f"{DIM}session {dur}{RST}"
 
 
-def format_statusline(data, usage=None, now=None, show_usage=True, workspace=True):
-    """usage: merge_usage() result, or None when nothing is known yet.
+def name_tag(name):
+    """The session name as a tag: quoted in plain mode, after a tag icon with Nerd icons."""
+    if ICON.get("tag"):
+        return f"{ic('tag', CYAN)}{CYAN}{name}{RST}"
+    return f"{CYAN}“{name}”{RST}"
 
-    workspace=False leaves project, git, venv and ports to workspace_line().
+
+def gather_extras(data, cache=None):
+    """The probed items for format_statusline: project, git, session name, health, ports, venv.
+
+    Everything behind the probe cache (git 3 s, ports 10 s, health 10 s, skills 60 s, the
+    name until the transcript grows). A probe that fails only leaves its item out.
+    """
+    ws = data.get("workspace", {}) or {}
+    cwd = ws.get("current_dir") or ws.get("project_dir") or data.get("cwd") or os.getcwd()
+    extras = {"proj": Path(cwd).name if cwd else "", "git": None, "name": "", "marks": [],
+              "skills": None, "ports": "", "venv": ""}
+    for key, probe in (("git", lambda: git_info(cwd, cache)),
+                       ("name", lambda: session_name(data, cache)),
+                       ("venv", venv_tag),
+                       ("ports", lambda: ports_tag(cache))):
+        try:
+            extras[key] = probe()
+        except Exception:
+            pass
+    if SHOW_HEALTH:
+        try:
+            running, version, reload_plugins, mcp, skills = health_state(data, cache)
+            extras["marks"] = health_marks(running, version, reload_plugins, mcp)
+            extras["skills"] = skills
+        except Exception:
+            pass
+    return extras
+
+
+def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, width=None):
+    """The status line: ONE line, never wider than `width` columns (None: no limit).
+
+    usage: merge_usage() result, or None when nothing is known yet. extras: gather_extras()'s
+    result; without it only the session's own items show. Left to right:
+
+        project › branch ~N “session-name” │ model · effort │ ctx % bar tokens │
+        5h % bar reset │ 7d % bar reset │ cost │ session time │ health marks │
+        skills │ venv │ :ports
+
+    The line is made for a 120-column window. When it does not fit `width`, things go in
+    this order, each only if the line is still too wide:
+
+      1. venv and ports, 2. skills, 3. the 5h/7d reset countdowns, 4. session time,
+      5. healthy health marks, last one first (plugins, then CC, then mcp),
+      6. marks that need attention, last one first, each shown by name ('▲ Gmail failed'); when
+         the last text goes, one bare marker (▲, red for a failure, else amber) stands in for
+         all of them, and it outlasts everything below except model and percentages,
+      7. the session name,
+      8. the branch: first project and branch are squeezed into the room left (the longer
+         loses characters from its middle, neither below 14), then the branch is cut to
+         'live-usage…', then dropped (with its dirty counts),
+      9. the project: squeezed down to 14 characters as the room shrinks, then dropped,
+     10. the ctx tokens, 11. the bars (7d, then 5h, then ctx), 12. the cost, 13. the bare
+         marker.
+
+    Model and the three percentages always stay. Session time sits between the countdowns
+    and the health marks: it is cheap and the least useful of them.
     """
     now = time.time() if now is None else now
     cw = data.get("context_window", {}) or {}
-    cost = data.get("cost", {}) or {}
+    ex = extras or {}
 
-    parts = [model_head(data)]
-    parts.append(meter("ctx", context_pct(cw), context_tokens(cw), "ctx", pct_first=True))
-
+    meters = [("ctx", context_pct(cw), "ctx", context_tokens(cw))]
     if show_usage:
         usage = usage or {}
         for label, key in (("5h", "five_hour"), ("7d", "seven_day")):
             w = usage.get(key)
-            if w is None:
-                parts.append(meter(label, None, icon=key))
-            else:
-                left = w["resets_at"] - now if w["resets_at"] else None
-                parts.append(meter(label, w["pct"], fmt_until(left), key, pct_first=True))
+            left = fmt_until(w["resets_at"] - now) if w and w["resets_at"] else ""
+            meters.append((label, w["pct"] if w else None, key, left))
+    head = model_head(data)
+    cost = fmt_cost(float((data.get("cost", {}) or {}).get("total_cost_usd", 0.0) or 0.0))
+    session = session_time(data)
+    tag = name_tag(ex["name"]) if ex.get("name") else ""
+    skills = f"{ic('skills')}{DIM}skills{RST} {ex['skills']}" if ex.get("skills") else ""
+    marks = list(ex.get("marks") or [])
+    marker = ""
+    if any(level for _, level in marks):
+        marker = f"{RED if any(level == 2 for _, level in marks) else AMBER}{ICON['warn']}{RST}"
 
-    parts.append(fmt_cost(float(cost.get("total_cost_usd", 0.0) or 0.0)))
-    dur = fmt_duration(int(cost.get("total_duration_ms", 0) or 0))
-    if dur:
-        parts.append(f"{ic('duration')}{DIM}session {dur}{RST}")
+    proj = ex.get("proj") or ""
+    branch, flags = ex.get("git") or ("", [])
 
-    if workspace:
-        ws_s = workspace_line(data)
-        if ws_s:
-            parts.append(ws_s)
-    return SEP.join(parts)
+    def where(s, rest):
+        """The project › branch item. Once the branch is being given up ('fit', 'short' or
+        gone) the item is squeezed into what `rest` (the other items, as they would be
+        joined) leaves of the width; the project never goes below MIN_NAME characters."""
+        p, b, f = proj, branch, flags
+        if s["branch"] is None:
+            b, f = "", []
+        elif s["branch"] == "short":
+            b = short_branch(b)
+        if s["branch"] != "full" and width:
+            taken = visible_width(SEP.join(rest)) + visible_width(SEP)
+            if s["name"] and tag:
+                taken += visible_width(tag) + 1
+            p, b = shrink_where(p, b, f, width - taken)
+        if s["proj"] is None:
+            p = ""
+        return _where_text(p, b, f)
 
+    def items(s):
+        out = [head]
+        for i, (label, p, icon, suffix) in enumerate(meters):
+            show = s["tokens"] if i == 0 else s["countdown"]
+            out.append(meter(label, p, icon, with_bar=i < s["bars"], suffix=suffix if show else ""))
+        if s["cost"]:
+            out.append(cost)
+        if s["session"] and session:
+            out.append(session)
+        out += [text for i, (text, _) in enumerate(marks) if i not in s["dropped"]]
+        if s["marker"] and marker:
+            out.append(marker)
+        if s["skills"] and skills:
+            out.append(skills)
+        if s["extras"]:
+            out += [x for x in (ex.get("venv"), ex.get("ports")) if x]
+        first = " ".join(x for x in (where(s, out), tag if s["name"] else "") if x)
+        return [first] + out if first else out
 
-def workspace_line(data, width=None, cache=None):
-    """Project › git branch, then venv and ports. `width` defaults to the window's.
+    # The drop order, as patches applied one after the other to the state.
+    steps = [{"extras": False}, {"skills": False}, {"countdown": False}, {"session": False}]
+    healthy = [i for i, (_, level) in enumerate(marks) if level == 0]
+    needy = [i for i, (_, level) in enumerate(marks) if level]
+    steps += [{"dropped": i} for i in reversed(healthy)]
+    steps += [{"dropped": i, "marker": k == len(needy) - 1} for k, i in enumerate(reversed(needy))]
+    steps += [{"name": False}, {"branch": "fit"}, {"branch": "short"}, {"branch": None},
+              {"proj": None},
+              {"tokens": False}, {"bars": 2}, {"bars": 1}, {"bars": 0}, {"cost": False}, {"marker": False}]
 
-    cache: the render's ProbeCache for the git and port probes.
-    """
-    ws = data.get("workspace", {}) or {}
-    cwd = ws.get("current_dir") or ws.get("project_dir") or data.get("cwd") or os.getcwd()
-    proj = Path(cwd).name if cwd else ""
-    where = where_item(proj, git_info(cwd, cache), width or line_width())
-    parts = [where] if where else []
-    for extra in (venv_tag(), ports_tag(cache)):
-        if extra:
-            parts.append(extra)
-    return SEP.join(parts)
+    state = {"extras": True, "skills": True, "countdown": True, "session": True, "dropped": set(),
+             "marker": False, "name": True, "branch": "full", "proj": "full", "tokens": True,
+             "bars": len(meters), "cost": True}
+    best = items(state)
+    for step in [None] + steps:
+        if step:
+            step = dict(step)
+            if "dropped" in step:
+                state["dropped"] = state["dropped"] | {step.pop("dropped")}
+            state.update(step)
+            best = items(state)
+        if width is None or visible_width(SEP.join(best)) <= width:
+            break
+    return SEP.join(best)
 
 
 def main():
@@ -1507,35 +1573,11 @@ def main():
         except Exception:
             usage = merge_usage(stdin_rl, None, now)  # a bad cache must not hide the live numbers
         known = any(usage.values())
-        width = line_width()
-        compact = read_mode() == "compact"  # read every render, never cached
         probes = ProbeCache(CLAUDE_DIR / PROBE_CACHE_NAME, now)
-        if compact:
-            # Always exactly one line (Claude Code draws its mode line below it):
-            # essentials, then problems and the hint while they fit. No git or port probes.
-            problems = []
-            if SHOW_HEALTH:
-                try:
-                    _, version, reload_plugins, mcp, _ = health_state(data, with_skills=False, cache=probes)
-                    problems = compact_problems(version, reload_plugins, mcp)
-                except Exception:
-                    pass
-            line = COMPACT_SEP.join(format_compact(data, usage if known else None, show_usage,
-                                                   problems, width))
-        else:
-            # Session and usage first, then workspace and health, packed into as
-            # many lines as the window needs: whole items wrap, none get cut off.
-            texts = [format_statusline(data, usage if known else None, now, show_usage, workspace=False),
-                     workspace_line(data, width, probes)]
-            if SHOW_HEALTH:
-                try:
-                    texts.append(health_line(data, probes))
-                except Exception:
-                    pass
-            items = [item for t in texts if t for item in t.split(SEP)]
-            items.append(toggle_hint("compact"))
-            line = "\n".join(flow(items, width or 10**6, SEP))
-        if SHOW_AGENTS and not compact:
+        # One line, fitted to the window; every slow probe sits behind the probe cache.
+        line = format_statusline(data, usage if known else None, now, show_usage,
+                                 gather_extras(data, probes), line_width())
+        if SHOW_AGENTS:
             try:
                 agents = format_agents(running_subagents(data.get("transcript_path"), now))
                 if agents:

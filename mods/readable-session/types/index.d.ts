@@ -8,22 +8,10 @@ export type Activity = {
   awaiting?: boolean
 }
 
-/** The session the prompt-bar label tracks: `pending` until it has a name. */
-export type SessionLabel = {
-  sessionId: string
-  transcriptPath: string
-  status: 'pending' | 'done'
-  /** This module ran `/color orange` for it: that row is drawn empty. */
-  colored?: boolean
-  /** The name this module's `/rename` gave it: that row is drawn empty. */
-  renamedTo?: string
-}
-
 declare module 'claude-code' {
   interface PluginState {
     'readable-session': {
       running: Activity[]
-      label: SessionLabel | null
     }
   }
 }

@@ -3,9 +3,9 @@
   "$docs": "https://code.claude.com/docs/en/keybindings",
   "bindings": [
     {
-      "context": "Global",
+      "context": "Chat",
       "bindings": {
-        "alt+s": "app:toggleDiffPreSession"
+        "ctrl+x ctrl+a": null
       }
     }
   ]
