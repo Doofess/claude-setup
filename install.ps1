@@ -177,6 +177,25 @@ function Merge-Keybindings($current, $template) {
   return [pscustomobject]$merged
 }
 
+# The status line's launch form from settings.json: import the module with its directory on sys.path, so
+# Python reuses __pycache__/statusline.*.pyc instead of recompiling the 1600-line script on every one-second
+# render (the first run writes that cache). Ok is $false when Python failed or printed nothing.
+function Test-StatusLine([string]$dir, [string]$sample) {
+  $ErrorActionPreference = 'Continue'   # Windows PowerShell 5.1 would turn Python's stderr into a terminating error
+  $code = "import os,sys;sys.path.insert(0,'" + ($dir -replace '\\', '/') + "');import statusline;statusline.main()"
+  # Windows PowerShell 5.1 pipes to a native command in [Console]::InputEncoding, and on a UTF-8 console (code page
+  # 65001) that encoding carries a BOM; json.loads rejects it and the script prints its fallback. Pipe BOM-free.
+  $prevIn = [Console]::InputEncoding
+  try {
+    try { [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}
+    $out = @($sample | & python -S -c $code 2>&1 | ForEach-Object { "$_" })
+    $exit = $LASTEXITCODE
+  } finally { try { [Console]::InputEncoding = $prevIn } catch {} }
+  $text = $out -join "`n"
+  # "Claude | --" is what main() prints when rendering raised, so it counts as a failure too.
+  [pscustomobject]@{ Ok = ($exit -eq 0 -and $out.Count -gt 0 -and $text -notmatch 'Claude \| --'); Output = $text }
+}
+
 foreach ($tool in 'claude', 'git', 'python') {
   if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
     throw "'$tool' not found on PATH. See README.md for the desktop bootstrap list."
@@ -199,6 +218,9 @@ Write-Step 'Copying CLAUDE.md, statusline.py, hooks/, skills/'
 New-Item -ItemType Directory -Force (Join-Path $claudeDir 'hooks') | Out-Null
 Copy-Item (Join-Path $repo 'CLAUDE.md') $claudeDir -Force
 Copy-Item (Join-Path $repo 'statusline.py') $claudeDir -Force
+# Python trusts __pycache__/statusline.*.pyc while the source's size and mtime match what the cache recorded, and
+# Copy-Item keeps the source's mtime, so a same-size edit could leave a stale cache. Drop it; the smoke test rebuilds it.
+Get-ChildItem (Join-Path $claudeDir '__pycache__') -Filter 'statusline*.pyc' -ErrorAction SilentlyContinue | Remove-Item -Force
 Copy-Item (Join-Path $repo 'hooks\*') (Join-Path $claudeDir 'hooks') -Force
 # Skills: each folder under skills/ becomes ~/.claude/skills/<name>. Copy keeps a skill's local .venv.
 foreach ($skill in Get-ChildItem (Join-Path $repo 'skills') -Directory -ErrorAction SilentlyContinue) {
@@ -302,8 +324,8 @@ if ($LASTEXITCODE -ne 0) { $failures += "guardrail blocked 'git status' (exit $L
 
 Write-Step 'Status line smoke test'
 $sample = '{"model":{"display_name":"Test"},"workspace":{"current_dir":"' + ($HOME -replace '\\', '/') + '"},"cwd":"' + ($HOME -replace '\\', '/') + '","context_window":{"used_percentage":1}}'
-$line = $sample | & python -S (Join-Path $claudeDir 'statusline.py') 2>&1
-if ($LASTEXITCODE -ne 0 -or -not $line) { $failures += "statusline.py failed: $line" }
+$sl = Test-StatusLine $claudeDir $sample
+if (-not $sl.Ok) { $failures += "statusline.py failed: $($sl.Output)" }
 
 Write-Step 'MCP health'
 & claude mcp list 2>&1 | Where-Object { $_ -match 'Needs authentication|Failed|error' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }

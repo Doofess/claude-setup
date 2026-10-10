@@ -7,7 +7,7 @@ My Claude Code configuration, versioned so every machine runs the same setup.
 | `CLAUDE.md` | `~/.claude/CLAUDE.md` (global rules: plugin split, defaults) |
 | `settings.json` | merged into `~/.claude/settings.json` (plugins, hooks, status line, model) |
 | `hooks/block-dangerous-git.sh` | `~/.claude/hooks/` (blocks `git push`, `reset --hard`, `clean -f`, `branch -D`, `checkout .`) |
-| `statusline.py` | `~/.claude/statusline.py` |
+| `statusline.py` | `~/.claude/statusline.py` (settings launch it as `python -S -c "import statusline; statusline.main()"` with `~/.claude` on `sys.path`, so each one-second render loads the cached `__pycache__/*.pyc` instead of recompiling the script; the installer deletes that cache when it copies a new version) |
 | `hooks/bigquery-headers.py` | `~/.claude/hooks/` (turns the `gcloud` sign-in into the bearer token for the BigQuery MCP server) |
 | `skills/<name>/` | `~/.claude/skills/<name>/` (personal skills; `underwater-photoshop` drives local Photoshop) |
 | `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see its README) |
