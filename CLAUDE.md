@@ -24,7 +24,7 @@ Two skill plugins are installed. Use each where it is stronger; call the named s
 ## Defaults
 - Issue tracker: GitHub Issues via `gh`. Docs, specs, ADRs: `docs/` in the repo.
 - Run `/setup-matt-pocock-skills` once per repo before the engineering skills.
-- Destructive git (`push`, `reset --hard`, `clean -f`, `branch -D`, `checkout .`) is blocked by a hook. Tell the user the exact command to run.
+- Git: run `push` and other history-changing commands yourself when I ask for them; don't hand the command back to me. Confirm first only for what can't be undone (`push --force` to a shared branch, `reset --hard`, `clean -f`, `branch -D`).
 - Styles in any form (CSS, Tailwind, StyleX, inline): read the `good-css` skill before writing them. `frontend-design` decides the look; `good-css` decides the declarations.
 - MCP servers for one project go in that repo's `.mcp.json` (start from `mcp-presets/` in the setup repo), never in user settings.
 - Setup lives in `C:/dev/claude-setup` (repo `Doofess/claude-setup`); change config there and run `install.ps1`, so the desktop stays identical.

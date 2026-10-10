@@ -58,20 +58,6 @@
     "command": "python -S -c \"import os,sys;sys.path.insert(0,os.path.expanduser('~/.claude'));import statusline;statusline.main()\" --icons nerd",
     "refreshInterval": 1
   },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/block-dangerous-git.sh",
-            "shell": "bash"
-          }
-        ]
-      }
-    ]
-  },
   "deniedMcpServers": [
     { "serverUrl": "https://mcp.slack.com/*" },
     { "serverUrl": "https://mcp.linear.app/*" },

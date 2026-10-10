@@ -201,10 +201,6 @@ foreach ($tool in 'claude', 'git', 'python') {
     throw "'$tool' not found on PATH. See README.md for the desktop bootstrap list."
   }
 }
-# 'bash' on PATH is often the WSL stub; Claude Code runs hooks through Git Bash, so test with that one.
-$gitBash = Join-Path (Split-Path (Split-Path (Get-Command git).Source)) 'bin\bash.exe'
-if (-not (Test-Path $gitBash)) { throw "Git Bash not found at $gitBash. Install Git for Windows." }
-
 # 1. Backup
 Write-Step "Backing up current config to $backup"
 New-Item -ItemType Directory -Force $backup | Out-Null
@@ -312,16 +308,7 @@ sys.exit(r.returncode)
 }
 
 # 5. Verify
-Write-Step 'Self-testing git guardrail hook'
-$ErrorActionPreference = 'Continue'   # the hook writes BLOCKED to stderr on purpose
-$hook = (Join-Path $claudeDir 'hooks\block-dangerous-git.sh') -replace '\\', '/'
-# Built by concatenation so the live hook doesn't block this script when Claude runs it.
-$dangerous = 'git pu' + 'sh origin main'
-$blocked = ('{"tool_input":{"command":"' + $dangerous + '"}}') | & $gitBash $hook 2>&1
-if ($LASTEXITCODE -ne 2) { $failures += "guardrail did not block '$dangerous' (exit $LASTEXITCODE)" }
-$allowed = '{"tool_input":{"command":"git status"}}' | & $gitBash $hook 2>&1
-if ($LASTEXITCODE -ne 0) { $failures += "guardrail blocked 'git status' (exit $LASTEXITCODE)" }
-
+$ErrorActionPreference = 'Continue'
 Write-Step 'Status line smoke test'
 $sample = '{"model":{"display_name":"Test"},"workspace":{"current_dir":"' + ($HOME -replace '\\', '/') + '"},"cwd":"' + ($HOME -replace '\\', '/') + '","context_window":{"used_percentage":1}}'
 $sl = Test-StatusLine $claudeDir $sample
