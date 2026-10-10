@@ -145,7 +145,8 @@ NATIVE_VERSIONS = Path.home() / ".local" / "share" / "claude" / "versions"
 
 # Icons. "none" uses plain text; "nerd" needs a Nerd Font in the terminal
 # (e.g. CaskaydiaMono Nerd Font). Pick with --icons nerd or STATUSLINE_ICONS=nerd.
-PLAIN_ICONS = {"ok": "\u2713", "up": "\u2191", "warn": "\u25b2", "reload": "\u21bb", "toggle": "\u21e2"}
+# Plain mode also serves the classic Windows console (Consolas), so only glyphs it has.
+PLAIN_ICONS = {"ok": "\u2713", "up": "\u2191", "warn": "\u25b2", "reload": "~", "toggle": "\u2192"}
 NERD_ICONS = {
     "model": "\U000F167A",    # md-robot_outline
     "ctx": "\U000F0830",      # md-poker_chip (tokens)
@@ -171,6 +172,44 @@ NERD_ICONS = {
     "segment": "",  # powerline slants: one tilted full-height bar segment
 }
 ICON = dict(PLAIN_ICONS)
+
+
+def console_window_class():
+    """Window class of this process's console on Windows ('' when it has none), else None.
+
+    The classic console host is 'ConsoleWindowClass'; Windows Terminal's ConPTY is
+    'PseudoConsoleWindow'.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if not hwnd:
+            return ""
+        buf = ctypes.create_unicode_buffer(256)
+        ctypes.windll.user32.GetClassNameW(hwnd, buf, 256)
+        return buf.value
+    except Exception:
+        return None
+
+
+def effective_icons(mode):
+    """The requested icon set, unless this terminal cannot draw it.
+
+    The classic Windows console shows Nerd Font glyphs as boxes (and miscounts their
+    width), so 'nerd' falls back to 'none' there. A console without a window counts
+    too, unless Windows Terminal (WT_SESSION) or another terminal (TERM_PROGRAM) set
+    its mark. STATUSLINE_FORCE_ICONS=1 skips the check.
+    """
+    if mode != "nerd" or os.environ.get("STATUSLINE_FORCE_ICONS"):
+        return mode
+    cls = console_window_class()
+    if cls == "ConsoleWindowClass":
+        return "none"
+    if cls == "" and not os.environ.get("WT_SESSION") and not os.environ.get("TERM_PROGRAM"):
+        return "none"
+    return mode
 
 
 def set_icons(mode):
@@ -1047,8 +1086,8 @@ def read_mode():
 
 
 def toggle_hint(target):
-    """'ctrl+alt+s ⇢ compact': the key that switches to the other layout."""
-    arrow = ICON.get("toggle", "⇢")
+    """'ctrl+alt+s → compact': the key that switches to the other layout."""
+    arrow = ICON.get("toggle", "→")
     return f"{DIM}{TOGGLE_KEY} {arrow} {target}{RST}"
 
 
@@ -1070,7 +1109,7 @@ def compact_bar(p):
 
 
 def compact_hint():
-    """Compact mode's always-shown hint: keyboard icon and the key, or 'ctrl+alt+s ⇢ full'."""
+    """Compact mode's always-shown hint: keyboard icon and the key, or 'ctrl+alt+s → full'."""
     if ICON.get("keyboard"):
         return f"{ic('keyboard')}{DIM}{TOGGLE_KEY}{RST}"
     return toggle_hint("full")
@@ -1220,7 +1259,7 @@ def main():
     mode = os.environ.get("STATUSLINE_ICONS", "none")
     if "--icons" in sys.argv[:-1]:
         mode = sys.argv[sys.argv.index("--icons") + 1]
-    set_icons(mode)
+    set_icons(effective_icons(mode))
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
