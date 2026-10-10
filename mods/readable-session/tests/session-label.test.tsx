@@ -288,8 +288,8 @@ describe('quiet rows', () => {
     expect(await rename.findAll({ type: 'Text' })).toHaveLength(0)
 
     const other = await mount($, 'CommandOutput', out('rename', 'my-own', 'Session renamed to: my-own'))
-    expect((await other.findAll({ type: 'Text' }))[0]?.text).toBe('ENGINE')
+    expect((await other.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('ENGINE')
     const blue = await mount($, 'CommandOutput', out('color', 'blue', 'Session color set to: blue'))
-    expect((await blue.findAll({ type: 'Text' }))[0]?.text).toBe('ENGINE')
+    expect((await blue.findAll({ type: 'Text' })).map((t: any) => t.text)).toContain('ENGINE')
   })
 })

@@ -61,6 +61,46 @@ describe('drawing on terminal', () => {
     expect(card?.props.marginY).toBe(undefined)
   })
 
+  test('a command row is a bordered card headed by the command and its arguments', async ($, on) => {
+    on('ui.render', async (_$: any, e: any) => {
+      const { Text } = _$.ui.resolve(e)
+      return <Text>{e.props.text}</Text>
+    })
+    const ui = await $.ui.mount({
+      plugin: 'readable-session',
+      surface: 'terminal',
+      component: 'CommandOutput',
+      props: { command: 'effort', args: 'high', text: 'Effort set to high', isErrored: false },
+    })
+    const card = await ui.find({ type: 'Box' })
+    expect(card?.props.borderColor).toBe('claude')
+    expect(card?.props.borderStyle).toBe('round')
+    expect(card?.text ?? '').toContain('/effort high')
+    expect(card?.text ?? '').toContain('Effort set to high')
+  })
+
+  test('a command without arguments shows just the command; a failed one has a red border', async ($, on) => {
+    on('ui.render', async (_$: any, e: any) => {
+      const { Text } = _$.ui.resolve(e)
+      return <Text>{e.props.text}</Text>
+    })
+    const ok = await $.ui.mount({
+      plugin: 'readable-session',
+      surface: 'terminal',
+      component: 'CommandOutput',
+      props: { command: 'context', args: '', text: 'x', isErrored: false },
+    })
+    expect((await ok.find({ type: 'Box' }))?.text ?? '').toContain('/context')
+    expect((await ok.find({ type: 'Box' }))?.text ?? '').not.toContain('/context ')
+    const bad = await $.ui.mount({
+      plugin: 'readable-session',
+      surface: 'terminal',
+      component: 'CommandOutput',
+      props: { command: 'effort', args: 'bogus', text: 'Unknown effort', isErrored: true },
+    })
+    expect((await bad.find({ type: 'Box' }))?.props.borderColor).toBe('#ff5f5f')
+  })
+
   test('a running tool row says what it does; a finished one, what it did', async $ => {
     const props = {
       tool_use_id: 't1',

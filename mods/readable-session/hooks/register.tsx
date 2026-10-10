@@ -13,6 +13,7 @@ const noop = () => undefined
 // Nerd Font icons (the terminal uses CaskaydiaMono Nerd Font).
 const I = {
   you: '\u{F0004}', // md-account
+  command: '\u{F07B7}', // md-console_line
   shell: '\u{F018D}', // md-console
   pwsh: '\u{F0A0A}', // md-powershell
   write: '\u{F0DC9}', // md-file_document_edit_outline
@@ -302,6 +303,25 @@ export const register: Register = on => {
           {I.you}  You prompted
         </Text>
         <Text>{e.props.text}</Text>
+      </Box>
+    )
+  })
+
+  // A slash command's output: the same orange card as your prompts, headed by
+  // the command and its arguments. A row another module drew empty stays empty.
+  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    const inner = await next(e)
+    if (e.surface !== 'terminal') return inner
+    if (inner.type === 'Box' && !(inner.children as unknown[] | undefined)?.length) return inner
+    const { Box, Text } = $.ui.resolve(e)
+    const { command, args, isErrored } = e.props
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor={isErrored ? C.fail : C.you} paddingX={1}>
+        <Text color={isErrored ? C.fail : C.you} bold>
+          {I.command}  /{command}
+          {args ? ` ${args}` : ''}
+        </Text>
+        {inner}
       </Box>
     )
   })
