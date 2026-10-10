@@ -10,14 +10,19 @@
      bindings into ~/.claude/keybindings.json per context and key (null unbinds a default; other keys survive)
   4. Adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in enabledPlugins,
      updates them, then disables every plugin marked false
-  5. Self-tests the git guardrail hook and lists MCP health
+  5. Installs a Nerd Font through winget when the machine has none, and sets it as the Windows Terminal default
+     font when no font is configured there (the status line's icons need one)
+  6. Smoke-tests the status line and lists MCP health
 
 .PARAMETER SkipPlugins
   Skip the plugin install/update step (faster when only config changed).
 
+.PARAMETER SkipFont
+  Do not install a Nerd Font or touch the Windows Terminal font.
+
 #>
 [CmdletBinding()]
-param([switch]$SkipPlugins)
+param([switch]$SkipPlugins, [switch]$SkipFont)
 
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
@@ -152,6 +157,28 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
     }
   }
   return $current
+}
+
+# ---- Nerd Font (the status line's --icons nerd glyphs need one) ----
+$nerdFontId = 'DEVCOM.JetBrainsMonoNerdFont'
+$nerdFontFace = 'JetBrainsMono Nerd Font'
+function Get-NerdFontFiles {
+  foreach ($d in "$env:LOCALAPPDATA\Microsoft\Windows\Fonts", "$env:WINDIR\Fonts") {
+    Get-ChildItem $d -Filter '*Nerd*Font*' -ErrorAction SilentlyContinue
+  }
+}
+
+# Windows Terminal settings.json is JSON with comments, so edit it as text. Insert a font face into profiles.defaults
+# only when the file names no font at all; an existing choice (even a non-Nerd one) is left for the user.
+# Returns 'set', 'kept' (a font is already configured) or 'none' (no settings file / no defaults block).
+function Set-TerminalFont([string]$path, [string]$face) {
+  $text = [IO.File]::ReadAllText($path)
+  if ($text -match '"font"\s*:' -or $text -match '"face"\s*:') { return 'kept' }
+  $m = [regex]::Match($text, '"defaults"\s*:\s*\{')
+  if (-not $m.Success) { return 'none' }
+  $edited = $text.Insert($m.Index + $m.Length, ' "font": { "face": "' + $face + '" },')
+  Write-Utf8NoBom $path $edited
+  return 'set'
 }
 
 # Hooks this repo used to install. The merge keeps machine hooks it doesn't know, so a retired one would live on
@@ -326,6 +353,40 @@ sys.exit(r.returncode)
   }
 } else {
   Write-Host '    skipped: Google Cloud CLI not installed (winget install Google.CloudSDK), see README' -ForegroundColor Yellow
+}
+
+# 4b. Nerd Font. Best effort: a failure here warns and never fails the install.
+if (-not $SkipFont) {
+  Write-Step 'Nerd Font'
+  $weInstalled = $false
+  if (@(Get-NerdFontFiles).Count -gt 0) {
+    Write-Host '    a Nerd Font is already installed' -ForegroundColor DarkGray
+  } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
+    $savedEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    & winget install --id $nerdFontId -e --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+    $ErrorActionPreference = $savedEap
+    $weInstalled = @(Get-NerdFontFiles).Count -gt 0
+    if ($weInstalled) { Write-Host "    installed $nerdFontFace" } else { Write-Host "    winget could not install $nerdFontId; install a Nerd Font by hand (https://www.nerdfonts.com)" -ForegroundColor Yellow }
+  } else {
+    Write-Host '    winget not found; install a Nerd Font by hand (https://www.nerdfonts.com)' -ForegroundColor Yellow
+  }
+  # Point Windows Terminal at the font only when this run installed it, or the machine has JetBrainsMono.
+  $haveFace = $weInstalled -or (@(Get-NerdFontFiles | Where-Object { $_.Name -like 'JetBrainsMono*' }).Count -gt 0)
+  if ($haveFace) {
+    $wtFiles = @(
+      "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
+      "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
+      "$env:LOCALAPPDATA\Microsoft\Windows Terminal\settings.json"
+    ) | Where-Object { Test-Path $_ }
+    foreach ($wt in $wtFiles) {
+      $copy = Join-Path $backup ('wt-' + (Split-Path (Split-Path (Split-Path $wt)) -Leaf) + '-settings.json')
+      Copy-Item $wt $copy -Force
+      $r = Set-TerminalFont $wt $nerdFontFace
+      $msg = switch ($r) { 'set' { "font set to $nerdFontFace in $wt" } 'kept' { "a font is already set in $wt; left as is" } default { "no defaults block in $wt; set the font by hand" } }
+      Write-Host "    $msg"
+    }
+    if ($wtFiles.Count -eq 0) { Write-Host '    Windows Terminal not found; set the terminal font to a Nerd Font by hand' -ForegroundColor Yellow }
+  }
 }
 
 # 5. Verify

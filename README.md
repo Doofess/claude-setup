@@ -47,7 +47,8 @@ on the project; they were granted on 2026-10-09. Tools: `list_dataset_ids`, `get
    cd C:\dev\claude-setup
    .\install.ps1
    ```
-4. Restart Claude Code. In any repo, run `/setup-matt-pocock-skills` once.
+   The installer also installs JetBrainsMono Nerd Font through winget when the machine has no Nerd Font, and sets it as the Windows Terminal default only when that file names no font yet (the status line's icons need one; `-SkipFont` turns this off). It never overwrites a font you chose, and removes hooks this repo has retired.
+4. Restart Claude Code and open a new terminal tab. In any repo, run `/setup-matt-pocock-skills` once.
 5. Photo work: `python -m venv ~/.claude/skills/underwater-photoshop/.venv` and `pip install -r skills/underwater-photoshop/requirements.txt` into it. Needs Photoshop 2026 installed (COM `Photoshop.Application`).
 
 ## Keybindings
