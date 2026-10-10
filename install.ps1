@@ -154,6 +154,25 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
   return $current
 }
 
+# Hooks this repo used to install. The merge keeps machine hooks it doesn't know, so a retired one would live on
+# forever; drop every hook whose command mentions a retired script, and any group or event left empty.
+$retiredHooks = @('block-dangerous-git.sh')
+function Remove-RetiredHooks($current, [string[]]$retired) {
+  if (-not $current.PSObject.Properties['hooks'] -or $null -eq $current.hooks) { return $current }
+  $events = [ordered]@{}
+  foreach ($ev in $current.hooks.PSObject.Properties) {
+    $groups = @()
+    foreach ($g in @($ev.Value)) {
+      $kept = @(@($g.hooks) | Where-Object { $h = $_; $h -and -not ($retired | Where-Object { ([string]$h.command).Contains($_) }) })
+      if ($kept.Count -gt 0) { $g | Add-Member -NotePropertyName hooks -NotePropertyValue $kept -Force; $groups += $g }
+    }
+    if ($groups.Count -gt 0) { $events[$ev.Name] = $groups }
+  }
+  if ($events.Count -gt 0) { $current | Add-Member -NotePropertyName hooks -NotePropertyValue ([pscustomobject]$events) -Force }
+  else { $current.PSObject.Properties.Remove('hooks') }
+  return $current
+}
+
 # keybindings: { bindings: [ { context, bindings: { "chord": "action" | null } } ] }. Per context, per key: the repo's
 # value wins, including null (null unbinds a default, so it must be written, not skipped). The machine's other
 # contexts, keys and top-level properties stay.
@@ -232,6 +251,8 @@ $current = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | Conve
 
 # Per-key rules (enabledPlugins, env, permissions, hooks merge; the rest is replaced) live in Merge-ClaudeSettings.
 $current = Merge-ClaudeSettings $current $template $repo
+$current = Remove-RetiredHooks $current $retiredHooks
+foreach ($r in $retiredHooks) { Remove-Item (Join-Path $claudeDir "hooks\$r") -Force -ErrorAction SilentlyContinue }
 Write-Utf8NoBom $settingsPath (($current | ConvertTo-Json -Depth 20) + "`n")
 
 # 3b. Merge keybindings.json (the backup above already holds the previous file).
