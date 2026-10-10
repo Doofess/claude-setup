@@ -39,6 +39,7 @@ import os
 import re
 import sys
 import time
+import zlib
 from pathlib import Path
 
 # subprocess, socket and datetime are imported where they are used: a render with a
@@ -182,6 +183,8 @@ def console_window_class():
     """
     if os.name != "nt":
         return None
+    if os.environ.get("WT_SESSION") or os.environ.get("TERM_PROGRAM"):
+        return None  # a terminal that says what it is: no need to pay for ctypes (~10 ms)
     try:
         import ctypes
         hwnd = ctypes.windll.kernel32.GetConsoleWindow()
@@ -200,7 +203,8 @@ def effective_icons(mode):
     The classic Windows console shows Nerd Font glyphs as boxes (and miscounts their
     width), so 'nerd' falls back to 'none' there. A console without a window counts
     too, unless Windows Terminal (WT_SESSION) or another terminal (TERM_PROGRAM) set
-    its mark. STATUSLINE_FORCE_ICONS=1 skips the check.
+    its mark. STATUSLINE_FORCE_ICONS=1 skips the check. With WT_SESSION or TERM_PROGRAM
+    set, console_window_class() does not even ask Windows (the answer is 'keep nerd').
     """
     if mode != "nerd" or os.environ.get("STATUSLINE_FORCE_ICONS"):
         return mode
@@ -294,12 +298,22 @@ def fmt_tokens(n):
 def context_tokens(cw):
     """'used/size' tokens in the context window, or '' when the size is unknown."""
     size = cw.get("context_window_size")
-    if not size:
+    u = cw.get("current_usage")
+    if not size or not isinstance(u, dict):
         return ""
-    u = cw.get("current_usage") or {}
-    used = sum(int(u.get(k) or 0) for k in
-               ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+    keys = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    if all(u.get(k) is None for k in keys):
+        return ""  # no reply yet: unknown, not "0 tokens"
+    used = sum(int(u.get(k) or 0) for k in keys)
     return f"{fmt_tokens(used)}/{fmt_tokens(int(size))}"
+
+
+def context_pct(cw):
+    """Context window usage in percent, or None when Claude Code has not said."""
+    try:
+        return float(cw.get("used_percentage"))
+    except (TypeError, ValueError):
+        return None
 
 
 def fmt_cost(c):
@@ -338,46 +352,154 @@ class ProbeCache:
     unwritable file only means the probes run again; it never breaks rendering.
     """
 
+    SKEW = 2      # seconds another session's clock reading may be ahead of ours
+    CLAIM_TTL = 5  # seconds before a claim left by a dead session is ignored
+
     def __init__(self, path, now):
         self.path, self.now, self.dirty = path, now, False
-        self.entries = {}
-        if path is None:
-            return
+        self.touched = set()  # keys this render computed: the only ones it writes back
+        self.entries = self._read()
+
+    def _read(self):
+        if self.path is None:
+            return {}
         try:
-            entries = json.loads(Path(path).read_text(encoding="utf-8"))
+            entries = json.loads(Path(self.path).read_text(encoding="utf-8"))
         except Exception:
-            return
-        if isinstance(entries, dict):
-            self.entries = entries
+            return {}
+        return entries if isinstance(entries, dict) else {}
+
+    @staticmethod
+    def _at(e):
+        """The entry's timestamp, or None when it is not a well-formed entry."""
+        if isinstance(e, dict) and "v" in e and _number(e.get("at")):
+            return e["at"]
+        return None
+
+    def _claim_path(self, key):
+        return Path(f"{self.path}.{zlib.crc32(key.encode('utf-8')):08x}.claim")
+
+    def _claim(self, key):
+        """True when this session may recompute key now; False when another one already is."""
+        claim = self._claim_path(key)
+        for _ in range(2):
+            try:
+                os.close(os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                return True
+            except FileExistsError:
+                try:
+                    if time.time() - claim.stat().st_mtime < self.CLAIM_TTL:
+                        return False
+                    claim.unlink()  # a session died mid-probe
+                except OSError:
+                    return False
+            except OSError:
+                return True  # cannot coordinate: just probe
+        return False
+
+    def _release(self, key):
+        try:
+            self._claim_path(key).unlink()
+        except OSError:
+            pass
 
     def get(self, key, ttl, compute):
-        """The cached value for key while younger than ttl seconds, else compute() (and keep it)."""
+        """The cached value for key while younger than ttl seconds, else compute() (and keep it).
+
+        When the entry has expired and another session is already recomputing it, the
+        stale value is returned instead, so concurrent sessions do not all probe at once.
+        """
         e = self.entries.get(key)
-        if isinstance(e, dict) and "v" in e:
-            at = e.get("at")
-            if isinstance(at, (int, float)) and 0 <= self.now - at < ttl:
+        at = self._at(e)
+        stale = at is not None
+        if stale and -self.SKEW <= self.now - at < ttl:
+            return e["v"]
+        claimed = False
+        if stale and self.path is not None:
+            if not self._claim(key):
                 return e["v"]
-        value = compute()
+            claimed = True
+        try:
+            value = compute()
+        finally:
+            if claimed:
+                self._release(key)
         self.entries[key] = {"at": self.now, "v": value}
+        self.touched.add(key)
         self.dirty = True
         return value
 
+    def peek(self, key):
+        """A copy of the dict stored under key (even an expired one), or {}."""
+        e = self.entries.get(key)
+        return dict(e["v"]) if self._at(e) is not None and isinstance(e["v"], dict) else {}
+
+    def put(self, key, value):
+        """Store value under key now, without any TTL check."""
+        self.entries[key] = {"at": self.now, "v": value}
+        self.touched.add(key)
+        self.dirty = True
+
     def save(self):
-        """Write atomically (tmp file + os.replace), dropping entries no TTL can still use."""
+        """Merge with what is on disk now, then write atomically (tmp file + os.replace).
+
+        Other sessions save to the same file, so this render's computed entries are laid
+        over a fresh read (the newest `at` per key wins) instead of over the copy loaded
+        at the start. Entries no TTL can still use are dropped.
+        """
         if self.path is None or not self.dirty:
             return
         keep = max(GIT_TTL, PORTS_TTL, HEALTH_TTL, SKILLS_TTL)
-        entries = {k: e for k, e in self.entries.items() if isinstance(e, dict)
-                   and isinstance(e.get("at"), (int, float)) and 0 <= self.now - e["at"] < keep}
         tmp = Path(f"{self.path}.{os.getpid()}.tmp")
+        lock = Path(f"{self.path}.lock")
+        locked = self._lock(lock)  # without it (timeout, odd folder) the merge is just best effort
         try:
+            merged = {k: e for k, e in self._read().items() if self._at(e) is not None}
+            for key in self.touched:
+                mine, theirs = self.entries[key], merged.get(key)
+                if theirs is None or theirs["at"] <= mine["at"]:
+                    merged[key] = mine
+            entries = {k: e for k, e in merged.items() if -self.SKEW <= self.now - e["at"] < keep}
             tmp.write_text(json.dumps(entries), encoding="utf-8")
-            os.replace(tmp, self.path)
+            for attempt in range(3):
+                try:
+                    os.replace(tmp, self.path)
+                    break
+                except PermissionError:  # a reader has the file open (Windows)
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.005)
         except Exception:
             try:
                 tmp.unlink()
             except OSError:
                 pass
+        finally:
+            if locked:
+                try:
+                    lock.unlink()
+                except OSError:
+                    pass
+
+    def _lock(self, lock):
+        """Hold the save lock (a file made with O_EXCL), waiting up to ~50 ms; False if not got."""
+        deadline = time.monotonic() + 0.05
+        while True:
+            try:
+                os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                return True
+            except FileExistsError:
+                try:
+                    if time.time() - lock.stat().st_mtime > 2:
+                        lock.unlink()  # left by a killed session
+                        continue
+                except OSError:
+                    pass
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(0.002)
+            except OSError:
+                return False
 
 
 def _probe_cache(cache):
@@ -457,9 +579,39 @@ def read_oauth_token():
     return oauth.get("accessToken")
 
 
+def _number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v
+
+
+def _clean_usage_cache(raw):
+    """Only the well-shaped parts of a parsed usage cache; anything else is dropped."""
+    if not isinstance(raw, dict):
+        return {}
+    out = {k: raw[k] for k in ("fetched_at", "usage_at", "tags_at") if _number(raw.get(k))}
+    if isinstance(raw.get("error"), str):
+        out["error"] = raw["error"]
+    tags = raw.get("tags")
+    if isinstance(tags, dict):
+        out["tags"] = {k: v for k, v in tags.items() if isinstance(k, str) and isinstance(v, str)}
+    usage = raw.get("usage")
+    if isinstance(usage, dict):
+        clean = {}
+        for key in WINDOWS:
+            w = usage.get(key)
+            if not isinstance(w, dict) or not _number(w.get("utilization")):
+                continue
+            resets = w.get("resets_at")
+            if resets is not None and not (_number(resets) or (isinstance(resets, str) and _epoch(resets) is not None)):
+                continue
+            clean[key] = {"utilization": w["utilization"], "resets_at": resets}
+        out["usage"] = clean
+    return out
+
+
 def load_usage_cache():
+    """The usage cache as a dict of well-shaped values; {} when missing, corrupt or the wrong type."""
     try:
-        return json.loads(USAGE_CACHE.read_text(encoding="utf-8"))
+        return _clean_usage_cache(json.loads(USAGE_CACHE.read_text(encoding="utf-8")))
     except Exception:
         return {}
 
@@ -504,10 +656,15 @@ def _fetch_usage(cache, now):
         cache["error"] = f"{type(e).__name__}: {e}"[:200]
 
 
-def _take_lock(now):
+def _take_lock(now, token=""):
+    """Create the usage lock holding `token` (who owns it); False when a fresh one exists."""
     for _ in range(2):
         try:
-            os.close(os.open(USAGE_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            fd = os.open(USAGE_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                os.write(fd, token.encode("utf-8"))
+            finally:
+                os.close(fd)
             return True
         except FileExistsError:
             try:
@@ -521,11 +678,37 @@ def _take_lock(now):
     return False
 
 
+def _release_lock(token):
+    """Remove the usage lock, but only if it still holds our token (it may be someone else's by now)."""
+    try:
+        if token and USAGE_LOCK.read_text(encoding="utf-8") == token:
+            USAGE_LOCK.unlink()
+    except OSError:
+        pass
+
+
+REFRESH_DEADLINE = 15  # seconds the detached refresh may live, however slow the network is
+
+
+def _expire(token):
+    """The deadline passed: give up the lock (if ours) and leave at once."""
+    _release_lock(token)
+    os._exit(1)
+
+
+def _arm_deadline(token):
+    import threading
+    timer = threading.Timer(REFRESH_DEADLINE, _expire, (token,))
+    timer.daemon = True
+    timer.start()
+
+
 def maybe_refresh(cache, now):
     """Start a background fetch when anything in the cache is stale. Never blocks."""
     stale = (now - (cache.get("fetched_at") or 0) >= USAGE_TTL
              or now - (cache.get("tags_at") or 0) >= RELEASE_TTL)
-    if not stale or not _take_lock(now):
+    token = f"{os.getpid()}-{time.time_ns()}"
+    if not stale or not _take_lock(now, token):
         return
     import subprocess
     kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
@@ -535,9 +718,9 @@ def maybe_refresh(cache, now):
     else:
         kw["start_new_session"] = True
     try:
-        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--refresh"], **kw)
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--refresh", "--lock-token", token], **kw)
     except Exception:
-        USAGE_LOCK.unlink(missing_ok=True)
+        _release_lock(token)
 
 
 # --- health: version, plugins, MCP ------------------------------------------
@@ -587,11 +770,29 @@ def plugins_needing_reload(installed, enabled, loaded_at):
     return sorted(out)
 
 
-def plugins_loaded_at(transcript_path):
-    """When this session last loaded plugins: its first entry, or the last /reload-plugins."""
+def plugins_loaded_at(transcript_path, state=None):
+    """When this session last loaded plugins: its first entry, or the last /reload-plugins.
+
+    state: a dict the caller keeps between calls (it is updated in place). With it, a
+    transcript that only grew since the last call is scanned from the end of the last
+    scan, not from the start; a shorter file or another path is scanned in full.
+    """
+    state = {} if state is None else state
+    path = str(transcript_path)
     try:
-        raw = Path(transcript_path).read_bytes()
-    except (OSError, TypeError):
+        size = os.stat(transcript_path).st_size
+    except (OSError, TypeError, ValueError):
+        return None
+    start = reload_t = 0
+    first_t = None
+    if (state.get("path") == path and isinstance(state.get("size"), int) and 0 <= state["size"] <= size
+            and _number(state.get("first"))):
+        start, first_t, reload_t = state["size"], state["first"], state.get("reload")
+    try:
+        with open(transcript_path, "rb") as f:
+            f.seek(start)
+            raw = f.read()
+    except OSError:
         return None
 
     def ts_of(line):
@@ -602,12 +803,16 @@ def plugins_loaded_at(transcript_path):
 
     i = raw.rfind(b"<command-name>/reload-plugins</command-name>")
     if i >= 0:
-        start = raw.rfind(b"\n", 0, i) + 1
+        s = raw.rfind(b"\n", 0, i) + 1
         end = raw.find(b"\n", i)
-        t = ts_of(raw[start:end if end >= 0 else None])
+        t = ts_of(raw[s:end if end >= 0 else None])
         if t:
-            return t
-    return _first_timestamp(raw)
+            reload_t = t
+    if first_t is None:
+        first_t = _first_timestamp(raw)
+    # Resume at a line boundary, so a line still being written is read again, whole.
+    state.update(path=path, size=start + raw.rfind(b"\n") + 1, first=first_t, reload=reload_t or None)
+    return reload_t or first_t
 
 
 def _first_timestamp(raw):
@@ -788,7 +993,7 @@ def health_state(data, with_skills=True, cache=None):
     ws = data.get("workspace") or {}
     key = json.dumps([data.get("session_id"), ws.get("project_dir") or data.get("cwd"),
                       data.get("transcript_path"), running])
-    version, reload_plugins, mcp = cache.get("health:" + key, HEALTH_TTL, lambda: _health_probe(data))
+    version, reload_plugins, mcp = cache.get("health:" + key, HEALTH_TTL, lambda: _health_probe(data, cache))
     skills = None
     if with_skills:
         def skill_count():
@@ -807,8 +1012,12 @@ def _enabled(settings):
     return {k for k, v in (settings.get("enabledPlugins") or {}).items() if v}
 
 
-def _health_probe(data):
-    """[version, reload_plugins, mcp]: the slow part of health_state (it reads the transcript and MCP logs)."""
+def _health_probe(data, cache=None):
+    """[version, reload_plugins, mcp]: the slow part of health_state (it reads the transcript and MCP logs).
+
+    cache: the render's ProbeCache, which also keeps how far the transcript was scanned.
+    """
+    cache = _probe_cache(cache)
     settings, installed = _settings_and_plugins()
     running = data.get("version")
     channel = settings.get("autoUpdatesChannel") or "latest"
@@ -816,7 +1025,10 @@ def _health_probe(data):
     version = version_status(running, installed_versions(), published) if running else ("unknown", None)
 
     reload_plugins = None
-    loaded_at = plugins_loaded_at(data.get("transcript_path"))
+    scan_key = "loaded:" + str(data.get("transcript_path"))
+    scan = cache.peek(scan_key)
+    loaded_at = plugins_loaded_at(data.get("transcript_path"), scan)
+    cache.put(scan_key, scan)
     if loaded_at and installed:
         reload_plugins = plugins_needing_reload(installed, _enabled(settings), loaded_at)
 
@@ -1028,7 +1240,7 @@ def venv_tag():
     return ""
 
 
-def open_ports(ports=None, timeout=0.05):
+def open_ports(ports=None, timeout=0.02):
     """Ports on 127.0.0.1 that accept a connection within `timeout` seconds.
 
     All at once, with non-blocking connects and select(): on Windows a closed port
@@ -1132,10 +1344,12 @@ def compact_problems(version, reload_plugins, mcp):
     if mcp is not None and mcp[1]:
         failed = mcp[1]
         more = f" +{len(failed) - 1}" if len(failed) > 1 else ""
-        out.append(f"{RED}{ICON['warn']} {failed[0]}{more}{RST}")
-    state, _ = version
-    if state in ("restart", "update"):
-        out.append(f"{AMBER}{ICON['up']} {state}{RST}")
+        out.append(f"{RED}{ICON['warn']} {mid_trunc(failed[0], 12)}{more} failed{RST}")
+    state, newer = version
+    if state == "restart":
+        out.append(f"{AMBER}{ICON['up']} restart{f' for {newer}' if newer else ''}{RST}")
+    elif state == "update":
+        out.append(f"{AMBER}{ICON['up']} {f'{newer} available' if newer else 'update'}{RST}")
     if reload_plugins:
         out.append(f"{AMBER}{ICON['reload']} reload{RST}")
     return out
@@ -1148,10 +1362,11 @@ def format_compact(data, usage=None, show_usage=True, problems=(), width=None):
     then the toggle hint. When it does not fit, things go in this order until it
     does: session time, problems from the last, the hint, the ctx tokens, the bars
     (7d, then 5h, then ctx), cost. Model and the percentages always stay; the line
-    never wraps.
+    never wraps. When the problem texts had to go, a bare warn icon takes their place
+    (it outlasts the hint, tokens, bars and cost) so a failure is never invisible.
     """
     cw = data.get("context_window", {}) or {}
-    meters = [("ctx", float(cw.get("used_percentage", 0) or 0), "ctx")]
+    meters = [("ctx", context_pct(cw), "ctx")]
     if show_usage:
         usage = usage or {}
         for label, key in (("5h", "five_hour"), ("7d", "seven_day")):
@@ -1166,8 +1381,10 @@ def format_compact(data, usage=None, show_usage=True, problems=(), width=None):
     tokens = context_tokens(cw)
     problems = list(problems)
 
+    marker = f"{RED if any(RED in p for p in problems) else AMBER}{ICON['warn']}{RST}"
+
     def line(bars, with_session=True, n_problems=len(problems), with_hint=True, with_cost=True,
-             with_tokens=True):
+             with_tokens=True, with_marker=True):
         """The line with only the first `bars` meters keeping their bar."""
         items = [model_head(data)] + [
             compact_meter(label, p, icon, with_bar=i < bars, suffix=tokens if i == 0 and with_tokens else "")
@@ -1177,6 +1394,8 @@ def format_compact(data, usage=None, show_usage=True, problems=(), width=None):
             if with_session and session:
                 items.append(session)
         items += problems[:n_problems]
+        if problems and n_problems == 0 and with_marker:
+            items.append(marker)
         if with_hint:
             items.append(compact_hint())
         return items
@@ -1187,6 +1406,7 @@ def format_compact(data, usage=None, show_usage=True, problems=(), width=None):
     shrinking.append(line(every, False, 0, with_hint=False))
     shrinking += [line(b, False, 0, False, with_tokens=False) for b in range(every, -1, -1)]
     shrinking.append(line(0, False, 0, False, with_cost=False, with_tokens=False))
+    shrinking.append(line(0, False, 0, False, with_cost=False, with_tokens=False, with_marker=False))
     return next((c for c in shrinking if fits(c)), shrinking[-1])
 
 
@@ -1208,8 +1428,7 @@ def format_statusline(data, usage=None, now=None, show_usage=True, workspace=Tru
     cost = data.get("cost", {}) or {}
 
     parts = [model_head(data)]
-    parts.append(meter("ctx", float(cw.get("used_percentage", 0) or 0), context_tokens(cw), "ctx",
-                       pct_first=True))
+    parts.append(meter("ctx", context_pct(cw), context_tokens(cw), "ctx", pct_first=True))
 
     if show_usage:
         usage = usage or {}
@@ -1251,10 +1470,17 @@ def workspace_line(data, width=None, cache=None):
 
 def main():
     if "--refresh" in sys.argv:
+        # The spawning render created the lock and passed its token; a manual run takes its own.
+        token = sys.argv[sys.argv.index("--lock-token") + 1] if "--lock-token" in sys.argv[:-1] else None
+        if token is None:
+            token = f"{os.getpid()}-{time.time_ns()}"
+            if not _take_lock(time.time(), token):
+                return
+        _arm_deadline(token)
         try:
             refresh_cache()
         finally:
-            USAGE_LOCK.unlink(missing_ok=True)
+            _release_lock(token)
         return
     mode = os.environ.get("STATUSLINE_ICONS", "none")
     if "--icons" in sys.argv[:-1]:
@@ -1270,14 +1496,16 @@ def main():
         now = time.time()
         stdin_rl = data.get("rate_limits") or {}
         live = None
-        show_usage = bool(stdin_rl)
+        show_usage = True  # unknown windows read "5h --", never vanish
         if os.environ.get("STATUSLINE_LIVE_USAGE", "1") != "0":
             cache = load_usage_cache()
             live = cache.get("usage")
             if read_oauth_token() or live:
-                show_usage = True
                 maybe_refresh(cache, now)
-        usage = merge_usage(stdin_rl, live, now)
+        try:
+            usage = merge_usage(stdin_rl, live, now)
+        except Exception:
+            usage = merge_usage(stdin_rl, None, now)  # a bad cache must not hide the live numbers
         known = any(usage.values())
         width = line_width()
         compact = read_mode() == "compact"  # read every render, never cached

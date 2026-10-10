@@ -51,6 +51,28 @@ on the project; they were granted on 2026-10-09. Tools: `list_dataset_ids`, `get
 4. Restart Claude Code. In any repo, run `/setup-matt-pocock-skills` once.
 5. Photo work: `python -m venv ~/.claude/skills/underwater-photoshop/.venv` and `pip install -r skills/underwater-photoshop/requirements.txt` into it. Needs Photoshop 2026 installed (COM `Photoshop.Application`).
 
+## Windows Terminal: Ctrl+Alt+S (optional)
+
+The status line hint says `ctrl+alt+s` to toggle compact/full. Claude Code cannot bind a raw Ctrl+Alt chord; the
+`readable-session` mod listens for Alt+S, and Windows Terminal turns Ctrl+Alt+S into it by sending `ESC s`.
+`.\install.ps1 -WindowsTerminal` adds that mapping (action `User.StatuslineToggle` plus a `ctrl+alt+s` keybinding)
+to the Windows Terminal `settings.json` (Stable, Preview and unpackaged locations, whichever exist). Off by default.
+
+- The file is copied to `settings.json.bak-claude-setup-<stamp>` first, then edited by minimal text insertion, so
+  comments and layout survive. The result is parsed and checked before it is written; if the file can't be edited
+  safely (unparseable, `actions`/`keybindings` not arrays) nothing is written and the installer reports why.
+- Re-running is a no-op once the action and binding exist. If `ctrl+alt+s` is already bound to something else, only
+  the action is added and the installer says so.
+- `-WindowsTerminalPath <file>` targets one specific settings file instead (for testing on a copy).
+
+## Settings merge rules
+
+`settings.json` is merged into the machine's `~/.claude/settings.json`: `enabledPlugins` and `env` per entry (the
+repo wins on conflict, other machine entries stay), `permissions` with arrays unioned, `hooks` per event and per
+command, and every other key replaced by the repo's value. `<repo>` inside an `env` value expands to this clone's
+path with forward slashes, so `CLAUDE_CODE_PLUGIN_DIRS` points at `<clone>/mods/readable-session` wherever the repo
+lives; other directories already in that variable (`;`-separated) are kept and ours is added once.
+
 ## Changing config
 
 Edit the files here, run `.\install.ps1` (add `-SkipPlugins` when only config changed), commit, push. On the other machine: `git pull` then `.\install.ps1`.
