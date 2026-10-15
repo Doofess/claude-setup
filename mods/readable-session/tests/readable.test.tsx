@@ -98,7 +98,7 @@ describe('drawing on terminal', () => {
       component: 'CommandOutput',
       props: { command: 'effort', args: 'bogus', text: 'Unknown effort', isErrored: true },
     })
-    expect((await bad.find({ type: 'Box' }))?.props.borderColor).toBe('#ff5f5f')
+    expect((await bad.find({ type: 'Box' }))?.props.borderColor).toBe('error')
   })
 
   test('a running tool row says what it does; a finished one, what it did', async $ => {
