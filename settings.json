@@ -66,6 +66,11 @@
     }
   },
   "autoCompactWindow": 200000,
+  "skillOverrides": {
+    "chrome-browser": "name-only",
+    "built-in-browser": "name-only",
+    "computer-use": "name-only"
+  },
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
   "theme": "auto",
