@@ -55,6 +55,21 @@ describe('linger', () => {
     expect(await ui.find({ text: /Ran Bash/ })).toBe(undefined)
   })
 
+  test("a subagent's turn.start leaves the main loop's running calls alone", async ($, on) => {
+    const clock = mock.clock(on)
+    on('ui.render', async (_$: any, e: any) => {
+      const { Text } = _$.ui.resolve(e)
+      return <Text>ENGINE</Text>
+    })
+    on('tool.call', () => new Promise(() => {}) as any)
+    on('turn.start', async () => ({ turnId: 'T-a1' }))
+    void $.tool.call({ tool: 'Agent', subagent_type: 'general-purpose', description: 'dig', tool_use_id: 'ag1' } as any)
+    await clock.settle()
+    await $.turn.start({ text: 'sub', turnId: 'T-a1', agentId: 'a1' } as any)
+    const ui = await band($)
+    expect(await ui.find({ text: /Starting general-purpose/ })).not.toBe(undefined)
+  })
+
   test('a call slower than the linger leaves at once', async ($, on) => {
     const clock = mock.clock(on)
     on('ui.render', async (_$: any, e: any) => {

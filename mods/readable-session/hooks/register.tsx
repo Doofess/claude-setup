@@ -225,7 +225,8 @@ export const register: Register = on => {
   // finally) are cleared as a main-loop turn starts and ends; a subagent's
   // as it finishes. A call that just finished is kept until its linger ends.
   on('turn.start', async ($, e, next) => {
-    await sweepMain($)
+    // A subagent's turn starting says nothing about the main loop's calls.
+    if (!e.agentId) await sweepMain($)
     return next(e)
   })
 

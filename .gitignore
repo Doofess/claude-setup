@@ -1,3 +1,4 @@
 backups/
 mods/**/*.js
 .superpowers/
+__pycache__/
