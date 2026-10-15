@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusline.py,keybindings.json} to ~/.claude/backups/claude-setup-<stamp>/
-  2. Copies CLAUDE.md, statusline.py, hooks/ and skills/ into ~/.claude
+  2. Copies CLAUDE.md, statusline.py, hooks/, skills/ and agents/ into ~/.claude
   3. Merges settings.json keys into the existing file (machine-local keys survive), and keybindings.json
      bindings into ~/.claude/keybindings.json per context and key (null unbinds a default; other keys survive)
   4. Adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in enabledPlugins,
@@ -256,7 +256,7 @@ foreach ($f in 'CLAUDE.md', 'settings.json', 'statusline.py', 'keybindings.json'
 }
 
 # 2. Copy files
-Write-Step 'Copying CLAUDE.md, statusline.py, hooks/, skills/'
+Write-Step 'Copying CLAUDE.md, statusline.py, hooks/, skills/, agents/'
 New-Item -ItemType Directory -Force (Join-Path $claudeDir 'hooks') | Out-Null
 Copy-Item (Join-Path $repo 'CLAUDE.md') $claudeDir -Force
 Copy-Item (Join-Path $repo 'statusline.py') $claudeDir -Force
@@ -269,6 +269,11 @@ foreach ($skill in Get-ChildItem (Join-Path $repo 'skills') -Directory -ErrorAct
   $dest = Join-Path $claudeDir "skills\$($skill.Name)"
   New-Item -ItemType Directory -Force $dest | Out-Null
   Copy-Item (Join-Path $skill.FullName '*') $dest -Recurse -Force
+}
+# Agents: each file under agents/ becomes ~/.claude/agents/<name>.md (a file named like a built-in agent replaces it).
+if (Test-Path (Join-Path $repo 'agents')) {
+  New-Item -ItemType Directory -Force (Join-Path $claudeDir 'agents') | Out-Null
+  Copy-Item (Join-Path $repo 'agents\*.md') (Join-Path $claudeDir 'agents') -Force
 }
 
 # 3. Merge settings.json

@@ -1,45 +1,11 @@
 {
   "enabledPlugins": {
-    "frontend-design@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true,
-    "code-review@claude-plugins-official": false,
-    "context7@claude-plugins-official": true,
-    "skill-creator@claude-plugins-official": false,
-    "code-simplifier@claude-plugins-official": false,
-    "playwright@claude-plugins-official": true,
-    "github@claude-plugins-official": false,
-    "claude-md-management@claude-plugins-official": false,
-    "feature-dev@claude-plugins-official": false,
-    "security-guidance@claude-plugins-official": true,
-    "typescript-lsp@claude-plugins-official": true,
-    "claude-code-setup@claude-plugins-official": false,
-    "supabase@claude-plugins-official": false,
-    "telegram@claude-plugins-official": false,
-    "vercel@claude-plugins-official": false,
-    "ralph-loop@claude-plugins-official": false,
-    "chrome-devtools-mcp@claude-plugins-official": true,
-    "remember@claude-plugins-official": true,
-    "claude-security@claude-plugins-official": false,
-    "cloudflare@claude-plugins-official": false,
-    "shopify-ai-toolkit@claude-plugins-official": false,
-    "adobe-for-creativity@claude-plugins-official": false,
-    "mattpocock-skills@claude-plugins-official": true,
-    "modern-web-guidance@claude-plugins-official": true,
-    "hookify@claude-plugins-official": true,
-    "mcp-server-dev@claude-plugins-official": true,
-    "good-css@good-css": true,
-    "frontend-design@anthropic-plugin-directory": false,
-    "superpowers@anthropic-plugin-directory": false,
-    "code-review-anthropics@anthropic-plugin-directory": false,
-    "skill-creator@anthropic-plugin-directory": false,
-    "code-simplifier@anthropic-plugin-directory": false,
-    "claude-md-management@anthropic-plugin-directory": false,
-    "claude-code-setup@anthropic-plugin-directory": false,
-    "ralph-loop@anthropic-plugin-directory": false,
-    "supabase@anthropic-plugin-directory": false,
-    "security-guidance@anthropic-plugin-directory": false,
-    "feature-dev@anthropic-plugin-directory": false,
-    "imessage@anthropic-plugin-directory": false
+    "superpowers@anthropic-plugin-directory": true,
+    "frontend-design@anthropic-plugin-directory": true,
+    "context7@anthropic-plugin-directory": true,
+    "playwright@anthropic-plugin-directory": true,
+    "claude-md-management@anthropic-plugin-directory": true,
+    "typescript-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "good-css": { "source": { "source": "github", "repo": "vojtaholik/good-css" } }
@@ -48,7 +14,7 @@
     "defaultMode": "bypassPermissions",
     "deny": ["Skill(mattpocock-skills:grilling)", "Skill(grilling)"]
   },
-  "model": "fable",
+  "model": "sonnet",
   "env": {
     "CLAUDE_CODE_PLUGIN_DIRS": "<repo>/mods/readable-session",
     "CLAUDE_CODE_NATIVE_CURSOR": "1"
@@ -81,8 +47,12 @@
     },
     "claude-fable-5-1": {
       "effortLevel": "xhigh"
+    },
+    "claude-sonnet-5-5": {
+      "effortLevel": "medium"
     }
   },
+  "autoCompactWindow": 250000,
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
   "theme": "auto"
