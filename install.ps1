@@ -181,9 +181,26 @@ function Set-TerminalFont([string]$path, [string]$face) {
   return 'set'
 }
 
+# Windows Terminal opens in System32 unless the defaults profile names a folder, and sessions started there load
+# the wrong project context. Add one only when profiles.defaults has no startingDirectory of its own.
+function Set-TerminalStartDir([string]$path, [string]$dir) {
+  $text = [IO.File]::ReadAllText($path)
+  $m = [regex]::Match($text, '"defaults"\s*:\s*\{')
+  if (-not $m.Success) { return 'none' }
+  $depth = 1; $i = $m.Index + $m.Length
+  while ($i -lt $text.Length -and $depth -gt 0) {
+    $c = $text[$i]
+    if ($c -eq '{') { $depth++ } elseif ($c -eq '}') { $depth-- }
+    $i++
+  }
+  if ($text.Substring($m.Index, $i - $m.Index) -match '"startingDirectory"\s*:') { return 'kept' }
+  Write-Utf8NoBom $path ($text.Insert($m.Index + $m.Length, ' "startingDirectory": "' + $dir.Replace('\', '\\') + '",'))
+  return 'set'
+}
+
 # Hooks this repo used to install. The merge keeps machine hooks it doesn't know, so a retired one would live on
 # forever; drop every hook whose command mentions a retired script, and any group or event left empty.
-$retiredHooks = @('block-dangerous-git.sh')
+$retiredHooks = @('block-dangerous-git.sh', 'bigquery-headers.py', '.bigquery-token.json')
 function Remove-RetiredHooks($current, [string[]]$retired) {
   if (-not $current.PSObject.Properties['hooks'] -or $null -eq $current.hooks) { return $current }
   $events = [ordered]@{}
@@ -263,7 +280,9 @@ Copy-Item (Join-Path $repo 'statusline.py') $claudeDir -Force
 # Python trusts __pycache__/statusline.*.pyc while the source's size and mtime match what the cache recorded, and
 # Copy-Item keeps the source's mtime, so a same-size edit could leave a stale cache. Drop it; the smoke test rebuilds it.
 Get-ChildItem (Join-Path $claudeDir '__pycache__') -Filter 'statusline*.pyc' -ErrorAction SilentlyContinue | Remove-Item -Force
-Copy-Item (Join-Path $repo 'hooks\*') (Join-Path $claudeDir 'hooks') -Force
+if (Test-Path (Join-Path $repo 'hooks')) {
+  Copy-Item (Join-Path $repo 'hooks\*') (Join-Path $claudeDir 'hooks') -Force
+}
 # Skills: each folder under skills/ becomes ~/.claude/skills/<name>. Copy keeps a skill's local .venv.
 foreach ($skill in Get-ChildItem (Join-Path $repo 'skills') -Directory -ErrorAction SilentlyContinue) {
   $dest = Join-Path $claudeDir "skills\$($skill.Name)"
@@ -307,6 +326,7 @@ if (-not $SkipPlugins) {
     $out = & claude plugin marketplace add $mp.Value.source.repo 2>&1
     if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') { $failures += "marketplace $($mp.Name): $out" }
   }
+  & claude plugin marketplace update 2>&1 | Out-Null
   Write-Step 'Installing and enabling plugins'
   foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
     if ($plugin.Value -ne $true) { continue }
@@ -314,8 +334,9 @@ if (-not $SkipPlugins) {
     $out = & claude plugin install $name 2>&1
     if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') { $failures += "install $name : $out" }
     & claude plugin enable $name 2>&1 | Out-Null
-    & claude plugin update $name 2>&1 | Out-Null
-    Write-Host "    $name"
+    $upd = & claude plugin update $name 2>&1
+    $ver = ($upd | Out-String).Trim() -replace '\s+', ' '
+    Write-Host "    $name  $ver"
   }
   # Enabling a plugin by name also flips on a same-named copy from another marketplace, so pin the false ones off afterwards.
   foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
@@ -325,40 +346,11 @@ if (-not $SkipPlugins) {
 }
 $ErrorActionPreference = $savedEap
 
-# 4b. BigQuery MCP server (user scope lives in ~/.claude.json, which this repo doesn't copy).
-# Auth comes from the Google Cloud CLI sign-in through hooks/bigquery-headers.py, so no OAuth client or secret.
-Write-Step 'BigQuery MCP server'
-$gcloud = Get-Command gcloud -ErrorAction SilentlyContinue
-if (-not $gcloud) {
-  foreach ($base in @($env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
-    $candidate = Join-Path $base 'Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd'
-    if ($base -and (Test-Path $candidate)) { $gcloud = $candidate; break }
-  }
-}
-if ($gcloud) {
-  $helper = (Join-Path $claudeDir 'hooks\bigquery-headers.py') -replace '\\', '/'
-  # headersHelper gets no ~ expansion, so the path must be absolute, and quoted: a user folder with a
-  # space ("Home Office") otherwise splits it. Python does the registration because Windows PowerShell 5.1
-  # strips the quotes out of a JSON argument before a native command sees it (PowerShell 7 does not).
-  $register = @'
-import json, subprocess, sys
-helper, claude = sys.argv[1], sys.argv[2]
-cfg = {"type": "http", "url": "https://bigquery.googleapis.com/mcp", "headersHelper": 'python "%s"' % helper}
-subprocess.run([claude, "mcp", "remove", "bigquery", "-s", "user"], capture_output=True, text=True)
-r = subprocess.run([claude, "mcp", "add-json", "--scope", "user", "bigquery", json.dumps(cfg)], capture_output=True, text=True)
-sys.stdout.write((r.stdout + r.stderr).strip())
-sys.exit(r.returncode)
-'@
-  $ErrorActionPreference = 'Continue'
-  $out = $register | & python - $helper (Get-Command claude).Source 2>&1
-  $ErrorActionPreference = $savedEap
-  if ($LASTEXITCODE -ne 0) { $failures += "bigquery registration: $out" } else { Write-Host '    registered' }
-  if (-not (Test-Path (Join-Path $env:APPDATA 'gcloud\application_default_credentials.json'))) {
-    Write-Host '    not signed in yet: run  gcloud config set project bookandry; gcloud auth login --update-adc' -ForegroundColor Yellow
-  }
-} else {
-  Write-Host '    skipped: Google Cloud CLI not installed (winget install Google.CloudSDK), see README' -ForegroundColor Yellow
-}
+# 4b. BigQuery MCP server is retired: drop the user-scope registration (a missing one is not an error).
+Write-Step 'Removing BigQuery MCP server'
+$ErrorActionPreference = 'Continue'
+& claude mcp remove bigquery -s user 2>&1 | Out-Null
+$ErrorActionPreference = $savedEap
 
 # 4b. Nerd Font. Best effort: a failure here warns and never fails the install.
 if (-not $SkipFont) {
@@ -392,6 +384,19 @@ if (-not $SkipFont) {
     }
     if ($wtFiles.Count -eq 0) { Write-Host '    Windows Terminal not found; set the terminal font to a Nerd Font by hand' -ForegroundColor Yellow }
   }
+}
+
+# 4c. Windows Terminal start folder (independent of the font).
+Write-Step 'Terminal start folder'
+$wtFilesDir = @(
+  "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
+  "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
+  "$env:LOCALAPPDATA\Microsoft\Windows Terminal\settings.json"
+) | Where-Object { Test-Path $_ }
+foreach ($wt in $wtFilesDir) {
+  $r = Set-TerminalStartDir $wt 'C:\dev'
+  $msg = switch ($r) { 'set' { "start folder set to C:\dev in $wt" } 'kept' { "a start folder is already set in $wt; left as is" } default { "no defaults block in $wt; set the start folder by hand" } }
+  Write-Host "    $msg"
 }
 
 # 5. Verify

@@ -11,9 +11,18 @@
 - Before saying anything is done, fixed, or passing: `verification-before-completion`.
 
 ## Models and usage
-- Sessions start on Sonnet. A big design is planned on Opus in plan mode and written to a file; then `/clear` and implement on Sonnet. Fable only when Opus is stuck: it has its own weekly cap.
-- Always set a subagent's model: Haiku for search and reading test output, Sonnet for implementation, Opus only for a whole-branch review. Never leave it to inherit the session's model.
-- Start a new session for an unrelated task instead of carrying a long context.
+- Sessions run on Opus 5.5 at medium effort. `/effort high` when verification matters (effort changes keep the cache, model switches don't). Pick the model at session start. Fable only when Opus at `xhigh` is stuck: it has its own weekly cap.
+- Always set a subagent's model: Haiku for search and reading output, Sonnet for implementation and web research (Opus when the main thread will act on the research unchecked), Opus for a whole-branch review. Pass an explicit `model` to `Plan` agents too.
+- Don't use `fork` for research or side work: forks run on the session model. Use a fresh typed agent with a tight brief.
+
+## Context hygiene
+- One task per session; `/clear` between unrelated tasks; `/rewind` to abandon a path.
+- Keep command output small: `tail`, `grep` or quiet flags, print only test failures.
+- Read large docs (`PLAN.md`, specs) by heading with `offset`/`limit`, never whole.
+- In Playwright prefer `browser_evaluate` returning a small JSON value over screenshots and snapshots; screenshot only when judging the look.
+
+## Compact instructions
+When compacting, keep decisions, file paths, open todos and failing test names.
 
 ## Photo editing (paid work)
 - Underwater or macro photo edits, ARW/RAW, Camera Raw, backscatter, "pop", PSD deliverables: `underwater-photoshop` skill. Local Photoshop via COM, never the Adobe cloud tools for the edit itself. Nothing is uploaded to Adobe cloud.

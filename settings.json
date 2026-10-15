@@ -14,10 +14,13 @@
     "defaultMode": "bypassPermissions",
     "deny": ["Skill(mattpocock-skills:grilling)", "Skill(grilling)"]
   },
-  "model": "sonnet",
+  "model": "opus",
   "env": {
     "CLAUDE_CODE_PLUGIN_DIRS": "<repo>/mods/readable-session",
-    "CLAUDE_CODE_NATIVE_CURSOR": "1"
+    "CLAUDE_CODE_NATIVE_CURSOR": "1",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false",
+    "CLAUDE_CODE_DISABLE_FAST_MODE": "1"
   },
   "statusLine": {
     "type": "command",
@@ -31,6 +34,15 @@
     { "serverUrl": "https://mcp.notion.com/*" },
     { "serverUrl": "https://mcp.figma.com/*" },
     { "serverUrl": "https://mcp.intercom.com/*" },
+    { "serverUrl": "https://api.anthropic.com/v1/pages/mcp" },
+    { "serverUrl": "https://mcp.vercel.com/*" },
+    { "serverUrl": "https://mcp.canva.com/*" },
+    { "serverUrl": "https://gmailmcp.googleapis.com/*" },
+    { "serverUrl": "https://calendarmcp.googleapis.com/*" },
+    { "serverUrl": "https://drivemcp.googleapis.com/*" },
+    { "serverUrl": "https://docsmcp.googleapis.com/*" },
+    { "serverUrl": "https://sheetsmcp.googleapis.com/*" },
+    { "serverUrl": "https://mcp-gateway-external-pilot.spotify.net/*" },
     { "serverCommand": ["npx", "-y", "@wonderwhy-er/desktop-commander@latest"] },
     { "serverName": "plugin:finance:snowflake" },
     { "serverName": "plugin:finance:databricks" },
@@ -43,16 +55,16 @@
   ],
   "modelSettings": {
     "claude-opus-5-5": {
-      "effortLevel": "high"
+      "effortLevel": "medium"
     },
     "claude-fable-5-1": {
       "effortLevel": "xhigh"
     },
     "claude-sonnet-5-5": {
-      "effortLevel": "medium"
+      "effortLevel": "high"
     }
   },
-  "autoCompactWindow": 250000,
+  "autoCompactWindow": 200000,
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
   "theme": "auto",
