@@ -5,9 +5,14 @@
 """Unified status line for Claude Code.
 
 One line, always (Claude Code draws its own mode line below it), left to right:
-    project › branch ~N “session-name” │ model · effort │ ctx N% bar used/size │
-    5h N% bar →reset │ 7d N% bar →reset │ $cost │ session time │ ✓ mcp N · version │
-    skills N │ venv │ :ports
+    project › branch ~N “session-name” │ model · effort │ ctx N% bar used/compact-at │
+    5h N% bar →reset │ 7d N% bar →reset pace │ $cost │ session time │ ✓ mcp N · version │
+    venv │ :ports
+ctx counts to the point where Claude Code compacts (CLAUDE_CODE_AUTO_COMPACT_WINDOW, else
+settings.json autoCompactWindow, else the model window), so 100% means "compacts next". The
+pace marker beside 7d compares usage with the share of the week gone: "on pace" within 10
+points, "▲ ahead" 10-25 over, "▲▲" over 25; nothing when well under or when the reset time
+is unknown.
 
 It is designed for a 120-column window and fits itself to COLUMNS: wider windows show
 more, narrower ones drop items by priority (see format_statusline). It never wraps.
@@ -36,7 +41,7 @@ Or by hand:
        Add "--icons nerd" with a Nerd Font, STATUSLINE_THEME=light on a light terminal.
     3. Restart your Claude Code session.
 
-`python statusline.py --demo` prints two sample lines at your window's width (nothing is
+`python statusline.py --demo` prints three sample lines at your window's width (nothing is
 read or written). See https://github.com/roeimichael/claude-code-statusline for docs.
 """
 
@@ -59,27 +64,29 @@ def fg(n):
 RST = "\033[0m"
 
 # Two palettes of xterm-256 indices. The dark one is the default; STATUSLINE_THEME=light
-# picks colours with at least 3:1 contrast on a white background. Stage colours (green,
-# yellow, orange, red by percentage) are kept for the meters alone: no model family, effort
-# level or other text borrows one, so a stage colour always means a stage.
+# picks colours with at least 3:1 contrast on a white background. One accent (Claude
+# terracotta) marks the model and the high effort levels; the rest is neutral text or grey.
+# Stage colours (green, yellow, orange, red by percentage) are kept for the meters and
+# health state alone: no model family, effort level or other text borrows one, so a stage
+# colour always means a stage.
 THEMES = {
     "dark": {
         "DIM": 252,      # secondary text: the terminal's usual light grey, not a faint dim
         "SEP": 240,      # the │ between items: dimmer than the labels
         "TRACK": 238,    # the empty part of a bar
         "STAGES": (114, 221, 208), "RED": 203,
-        "GREEN": 114, "AMBER": 221, "CYAN": 80,  # clean branch and ticks; dirty branch and updates; name, venv
-        "PROJECT": 141,  # violet
-        "MODEL": 173,    # Claude terracotta: Opus and unknown models
-        "ACCENT": 141,   # the max and xhigh effort levels
-        "MODEL_COLORS": {"opus": 173, "sonnet": 75, "haiku": 43, "fable": 213},
+        "GREEN": 114, "AMBER": 221, "CYAN": 252,  # clean branch and ticks; dirty branch and updates; name, venv (neutral)
+        "PROJECT": 255,  # near-white: the item that leads the line
+        "MODEL": 173,    # Claude terracotta, the one accent
+        "ACCENT": 173,   # the max and xhigh effort levels
+        "MODEL_COLORS": {"opus": 173, "sonnet": 173, "haiku": 173, "fable": 173},
     },
     "light": {
         "DIM": 244, "SEP": 250, "TRACK": 250,
         "STAGES": (28, 136, 166), "RED": 160,
-        "GREEN": 28, "AMBER": 136, "CYAN": 30,
-        "PROJECT": 55, "MODEL": 130, "ACCENT": 55,
-        "MODEL_COLORS": {"opus": 130, "sonnet": 26, "haiku": 30, "fable": 127},
+        "GREEN": 28, "AMBER": 136, "CYAN": 244,
+        "PROJECT": 235, "MODEL": 130, "ACCENT": 130,
+        "MODEL_COLORS": {"opus": 130, "sonnet": 130, "haiku": 130, "fable": 130},
     },
 }
 STAGE_LIMITS = (50, 70, 85)  # yellow from 50%, orange from 70%, red from 85%
@@ -90,7 +97,7 @@ def set_theme(name):
     global DIM, SEP, BAR_TRACK, STAGES, RED, GREEN, AMBER, CYAN, PROJECT, MODEL, COST, MODEL_COLORS, EFFORT
     t = THEMES.get(name) or THEMES["dark"]
     DIM, RED, GREEN, AMBER, CYAN = fg(t["DIM"]), fg(t["RED"]), fg(t["GREEN"]), fg(t["AMBER"]), fg(t["CYAN"])
-    PROJECT, MODEL, COST = fg(t["PROJECT"]), fg(t["MODEL"]), fg(t["GREEN"])
+    PROJECT, MODEL, COST = fg(t["PROJECT"]), fg(t["MODEL"]), fg(t["DIM"])
     STAGES = tuple(zip(STAGE_LIMITS, (fg(n) for n in t["STAGES"])))  # (below this %, colour), then RED
     SEP = f" {fg(t['SEP'])}│{RST} "  # one space each side: room for three bars on one 120-column line
     BAR_TRACK = fg(t["TRACK"])
@@ -396,20 +403,39 @@ def _tokens_used(cw):
         return None
 
 
-def context_tokens(cw):
-    """'used/size' tokens in the context window, or '' when the size or the usage is unknown."""
-    size = cw.get("context_window_size")
+def compact_window(env, settings, model_window):
+    """The token count at which Claude Code compacts: CLAUDE_CODE_AUTO_COMPACT_WINDOW, else
+    settings.json's autoCompactWindow, else the model's whole window (None when unknown).
+    Never above the model window: a larger setting cannot be reached."""
+    for raw in ((env or {}).get("CLAUDE_CODE_AUTO_COMPACT_WINDOW"), (settings or {}).get("autoCompactWindow")):
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            return min(n, model_window) if _number(model_window) and model_window > 0 else n
+    return int(model_window) if _number(model_window) and model_window > 0 else None
+
+
+def context_tokens(cw, window=None):
+    """'used/size' tokens in the context window, or '' when the size or the usage is unknown.
+    With `window` (the compaction point) the size is that window, so 100% is where it compacts."""
+    size = window or cw.get("context_window_size")
     used = _tokens_used(cw)
     if not _number(size) or size <= 0 or used is None:
         return ""
     return f"{fmt_tokens(used)}/{fmt_tokens(int(size))}"
 
 
-def context_pct(cw):
-    """Context window usage in percent: Claude Code's figure, else worked out from the tokens.
+def context_pct(cw, window=None):
+    """Context usage in percent. With `window` (the compaction point) it is tokens used over
+    that window, so 100% is where Claude Code compacts. Without: Claude Code's figure over the
+    whole window, else worked out from the tokens.
 
     A known window size with no usage yet is 0%; None only when the size is unknown too.
     """
+    if window:
+        return min(100.0, (_tokens_used(cw) or 0) / window * 100)
     try:
         return float(cw.get("used_percentage"))
     except (TypeError, ValueError):
@@ -422,6 +448,34 @@ def context_pct(cw):
 
 def fmt_cost(c):
     return f"{COST}${c:.2f}{RST}"
+
+
+WEEK_SECONDS = 7 * 86400
+
+
+def pace(pct, resets_at, now):
+    """How the 7-day usage compares with the share of the week that has passed:
+    ('on pace', 'grey') within 10 points, ('▲ ahead', 'amber') 10-25 ahead, ('▲▲', 'red') more
+    than 25 ahead, None when well behind or when the reset time is unknown."""
+    if pct is None or not _number(resets_at):
+        return None
+    elapsed = min(1.0, max(0.0, 1 - (resets_at - now) / WEEK_SECONDS)) * 100
+    lead = pct - elapsed
+    if lead < -10:
+        return None
+    if lead <= 10:
+        return "on pace", "grey"
+    if lead <= 25:
+        return "▲ ahead", "amber"
+    return "▲▲", "red"
+
+
+def fmt_pace(p):
+    if not p:
+        return ""
+    label, level = p
+    color = {"grey": DIM, "amber": AMBER, "red": RED}[level]
+    return f"{color}{label}{RST}"
 
 
 def run(cmd, timeout=1.0):
@@ -444,7 +498,6 @@ PROBE_CACHE_NAME = "statusline-probe-cache.json"
 GIT_TTL = 3        # git status, per directory
 PORTS_TTL = 10     # dev port scan
 HEALTH_TTL = 10    # version status, plugins to reload, MCP status, per session and project
-SKILLS_TTL = 60    # skill count (a folder scan), per project
 NAME_REFRESH = 30  # the session name is keyed by transcript size, not a TTL; it is re-stored this often so it never expires
 
 
@@ -1098,49 +1151,6 @@ def _connection_state(e):
     return None
 
 
-def count_skills(installed, enabled, claude_dir, project_dir=None):
-    """Skills available to a session: enabled plugins' skills and commands, yours, the project's.
-
-    A plugin whose plugin.json lists "skills" loads exactly those; otherwise
-    each skills/<name>/SKILL.md. This matches what /reload-plugins reports,
-    plus the user and project skill folders it leaves out.
-    """
-    n = 0
-    for name, entries in (installed.get("plugins") or {}).items():
-        if name not in enabled or not entries:
-            continue
-        root = entries[-1].get("installPath")
-        if not root:
-            continue  # nothing on disk to count (and never the current directory)
-        listed = _read_json(os.path.join(root, ".claude-plugin", "plugin.json")).get("skills")
-        if isinstance(listed, list):
-            n += sum(1 for rel in listed if os.path.isfile(os.path.join(root, str(rel), "SKILL.md")))
-        else:
-            n += _count_skill_files(os.path.join(root, "skills"))
-        n += _count_files(os.path.join(root, "commands"), ".md")
-    n += _count_skill_files(os.path.join(claude_dir, "skills"))
-    if project_dir:
-        n += _count_skill_files(os.path.join(project_dir, ".claude", "skills"))
-    return n
-
-
-def _count_skill_files(folder):
-    """How many <folder>/*/SKILL.md exist."""
-    try:
-        names = os.listdir(folder)
-    except OSError:
-        return 0
-    return sum(1 for name in names if os.path.isfile(os.path.join(folder, name, "SKILL.md")))
-
-
-def _count_files(folder, suffix):
-    try:
-        return sum(1 for name in os.listdir(folder) if name.endswith(suffix)
-                   and os.path.isfile(os.path.join(folder, name)))
-    except OSError:
-        return 0
-
-
 # Health mark levels, worst last. A problem's level picks the bare marker's glyph and colour.
 OK, RELOAD, UPDATE, FAILED = 0, 1, 2, 3
 MARKER = {FAILED: ("RED", "warn"), UPDATE: ("AMBER", "up"), RELOAD: ("DIM", "reload")}
@@ -1180,10 +1190,10 @@ def health_marks(running, version, reload_plugins, mcp):
 
 
 def health_state(data, cache=None):
-    """(running, version, reload_plugins, mcp, skills) for health_marks and the skills item.
+    """(running, version, reload_plugins, mcp) for health_marks.
 
     cache: the render's ProbeCache; the probes are kept HEALTH_TTL seconds per session
-    and project (SKILLS_TTL for the skill count, per project).
+    and project.
     """
     cache = _probe_cache(cache)
     running = data.get("version")
@@ -1191,12 +1201,7 @@ def health_state(data, cache=None):
     key = json.dumps([data.get("session_id"), ws.get("project_dir") or data.get("cwd"),
                       data.get("transcript_path"), running])
     version, reload_plugins, mcp = cache.get("health:" + key, HEALTH_TTL, lambda: _health_probe(data, cache))
-
-    def skill_count():
-        settings, installed = _settings_and_plugins()
-        return count_skills(installed, _enabled(settings), CLAUDE_DIR, ws.get("project_dir"))
-    skills = cache.get("skills:" + json.dumps(ws.get("project_dir")), SKILLS_TTL, skill_count)
-    return running, version, reload_plugins, mcp, skills
+    return running, version, reload_plugins, mcp
 
 
 def _settings_and_plugins():
@@ -1533,13 +1538,21 @@ def name_tag(name):
 def gather_extras(data, cache=None):
     """The probed items for format_statusline: project, git, session name, health, ports, venv.
 
-    Everything behind the probe cache (git 3 s, ports 10 s, health 10 s, skills 60 s, the
-    name until the transcript grows). A probe that fails only leaves its item out.
+    Everything behind the probe cache (git 3 s, ports 10 s, health 10 s, the compaction
+    window 10 s, the name until the transcript grows). A probe that fails only leaves its
+    item out.
     """
     ws = data.get("workspace", {}) or {}
     cwd = ws.get("current_dir") or ws.get("project_dir") or data.get("cwd") or os.getcwd()
     extras = {"proj": _basename(cwd) if cwd else "", "git": None, "name": "", "marks": [],
-              "skills": None, "ports": "", "venv": ""}  # marks: health_marks()'s list
+              "compact": None, "ports": "", "venv": ""}  # marks: health_marks()'s list
+    size = (data.get("context_window") or {}).get("context_window_size")
+    try:
+        extras["compact"] = _probe_cache(cache).get(
+            f"compact:{size}", HEALTH_TTL,
+            lambda: compact_window(os.environ, _read_json(os.path.join(CLAUDE_DIR, "settings.json")), size))
+    except Exception:
+        pass
     for key, probe in (("git", lambda: git_info(cwd, cache)),
                        ("name", lambda: session_name(data, cache)),
                        ("venv", venv_tag),
@@ -1550,9 +1563,8 @@ def gather_extras(data, cache=None):
             pass
     if SHOW_HEALTH:
         try:
-            running, version, reload_plugins, mcp, skills = health_state(data, cache)
+            running, version, reload_plugins, mcp = health_state(data, cache)
             extras["marks"] = health_marks(running, version, reload_plugins, mcp)
-            extras["skills"] = skills
         except Exception:
             pass
     return extras
@@ -1568,14 +1580,14 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
     result; without it only the session's own items show. Left to right:
 
         project › branch ~N “session-name” │ model · effort │ ctx % bar tokens │
-        5h % bar →reset │ 7d % bar →reset │ $cost │ session time │ health │
-        skills │ venv │ :ports
+        5h % bar →reset │ 7d % bar →reset pace │ $cost │ session time │ health │
+        venv │ :ports
 
     A window's →reset countdown shows only from RESET_FROM percent and belongs to its meter:
     it is never dropped on its own. The line is made for a 120-column window. When it does
     not fit `width`, things go in this order, each only if the line is still too wide:
 
-      1. venv and ports, 2. skills, 3. session time,
+      1. the pace marker, 2. venv and ports, 3. session time,
       4. the healthy health cluster ('✓ mcp 3 · 2.1.296'),
       5. health problems, last one first, each by name ('▲ discord', '↑ 2.2.0', '~reload'); when
          the last text goes, one bare marker stands in for all of them, with the glyph and colour
@@ -1598,17 +1610,21 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
     ex = extras or {}
 
     # (label, percentage, icon, suffix, suffix is droppable): the ctx tokens go, countdowns stay.
-    meters = [("ctx", context_pct(cw), "ctx", context_tokens(cw), True)]
+    # ctx counts to the compaction point (extras["compact"]) when it is known: 100% is where it compacts.
+    window = ex.get("compact")
+    meters = [("ctx", context_pct(cw, window), "ctx", context_tokens(cw, window), True)]
+    week_pace = ""
     if show_usage:
         usage = usage or {}
         for label, key in (("5h", "five_hour"), ("7d", "seven_day")):
             w = usage.get(key)
             left = fmt_reset(w["resets_at"] - now) if w and w["resets_at"] and w["pct"] >= RESET_FROM else ""
             meters.append((label, w["pct"] if w else None, key, left, False))
+            if key == "seven_day" and w:
+                week_pace = fmt_pace(pace(w["pct"], w["resets_at"], now))
     cost = fmt_cost(float((data.get("cost", {}) or {}).get("total_cost_usd", 0.0) or 0.0))
     session = session_time(data)
     tag = name_tag(ex["name"]) if ex.get("name") else ""
-    skills = f"{DIM}skills{RST} {ex['skills']}" if ex.get("skills") else ""
     marks = list(ex.get("marks") or [])
     worst = max(marks, key=lambda m: m[1], default=None)
     marker = None
@@ -1642,7 +1658,8 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
         out = [model_head(data, MODEL_SHORT if s["model"] == "short" else MODEL_MAX, s["effort"])]
         for i, (label, p, icon, suffix, droppable) in enumerate(meters):
             show = s["tokens"] or not droppable
-            out.append(meter(label, p, icon, with_bar=i < s["bars"], suffix=suffix if show else ""))
+            text = meter(label, p, icon, with_bar=i < s["bars"], suffix=suffix if show else "")
+            out.append(f"{text} {week_pace}" if label == "7d" and s["pace"] and week_pace else text)
         if s["cost"]:
             out.append(cost)
         if s["session"] and session:
@@ -1651,8 +1668,6 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
         if s["marker"] and marker:
             color, glyph, _ = marker
             out.append(f"{color}{glyph}{RST}")
-        if s["skills"] and skills:
-            out.append(skills)
         if s["extras"]:
             out += [x for x in (ex.get("venv"), ex.get("ports")) if x]
         first = " ".join(x for x in (where(s, out), tag if s["name"] else "") if x)
@@ -1669,7 +1684,7 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
         return line
 
     # The drop order, as patches applied one after the other to the state.
-    steps = [{"extras": False}, {"skills": False}, {"session": False}]
+    steps = [{"pace": False}, {"extras": False}, {"session": False}]
     healthy = [i for i, (_, level, _) in enumerate(marks) if level == OK]
     needy = [i for i, (_, level, _) in enumerate(marks) if level > OK]
     steps += [{"dropped": i} for i in reversed(healthy)]
@@ -1679,7 +1694,7 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
               {"tokens": False}, {"bars": 2}, {"bars": 1}, {"bars": 0}, {"cost": False},
               {"effort": False}, {"model": "short"}, {"marker": False}]
 
-    state = {"extras": True, "skills": True, "session": True, "dropped": set(),
+    state = {"pace": True, "extras": True, "session": True, "dropped": set(),
              "marker": False, "name": True, "branch": "full", "proj": "full", "tokens": True,
              "bars": len(meters), "cost": True, "effort": True, "model": "full"}
     best = items(state)
@@ -1698,24 +1713,29 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
 # --- demo --------------------------------------------------------------------
 
 def demo_lines(now=None, width=None):
-    """Two realistic sample lines (a healthy session, then one with a failed MCP server and an
-    update) rendered at `width`, from fixed data: no probes, no caches, no network."""
+    """Three realistic sample lines rendered at `width`, from fixed data (no probes, no caches,
+    no network): a healthy session on pace for the week; one with a failed MCP server and an
+    update, ahead of pace; and a healthy one far ahead (▲▲). ctx counts to a 200k compaction point."""
     now = time.time() if now is None else now
-    data = {"model": {"id": "claude-opus-4-6", "display_name": "Opus 4.6"}, "effort": {"level": "high"},
-            "context_window": {"used_percentage": 43, "context_window_size": 1_000_000,
+    data = {"model": {"id": "claude-opus-5-5", "display_name": "Opus 5.5"}, "effort": {"level": "medium"},
+            "context_window": {"used_percentage": 8, "context_window_size": 1_000_000,
                                "current_usage": {"input_tokens": 2, "cache_creation_input_tokens": 787,
-                                                 "cache_read_input_tokens": 429_211}},
+                                                 "cache_read_input_tokens": 83_211}},
             "cost": {"total_cost_usd": 103.21, "total_duration_ms": 5_580_000}}
-    usage = merge_usage({"five_hour": {"used_percentage": 74, "resets_at": now + 2 * 3600 + 600},
-                         "seven_day": {"used_percentage": 48, "resets_at": now + 5 * 86400}}, None, now)
-    extras = {"proj": "claude-code-statusline", "git": ("live-usage-and-redesign", [f"{AMBER}~2{RST}"]),
-              "name": "", "skills": 69, "ports": f"{ic('ports', GREEN)}{GREEN}:3000{RST}", "venv": "",
-              "marks": health_marks("2.1.296", ("ok", None), [], (["a", "b", "c"], []))}
-    healthy = format_statusline(data, usage, now, True, extras, width)
-    extras.update(name="statusline-py-usage-accuracy",
-                  marks=health_marks("2.1.296", ("update", "2.2.0"), [], (["a", "b"], ["discord"])))
-    troubled = format_statusline(data, usage, now, True, extras, width)
-    return healthy, troubled
+
+    def usage_at(week_pct):
+        return merge_usage({"five_hour": {"used_percentage": 40, "resets_at": now + 2 * 3600 + 600},
+                            "seven_day": {"used_percentage": week_pct, "resets_at": now + 5 * 86400}}, None, now)
+    extras = {"proj": "claude-setup", "git": ("optimize-setup", [f"{AMBER}~2{RST}"]), "compact": 200_000,
+              "name": "", "ports": f"{ic('ports', GREEN)}{GREEN}:3000{RST}", "venv": "",
+              "marks": health_marks("2.1.300", ("ok", None), [], (["a", "b", "c"], []))}
+    on_pace = format_statusline(data, usage_at(30), now, True, extras, width)
+    extras.update(name="statusline-pace",
+                  marks=health_marks("2.1.300", ("update", "2.2.0"), [], (["a", "b"], ["discord"])))
+    ahead = format_statusline(data, usage_at(48), now, True, extras, width)
+    extras.update(name="", marks=health_marks("2.1.300", ("ok", None), [], (["a", "b", "c"], [])))
+    far_ahead = format_statusline(data, usage_at(75), now, True, extras, width)
+    return on_pace, ahead, far_ahead
 
 
 def _opt(args, name):
