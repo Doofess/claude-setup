@@ -7,8 +7,8 @@ const running = atom({ plugin: 'readable-session', key: 'running' } as const, []
 const agents = atom({ plugin: 'readable-session', key: 'agents' } as const, {})
 
 // Theme keys, so the mod follows `theme: auto` on dark and light terminals.
-// One accent (`claude`), kept for your prompts and command cards; the kind of
-// work is shown by its icon, not by color; green, amber and red mean state only.
+// One accent (`claude`), kept for your prompts and command cards; green, amber
+// and red mean state only. The kind of work has its own muted cool tone (KIND).
 const TEXT = 'text'
 const SUB = 'subtle'
 const ACCENT = 'claude'
@@ -16,6 +16,25 @@ const OK = 'success'
 const WARN = 'warning'
 const FAIL = 'error'
 const WAIT = 'permission'
+
+/** What a tool call does, by group; each draws its icon, verb and card border
+ * in one muted tone. A tool in none of them stays `text`. */
+export type Kind = 'look' | 'change' | 'shell' | 'delegate' | 'connect'
+
+// Same hue per kind on both: light on dark themes, darker on light ones.
+const KIND: Record<'dark' | 'light', Record<Kind, string>> = {
+  dark: { look: '#8FB3D9', change: '#B7A3E0', shell: '#7FC4C4', delegate: '#D9A6C4', connect: '#A9B8C9' },
+  light: { look: '#3F6E9E', change: '#6E57A8', shell: '#2F7F7F', delegate: '#9C5480', connect: '#5B6B7E' },
+}
+
+/** Set from the `theme` setting at session start and on each change; a theme
+ * named `light…` takes the darker set, any other (`auto` too) the lighter. */
+let tone: 'dark' | 'light' = 'dark'
+const toneOf = (theme: unknown): 'dark' | 'light' => (/light/i.test(String(theme ?? '')) ? 'light' : 'dark')
+
+export function kindColor(kind: Kind | undefined, t: 'dark' | 'light' = tone): string {
+  return kind ? KIND[t][kind] : TEXT
+}
 
 /** A finished call stays in the band this long, so a fast one is seen. */
 const LINGER_MS = 2000
@@ -32,7 +51,7 @@ const I = {
   edit: '\u{F03EB}', // md-pencil
   read: '\u{F0214}', // md-file
   search: '\u{F0349}', // md-magnify
-  web: '\u{F059F}', // md-web
+  web: '\u{F0349}', // md-magnify
   fetch: '\u{F0C66}', // md-download_network_outline
   agent: '\u{F167A}', // md-robot_outline
   skill: '\u{F140B}', // md-lightning_bolt
@@ -44,6 +63,8 @@ const I = {
 
 // State marks: plain glyphs, so they draw the same in any font.
 const MARK = { ok: '\u2713', fail: '\u2717', stop: '\u25A0' }
+// A row that expands, and an expanded card that folds back.
+const ARROW = { down: '\u{F0140}', up: '\u{F0143}' } // md-chevron_down, md-chevron_up
 
 const LANGS: Record<string, string> = {
   ts: 'TypeScript', tsx: 'TypeScript React', js: 'JavaScript', jsx: 'JavaScript React', mjs: 'JavaScript',
@@ -62,6 +83,7 @@ export type Described = {
   detail: string
   /** What stands between verb and detail; two spaces when absent. */
   sep?: string
+  kind?: Kind
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
@@ -92,38 +114,38 @@ export function describeTool(tool: string, input: unknown): Described {
   const fileDetail = file ? shortPath(file) + (lang ? ` · ${lang}` : '') : ''
   switch (tool) {
     case 'Bash':
-      return { icon: I.shell, verb: 'Running Bash', past: 'Ran Bash', detail: commandLine(str(i.command)) }
+      return { icon: I.shell, verb: 'Running Bash', past: 'Ran Bash', kind: 'shell', detail: commandLine(str(i.command)) }
     case 'PowerShell':
-      return { icon: I.pwsh, verb: 'Running PowerShell', past: 'Ran PowerShell', detail: commandLine(str(i.command)) }
+      return { icon: I.pwsh, verb: 'Running PowerShell', past: 'Ran PowerShell', kind: 'shell', detail: commandLine(str(i.command)) }
     case 'Write':
-      return { icon: I.write, verb: 'Writing', past: 'Wrote', detail: fileDetail }
+      return { icon: I.write, verb: 'Writing', past: 'Wrote', kind: 'change', detail: fileDetail }
     case 'Edit':
     case 'MultiEdit':
     case 'NotebookEdit':
-      return { icon: I.edit, verb: 'Editing', past: 'Edited', detail: fileDetail }
+      return { icon: I.edit, verb: 'Editing', past: 'Edited', kind: 'change', detail: fileDetail }
     case 'Read':
-      return { icon: I.read, verb: 'Reading', past: 'Read', detail: fileDetail }
+      return { icon: I.read, verb: 'Reading', past: 'Read', kind: 'look', detail: fileDetail }
     case 'Grep':
       return {
         icon: I.search,
-        
+        kind: 'look',
         verb: 'Searching code',
         past: 'Searched code',
         detail: `"${str(i.pattern)}"` + (str(i.path) ? `  in ${base(str(i.path))}` : ''),
       }
     case 'Glob':
-      return { icon: I.search, verb: 'Finding files', past: 'Found files', detail: str(i.pattern) }
+      return { icon: I.search, verb: 'Finding files', past: 'Found files', kind: 'look', detail: str(i.pattern) }
     case 'WebSearch':
-      return { icon: I.web, verb: 'Searching the web', past: 'Searched the web', detail: `"${str(i.query)}"` }
+      return { icon: I.web, verb: 'Searching the web', past: 'Searched the web', kind: 'look', detail: `"${str(i.query)}"` }
     case 'WebFetch':
-      return { icon: I.fetch, verb: 'Fetching', past: 'Fetched', detail: str(i.url).replace(/^https?:\/\//, '') }
+      return { icon: I.fetch, verb: 'Fetching', past: 'Fetched', kind: 'look', detail: str(i.url).replace(/^https?:\/\//, '') }
     case 'Agent':
     case 'Task': {
       const type = str(i.subagent_type) || 'agent'
-      return { icon: I.agent, verb: `Starting ${type}`, past: `Started ${type}`, detail: str(i.description) }
+      return { icon: I.agent, verb: `Starting ${type}`, past: `Started ${type}`, kind: 'delegate', detail: str(i.description) }
     }
     case 'Skill':
-      return { icon: I.skill, verb: 'Using skill', past: 'Used skill', detail: str(i.skill) }
+      return { icon: I.skill, verb: 'Using skill', past: 'Used skill', kind: 'delegate', detail: str(i.skill) }
     case 'TodoWrite':
       return { icon: I.task, verb: 'Updating tasks', past: 'Updated tasks', detail: '' }
   }
@@ -132,7 +154,7 @@ export function describeTool(tool: string, input: unknown): Described {
     const server = mcp[1].replace(/^plugin_[^_]+_/, '').replace(/^claude_ai_/, '').replace(/_/g, ' ')
     return {
       icon: I.plug,
-      
+      kind: 'connect',
       verb: `Using ${server}`,
       past: `Used ${server}`,
       detail: mcp[2].replace(/_/g, ' '),
@@ -170,10 +192,51 @@ export function isInheritedHeavy(tag: AgentTag): boolean {
   return !tag.explicit && /^(opus|fable)$/.test(family(tag.model))
 }
 
+// Cells a row may need beyond its own text: the transcript's gutter, and a
+// glyph some terminals draw two cells wide.
+const ROW_SLACK = 4
+const CARD_SLACK = ROW_SLACK + 4
+
+/** Cuts `text` to `room` cells (code points; the Nerd Font is one cell each). */
+export function cut(text: string, room: number): string {
+  const chars = [...text]
+  return chars.length <= room ? text : chars.slice(0, Math.max(0, room)).join('').trimEnd()
+}
+
+type RowOpts = {
+  key?: string
+  tag?: string
+  /** Cells the row draws into; when its detail does not fit, the detail is
+   * cut and a down arrow (the row expands) stands where the cut is. */
+  cols?: number
+  /** An expanded card's header: an up arrow after the detail, always. */
+  expanded?: boolean
+}
+
+/** The state mark's text, for measuring; `row` draws the same. */
+const markText = (state: RowState) =>
+  state === 'running' ? '…' : state === 'interrupted' ? `${MARK.stop}  interrupted` : state === 'failed' ? `${MARK.fail}  failed` : MARK.ok
+
 /** One tool row, shared by the transcript's ToolUse and its folded ToolGroup:
- * icon, verb (past tense once done), plain-words detail, state mark. One Text,
- * so the row never wraps: it is cut at the edge instead. */
-function row(Text: any, d: Described, state: RowState, key?: string, tag?: string) {
+ * icon and verb (past tense once done) in the kind's tone, plain-words detail,
+ * state mark. One Text, so the row never wraps: a detail too long is cut by
+ * the row itself, a down arrow in the kind's tone marking the cut, so the
+ * state mark stays in view. */
+function row(Text: any, d: Described, state: RowState, o: RowOpts = {}) {
+  const color = kindColor(d.kind)
+  const head = `${d.icon}  ${state === 'running' ? d.verb : d.past}`
+  const sep = d.sep ?? '  '
+  const tail = (o.tag ? `  ${o.tag}` : '') + '  ' + markText(state)
+  let detail = d.detail
+  let arrow: string | undefined = o.expanded ? ARROW.up : undefined
+  if (o.cols && o.cols > 0) {
+    const arrowCells = 2
+    const room = o.cols - [...head].length - [...tail].length - (detail ? [...sep].length : 0) - (o.expanded ? arrowCells : 0)
+    if (detail && [...detail].length > room) {
+      detail = cut(detail, room - (o.expanded ? 0 : arrowCells))
+      if (!o.expanded) arrow = ARROW.down
+    }
+  }
   const mark =
     state === 'running' ? (
       <Text color={TEXT}>…</Text>
@@ -185,17 +248,122 @@ function row(Text: any, d: Described, state: RowState, key?: string, tag?: strin
       <Text color={OK}>{MARK.ok}</Text>
     )
   return (
-    <Text key={key} wrap="truncate-end">
-      <Text color={TEXT} bold>
-        {d.icon}  {state === 'running' ? d.verb : d.past}
+    <Text key={o.key} wrap="truncate-end">
+      <Text color={color} bold>
+        {head}
       </Text>
-      {d.detail ? <Text color={SUB}>{d.sep ?? '  '}{d.detail}</Text> : null}
-      {tag ? <Text color={SUB}>  {tag}</Text> : null}
+      {detail ? <Text color={SUB}>{sep}{detail}</Text> : null}
+      {arrow ? <Text color={color}> {arrow}</Text> : null}
+      {o.tag ? <Text color={SUB}>  {o.tag}</Text> : null}
       {'  '}
       {mark}
     </Text>
   )
 }
+
+/** At most this many output lines in an expanded card; the rest is counted. */
+const OUT_LINES = 40
+
+export type OutLine = { text: string; color: string }
+
+const plain = (s: string) =>
+  s
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+    .replace(/<\/?tool_use_error>/g, '')
+    .replace(/\t/g, '  ')
+    .replace(/\r/g, '')
+const linesOf = (s: string) => plain(s).replace(/\n+$/, '').split('\n')
+const kb = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024))}KB`
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
+
+/** Caps `lines` at OUT_LINES, counting what is left out. */
+function capped(lines: OutLine[]): OutLine[] {
+  if (lines.length <= OUT_LINES) return lines
+  return [...lines.slice(0, OUT_LINES), { text: `+${lines.length - OUT_LINES} more lines`, color: SUB }]
+}
+
+/** A diff's hunks as lines, added green and removed red. */
+function diffLines(patch: unknown): OutLine[] {
+  const hunks = Array.isArray(patch) ? (patch as { lines?: unknown }[]) : []
+  const out: OutLine[] = []
+  for (const h of hunks) {
+    for (const l of Array.isArray(h.lines) ? (h.lines as unknown[]) : []) {
+      const s = plain(str(l))
+      out.push({ text: s, color: s.startsWith('+') ? 'diffAdded' : s.startsWith('-') ? 'diffRemoved' : SUB })
+    }
+  }
+  return out
+}
+
+/** What an expanded card draws under its header, from the call's stored
+ * result: a shell's stdout (stderr red), a diff, a list of files, or a line
+ * that says what came back. A failed call draws the error the model read. */
+export function outputLines(tool: string, output: unknown, state: RowState): OutLine[] {
+  if (state === 'interrupted') return [{ text: 'Interrupted', color: SUB }]
+  if (typeof output === 'string') {
+    return capped(linesOf(output).map(text => ({ text, color: state === 'failed' ? FAIL : TEXT })))
+  }
+  const o = (output ?? {}) as Record<string, any>
+  switch (tool) {
+    case 'Bash':
+    case 'PowerShell': {
+      if (o.backgroundTaskId) return [{ text: 'Running in the background', color: SUB }]
+      const out = str(o.stdout).trim() ? linesOf(str(o.stdout)).map(text => ({ text, color: TEXT })) : []
+      const err = str(o.stderr).trim() ? linesOf(str(o.stderr)).map(text => ({ text, color: FAIL })) : []
+      const lines = capped([...out, ...err])
+      if (typeof o.timedOutAfterMs === 'number') lines.push({ text: `Timed out after ${Math.round(o.timedOutAfterMs / 1000)}s`, color: WARN })
+      return lines.length ? lines : [{ text: 'No output', color: SUB }]
+    }
+    case 'Read': {
+      const f = (o.file ?? {}) as Record<string, any>
+      if (o.type === 'image') return [{ text: `Read image (${kb(Number(f.originalSize) || 0)})`, color: SUB }]
+      if (o.type === 'pdf') return [{ text: 'Read PDF', color: SUB }]
+      if (o.type === 'notebook') return [{ text: `Read notebook (${plural((f.cells as unknown[] | undefined)?.length ?? 0, 'cell')})`, color: SUB }]
+      if (o.type === 'parts') return [{ text: `Read ${plural((o.pages as unknown[] | undefined)?.length ?? 0, 'page')}`, color: SUB }]
+      return [{ text: `Read ${plural(Number(f.numLines) || 0, 'line')}`, color: SUB }]
+    }
+    case 'Edit':
+    case 'MultiEdit':
+    case 'Write': {
+      const diff = diffLines(o.structuredPatch)
+      if (diff.length) return capped(diff)
+      if (tool === 'Write') return [{ text: `Wrote ${plural(linesOf(str(o.content)).length, 'line')}`, color: SUB }]
+      return [{ text: 'No changes', color: SUB }]
+    }
+    case 'Grep': {
+      if (o.mode === 'content' || o.mode === 'count') {
+        return str(o.content).trim()
+          ? capped(linesOf(str(o.content)).map(text => ({ text, color: TEXT })))
+          : [{ text: 'No matches', color: SUB }]
+      }
+      return fileList(o)
+    }
+    case 'Glob':
+      return fileList(o)
+    case 'WebFetch':
+      return [{ text: `${o.code ?? ''} ${str(o.codeText)} · ${kb(Number(o.bytes) || 0)}`.trim(), color: SUB }]
+    case 'WebSearch': {
+      const n = Array.isArray(o.results) ? (o.results as unknown[]).length : 0
+      return [{ text: `Searched in ${Math.round(Number(o.durationSeconds) || 0)}s · ${plural(n, 'result block')}`, color: SUB }]
+    }
+  }
+  // An MCP tool's result: its text blocks.
+  const blocks = Array.isArray(output) ? (output as { type?: string; text?: unknown }[]) : []
+  const text = blocks.filter(b => b?.type === 'text').map(b => str(b.text)).join('\n')
+  return text.trim() ? capped(linesOf(text).map(t => ({ text: t, color: TEXT }))) : []
+}
+
+function fileList(o: Record<string, any>): OutLine[] {
+  const files = Array.isArray(o.filenames) ? (o.filenames as unknown[]).map(f => shortPath(str(f))) : []
+  if (!files.length) return [{ text: 'No files found', color: SUB }]
+  const n = Number(o.numFiles) || files.length
+  return capped([{ text: `Found ${plural(n, 'file')}`, color: SUB }, ...files.map(text => ({ text, color: TEXT }))])
+}
+
+/** The cells a row has: the viewport's width less `slack`; undefined where no
+ * surface measured, and the row is then cut at the edge as before. */
+const cols = (e: { viewport?: { columns: number } }, slack: number) =>
+  e.viewport?.columns ? e.viewport.columns - slack : undefined
 
 const callState = (c: { isRunning: boolean; isErrored: boolean; isInterrupted: boolean }): RowState =>
   c.isRunning ? 'running' : c.isInterrupted ? 'interrupted' : c.isErrored ? 'failed' : 'done'
@@ -207,12 +375,20 @@ async function sweepMain($: any) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    const theme = (await $.config.list().catch(() => [])).find(r => r.key === 'theme')
+    tone = toneOf(theme?.value)
     await $.command.register({
       name: 'readable-session',
       description: 'Show what readable-session tracks (running tools)',
     })
     return next(e)
   })
+
+  on('config.set', { key: 'theme' }, async ($, e, next) => {
+    const r = await next(e)
+    if (!r.deny) tone = toneOf(r.value)
+    return r
+  }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'readable-session' }, async $ => {
     const r = (await read($, running)).filter(x => x.doneAt === undefined)
@@ -347,7 +523,7 @@ export const register: Register = on => {
     const hidden = calls.length - shown.length
     return (
       <Box flexDirection="column">
-        {shown.map((c, i) => row(Text, describeTool(c.tool, c.input), callState(c), `g${i}-${c.tool_use_id ?? ''}`))}
+        {shown.map((c, i) => row(Text, describeTool(c.tool, c.input), callState(c), { key: `g${i}-${c.tool_use_id ?? ''}`, cols: cols(e, ROW_SLACK) }))}
         {hidden > 0 ? <Text key="more" color={SUB} wrap="truncate-end">+{hidden} more</Text> : null}
       </Box>
     )
@@ -375,10 +551,27 @@ export const register: Register = on => {
         </Box>
       )
     }
-    // A row in an expanded group draws its output inline; keep it.
-    if (p.output !== undefined && inGroup.has(p.tool_use_id)) return next(e)
+    // A row in an expanded group draws its output inline: a card like your
+    // prompts', bordered in the kind's tone (red once it failed), headed by the
+    // row, the output drawn here (the engine's block paints a grey fill).
+    if (p.output !== undefined && inGroup.has(p.tool_use_id)) {
+      const { Box, Text } = $.ui.resolve(e)
+      const state = callState(p)
+      const d = describeTool(p.tool, p.input)
+      const lines = outputLines(p.tool, p.output, state)
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor={state === 'failed' ? FAIL : kindColor(d.kind)} paddingX={1}>
+          {row(Text, d, state, { expanded: true, cols: cols(e, CARD_SLACK) })}
+          {lines.map((l, i) => (
+            <Text key={`o${i}`} color={l.color}>
+              {l.text || ' '}
+            </Text>
+          ))}
+        </Box>
+      )
+    }
     const { Text } = $.ui.resolve(e)
-    return row(Text, describeTool(p.tool, p.input), callState(p))
+    return row(Text, describeTool(p.tool, p.input), callState(p), { cols: cols(e, ROW_SLACK) })
   })
 
   // The band above the prompt: the calls running now or just finished, and
@@ -398,12 +591,12 @@ export const register: Register = on => {
       const d = describeTool(act.tool, act.input)
       const t = tags[act.id]
       const tag = t ? family(t.model) : undefined
-      if (act.doneAt !== undefined) return row(Text, d, act.failed ? 'failed' : 'done', `call-${act.id}`, tag)
+      if (act.doneAt !== undefined) return row(Text, d, act.failed ? 'failed' : 'done', { key: `call-${act.id}`, tag, cols: e.props.bodyColumns })
       return (
         <Text key={`call-${act.id}`} wrap="truncate-end">
           {act.awaiting
             ? <Text color={WAIT} bold>{I.now}  waiting for you</Text>
-            : <Text color={TEXT} bold>{I.now}  {d.verb}</Text>}
+            : <Text color={kindColor(d.kind)} bold>{I.now}  {d.verb}</Text>}
           {d.detail ? <Text color={SUB}>{d.sep ?? '  '}{d.detail}</Text> : null}
           {t ? <Text color={isInheritedHeavy(t) ? WARN : SUB}>  {family(t.model)}</Text> : null}
         </Text>
