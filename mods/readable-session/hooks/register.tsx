@@ -21,10 +21,12 @@ const WAIT = 'permission'
  * in one muted tone. A tool in none of them stays `text`. */
 export type Kind = 'look' | 'change' | 'shell' | 'delegate' | 'connect'
 
-// Same hue per kind on both: light on dark themes, darker on light ones.
+// Same hue per kind on both: light on dark themes, darker on light ones. Cool
+// tones opposite Claude's orange, so the accent stands out; connect is a warm
+// stone that ties back to it.
 const KIND: Record<'dark' | 'light', Record<Kind, string>> = {
-  dark: { look: '#8FB3D9', change: '#B7A3E0', shell: '#7FC4C4', delegate: '#D9A6C4', connect: '#A9B8C9' },
-  light: { look: '#3F6E9E', change: '#6E57A8', shell: '#2F7F7F', delegate: '#9C5480', connect: '#5B6B7E' },
+  dark: { look: '#7FB5C9', change: '#9DA8E0', shell: '#86BFB0', delegate: '#C9A9D6', connect: '#B8AFA3' },
+  light: { look: '#2F6C82', change: '#4F5BA6', shell: '#2E7363', delegate: '#7E5A91', connect: '#6B6358' },
 }
 
 /** Set from the `theme` setting at session start and on each change; a theme
