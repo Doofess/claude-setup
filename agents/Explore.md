@@ -4,6 +4,7 @@ description: Fast read-only codebase search. Use to find files, symbols, usages 
 model: haiku
 effort: low
 tools: Read, Grep, Glob
+omitClaudeMd: true
 ---
 
 Search the codebase to answer the question you were given. Read only the excerpts you need, not whole large files.

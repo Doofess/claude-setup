@@ -4,8 +4,10 @@
     "frontend-design@anthropic-plugin-directory": true,
     "context7@anthropic-plugin-directory": true,
     "playwright@anthropic-plugin-directory": true,
-    "claude-md-management@anthropic-plugin-directory": true,
-    "typescript-lsp@claude-plugins-official": true
+    "claude-md-management@anthropic-plugin-directory": false,
+    "typescript-lsp@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "good-css": { "source": { "source": "github", "repo": "vojtaholik/good-css" } }
@@ -56,7 +58,7 @@
   ],
   "modelSettings": {
     "claude-opus-5-5": {
-      "effortLevel": "medium"
+      "effortLevel": "high"
     },
     "claude-fable-5-1": {
       "effortLevel": "xhigh"
@@ -69,7 +71,12 @@
   "skillOverrides": {
     "chrome-browser": "name-only",
     "built-in-browser": "name-only",
-    "computer-use": "name-only"
+    "computer-use": "name-only",
+    "docs": "name-only",
+    "docx": "name-only",
+    "pdf": "name-only",
+    "pptx": "name-only",
+    "xlsx": "name-only"
   },
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
