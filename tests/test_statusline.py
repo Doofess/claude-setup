@@ -44,22 +44,23 @@ class PaceTest(unittest.TestCase):
 
 
 class CompactWindowTest(unittest.TestCase):
+    # Claude Code compacts 33k below the window: 20k kept for the reply, 13k buffer.
     def test_env_wins(self):
         self.assertEqual(statusline.compact_window({"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "150000"},
-                                                   {"autoCompactWindow": 200000}, 1_000_000), 150000)
+                                                   {"autoCompactWindow": 200000}, 1_000_000), 117_000)
 
     def test_settings_when_no_env(self):
-        self.assertEqual(statusline.compact_window({}, {"autoCompactWindow": 200000}, 1_000_000), 200000)
+        self.assertEqual(statusline.compact_window({}, {"autoCompactWindow": 200000}, 1_000_000), 167_000)
 
     def test_model_window_when_neither(self):
-        self.assertEqual(statusline.compact_window({}, {}, 1_000_000), 1_000_000)
+        self.assertEqual(statusline.compact_window({}, {}, 1_000_000), 967_000)
 
     def test_never_above_the_model_window(self):
-        self.assertEqual(statusline.compact_window({}, {"autoCompactWindow": 500000}, 200_000), 200_000)
+        self.assertEqual(statusline.compact_window({}, {"autoCompactWindow": 500000}, 200_000), 167_000)
 
     def test_ignores_junk(self):
         self.assertEqual(statusline.compact_window({"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "x"},
-                                                   {"autoCompactWindow": "y"}, 1_000_000), 1_000_000)
+                                                   {"autoCompactWindow": "y"}, 1_000_000), 967_000)
         self.assertIsNone(statusline.compact_window({}, {}, None))
 
 

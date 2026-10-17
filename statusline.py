@@ -9,10 +9,10 @@ One line, always (Claude Code draws its own mode line below it), left to right:
     5h N% bar →reset │ 7d N% bar →reset pace │ $cost │ session time │ ✓ mcp N · version │
     venv │ :ports
 ctx counts to the point where Claude Code compacts (CLAUDE_CODE_AUTO_COMPACT_WINDOW, else
-settings.json autoCompactWindow, else the model window), so 100% means "compacts next". The
-pace marker beside 7d compares usage with the share of the week gone: "on pace" within 10
-points, "▲ ahead" 10-25 over, "▲▲" over 25; nothing when well under or when the reset time
-is unknown.
+settings.json autoCompactWindow, else the model window, less the 33k Claude Code holds back),
+so 100% means "compacts next". The pace marker beside 7d compares usage with the share of the
+week gone: "on pace" within 10 points, "▲ ahead" 10-25 over, "▲▲" over 25; nothing when well
+under or when the reset time is unknown.
 
 It is designed for a 120-column window and fits itself to COLUMNS: wider windows show
 more, narrower ones drop items by priority (see format_statusline). It never wraps.
@@ -403,18 +403,25 @@ def _tokens_used(cw):
         return None
 
 
+# Claude Code compacts this far below the window: room for the reply (20k) plus a 13k buffer.
+# Transcripts confirm it: with a 200k window, auto-compaction fires at ~167k.
+COMPACT_HEADROOM = 33_000
+
+
 def compact_window(env, settings, model_window):
-    """The token count at which Claude Code compacts: CLAUDE_CODE_AUTO_COMPACT_WINDOW, else
-    settings.json's autoCompactWindow, else the model's whole window (None when unknown).
-    Never above the model window: a larger setting cannot be reached."""
+    """The token count at which Claude Code compacts: the window (CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+    else settings.json's autoCompactWindow, else the model's whole window; None when unknown)
+    less COMPACT_HEADROOM. The window is never above the model's: a larger setting cannot be reached."""
+    window = int(model_window) if _number(model_window) and model_window > 0 else None
     for raw in ((env or {}).get("CLAUDE_CODE_AUTO_COMPACT_WINDOW"), (settings or {}).get("autoCompactWindow")):
         try:
             n = int(raw)
         except (TypeError, ValueError):
             continue
         if n > 0:
-            return min(n, model_window) if _number(model_window) and model_window > 0 else n
-    return int(model_window) if _number(model_window) and model_window > 0 else None
+            window = min(n, window) if window else n
+            break
+    return max(window - COMPACT_HEADROOM, 1) if window else None
 
 
 def context_tokens(cw, window=None):
