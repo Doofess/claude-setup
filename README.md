@@ -24,7 +24,7 @@ Synced plugins and claude.ai connectors follow the account, so they need no setu
 
 ## Daily habits
 
-- `/clear` before the status line's `ctx` nears 200k (that is where auto-compact fires).
+- `/clear` before the status line's `ctx` nears 100% (it counts to where auto-compact fires, about 167k with the 200k `autoCompactWindow`).
 - `/usage` weekly; `/context` when a session feels heavy; `/skill-doctor` monthly to spot skills that load but never run.
 - Start sessions from the repo folder, not `C:\Windows\System32`. The installer sets Windows Terminal to open in `C:\dev`, and adds a block to the PowerShell 7 profile that moves a shell started in System32 (Start menu, taskbar) to `C:\dev`.
 - Watch the 7-day pace marker next to the `7d` meter.

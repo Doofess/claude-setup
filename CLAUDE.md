@@ -5,14 +5,14 @@
 - Reviewing a diff: the built-in `/code-review`.
 
 ## superpowers: execution
-- Turning an agreed design into steps: `writing-plans`, then `executing-plans` by default. Use `subagent-driven-development` only for a plan too long for one context; its implementers are `worker` unless a task needs Opus.
+- Turning an agreed design into steps: `writing-plans`, then `executing-plans` by default. Under it, dispatch each plan task that edits more than a couple of files to `worker` with the task's brief, then check its report and run the tests yourself; do small tasks inline. Use `subagent-driven-development` only for a plan too long for one context; its implementers are `worker` unless a task needs Opus.
 - Feature work: `using-git-worktrees` for isolation.
 - Bugs and failures: `systematic-debugging`.
 - Before saying done, fixed or passing: run the check (tests, build, the command itself) in this turn and quote the relevant output.
 
 ## Models and usage
 - Sessions run on Opus 5.5 at high effort; `/effort xhigh` for the hardest problems (effort changes keep the cache, model switches don't). Pick the model at session start.
-- Delegate whenever the work means reading or editing more than a couple of files, and set every subagent's model: `Explore` (Haiku) for search and reading output; `worker` (Sonnet, medium) for implementation, with `effort: high` for concurrency, parsers, security, or after a failed first attempt; Sonnet for web research (Opus when the main thread will act on it unchecked); Opus for a whole-branch review; an explicit `model` on `Plan` agents.
+- In plans and outside them, delegate whenever the work means reading or editing more than a couple of files, and set every subagent's model: `Explore` (Haiku, read-only: Read, Grep, Glob) for search and reading files; `worker` (Sonnet, medium) for implementation, with `effort: high` for concurrency, parsers, security, or after a failed first attempt; Sonnet for web research (Opus when the main thread will act on it unchecked); Opus for a whole-branch review; an explicit `model` on `Plan` agents.
 - Advisor: `/advisor opus` before executing a multi-step plan with workers, so each Sonnet worker gets an Opus check before it reports done; `/advisor off` when the plan is finished. Fable only when Opus at `xhigh` is stuck (it has its own weekly cap): `/advisor fable` first, `/model fable` only if that isn't enough. No saved `advisorModel`: subagents inherit it, and the main thread would pay for uncached reads on every call.
 - Don't use `fork` for research or side work: forks run on the session model. Use a fresh typed agent with a tight brief.
 
