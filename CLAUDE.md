@@ -11,7 +11,7 @@
 - Before saying anything is done, fixed, or passing: `verification-before-completion`.
 
 ## Models and usage
-- Sessions run on Opus 5.5 at medium effort. `/effort high` when verification matters (effort changes keep the cache, model switches don't). Pick the model at session start. Fable only when Opus at `xhigh` is stuck: it has its own weekly cap.
+- Sessions run on Opus 5.5 at medium effort. `/effort high` when verification matters (effort changes keep the cache, model switches don't). Pick the model at session start. Fable only when Opus at `xhigh` is stuck: it has its own weekly cap. Escalate with `/advisor fable` first (keeps the cache, Fable only reads at decision points); `/model fable` only if that isn't enough. `/advisor opus` for a long refactor or a recurring bug; no saved `advisorModel`, since subagents inherit it. `/advisor off` when done.
 - Always set a subagent's model: Haiku for search and reading output, Sonnet for implementation and web research (Opus when the main thread will act on the research unchecked), Opus for a whole-branch review. Pass an explicit `model` to `Plan` agents too.
 - Don't use `fork` for research or side work: forks run on the session model. Use a fresh typed agent with a tight brief.
 
