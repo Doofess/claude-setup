@@ -5,14 +5,16 @@
 
 .DESCRIPTION
   1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusline.py,keybindings.json} to ~/.claude/backups/claude-setup-<stamp>/
-  2. Copies CLAUDE.md, statusline.py, hooks/, skills/ and agents/ into ~/.claude
+  2. Copies CLAUDE.md, statusline.py, skills/ and agents/ into ~/.claude
   3. Merges settings.json keys into the existing file (machine-local keys survive), and keybindings.json
      bindings into ~/.claude/keybindings.json per context and key (null unbinds a default; other keys survive)
   4. Adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in enabledPlugins,
      updates them, then disables every plugin marked false
-  5. Installs a Nerd Font through winget when the machine has none, and sets it as the Windows Terminal default
+  5. Turns the claude.ai Adobe connector off in each known project once (see mcp_off.py; /mcp turns it back on)
+  6. Installs a Nerd Font through winget when the machine has none, and sets it as the Windows Terminal default
      font when no font is configured there (the status line's icons need one)
-  6. Smoke-tests the status line and lists MCP health
+  7. Sets the Windows Terminal start folder, and adds a PowerShell 7 profile block that leaves System32 for C:\dev
+  8. Smoke-tests the status line and lists MCP health
 
 .PARAMETER SkipPlugins
   Skip the plugin install/update step (faster when only config changed).
@@ -198,6 +200,32 @@ function Set-TerminalStartDir([string]$path, [string]$dir) {
   return 'set'
 }
 
+# Windows Terminal keeps settings.json per install (Store, Preview, unpackaged). Each is backed up once per run under
+# a name taken from its path below LOCALAPPDATA, so two installs never share a backup file.
+$wtSettings = @(
+  "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
+  "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
+  "$env:LOCALAPPDATA\Microsoft\Windows Terminal\settings.json"
+) | Where-Object { Test-Path $_ }
+function Backup-TerminalSettings([string]$path) {
+  $name = 'wt' + ($path.Substring($env:LOCALAPPDATA.Length) -replace '[\\/: ]', '_')
+  $copy = Join-Path $backup $name
+  if (-not (Test-Path $copy)) { Copy-Item $path $copy }
+}
+
+# PowerShell 7 started from Start or the taskbar opens in System32 (Windows Terminal's startingDirectory never
+# applies there), and Claude Code started there loads the wrong project. The profile gets one block between these
+# markers; a re-run replaces it, and the rest of the profile is left alone.
+$profileStart = '# >>> claude-setup'
+$profileEnd = '# <<< claude-setup'
+function Set-ProfileBlock([string]$text, [string]$body) {
+  $block = "$profileStart`r`n$body`r`n$profileEnd"
+  $pattern = [regex]::Escape($profileStart) + '[\s\S]*?' + [regex]::Escape($profileEnd)
+  if ($text -match $pattern) { return [regex]::Replace($text, $pattern, { param($m) $block }) }
+  if ($text -and -not $text.EndsWith("`n")) { $text += "`r`n" }
+  return $text + $block + "`r`n"
+}
+
 # Hooks this repo used to install. The merge keeps machine hooks it doesn't know, so a retired one would live on
 # forever; drop every hook whose command mentions a retired script, and any group or event left empty.
 $retiredHooks = @('block-dangerous-git.sh', 'bigquery-headers.py', '.bigquery-token.json')
@@ -241,7 +269,7 @@ function Merge-Keybindings($current, $template) {
 }
 
 # The status line's launch form from settings.json: import the module with its directory on sys.path, so
-# Python reuses __pycache__/statusline.*.pyc instead of recompiling the 1600-line script on every one-second
+# Python reuses __pycache__/statusline.*.pyc instead of recompiling the script on every one-second
 # render (the first run writes that cache). Ok is $false when Python failed or printed nothing.
 function Test-StatusLine([string]$dir, [string]$sample) {
   $ErrorActionPreference = 'Continue'   # Windows PowerShell 5.1 would turn Python's stderr into a terminating error
@@ -273,16 +301,12 @@ foreach ($f in 'CLAUDE.md', 'settings.json', 'statusline.py', 'keybindings.json'
 }
 
 # 2. Copy files
-Write-Step 'Copying CLAUDE.md, statusline.py, hooks/, skills/, agents/'
-New-Item -ItemType Directory -Force (Join-Path $claudeDir 'hooks') | Out-Null
+Write-Step 'Copying CLAUDE.md, statusline.py, skills/, agents/'
 Copy-Item (Join-Path $repo 'CLAUDE.md') $claudeDir -Force
 Copy-Item (Join-Path $repo 'statusline.py') $claudeDir -Force
 # Python trusts __pycache__/statusline.*.pyc while the source's size and mtime match what the cache recorded, and
 # Copy-Item keeps the source's mtime, so a same-size edit could leave a stale cache. Drop it; the smoke test rebuilds it.
 Get-ChildItem (Join-Path $claudeDir '__pycache__') -Filter 'statusline*.pyc' -ErrorAction SilentlyContinue | Remove-Item -Force
-if (Test-Path (Join-Path $repo 'hooks')) {
-  Copy-Item (Join-Path $repo 'hooks\*') (Join-Path $claudeDir 'hooks') -Force
-}
 # Skills: each folder under skills/ becomes ~/.claude/skills/<name>. Copy keeps a skill's local .venv.
 foreach ($skill in Get-ChildItem (Join-Path $repo 'skills') -Directory -ErrorAction SilentlyContinue) {
   $dest = Join-Path $claudeDir "skills\$($skill.Name)"
@@ -352,7 +376,14 @@ $ErrorActionPreference = 'Continue'
 & claude mcp remove bigquery -s user 2>&1 | Out-Null
 $ErrorActionPreference = $savedEap
 
-# 4b. Nerd Font. Best effort: a failure here warns and never fails the install.
+# 4c. Adobe connector off by default: 5k tokens a turn that only design work needs. Back up ~/.claude.json first.
+Write-Step 'Adobe connector off in each known project (/mcp turns it back on)'
+$claudeJson = Join-Path $HOME '.claude.json'
+if (Test-Path $claudeJson) { Copy-Item $claudeJson (Join-Path $backup 'claude.json') }
+& python -S (Join-Path $repo 'mcp_off.py') $claudeJson (Join-Path $claudeDir 'claude-setup-state.json') 'claude.ai Adobe'
+if ($LASTEXITCODE -ne 0) { $failures += 'mcp_off.py failed' }
+
+# 4d. Nerd Font. Best effort: a failure here warns and never fails the install.
 if (-not $SkipFont) {
   Write-Step 'Nerd Font'
   $weInstalled = $false
@@ -370,34 +401,33 @@ if (-not $SkipFont) {
   # Point Windows Terminal at the font only when this run installed it, or the machine has JetBrainsMono.
   $haveFace = $weInstalled -or (@(Get-NerdFontFiles | Where-Object { $_.Name -like 'JetBrainsMono*' }).Count -gt 0)
   if ($haveFace) {
-    $wtFiles = @(
-      "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
-      "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
-      "$env:LOCALAPPDATA\Microsoft\Windows Terminal\settings.json"
-    ) | Where-Object { Test-Path $_ }
-    foreach ($wt in $wtFiles) {
-      $copy = Join-Path $backup ('wt-' + (Split-Path (Split-Path (Split-Path $wt)) -Leaf) + '-settings.json')
-      Copy-Item $wt $copy -Force
+    foreach ($wt in $wtSettings) {
+      Backup-TerminalSettings $wt
       $r = Set-TerminalFont $wt $nerdFontFace
       $msg = switch ($r) { 'set' { "font set to $nerdFontFace in $wt" } 'kept' { "a font is already set in $wt; left as is" } default { "no defaults block in $wt; set the font by hand" } }
       Write-Host "    $msg"
     }
-    if ($wtFiles.Count -eq 0) { Write-Host '    Windows Terminal not found; set the terminal font to a Nerd Font by hand' -ForegroundColor Yellow }
+    if (@($wtSettings).Count -eq 0) { Write-Host '    Windows Terminal not found; set the terminal font to a Nerd Font by hand' -ForegroundColor Yellow }
   }
 }
 
-# 4c. Windows Terminal start folder (independent of the font).
+# 4e. Start folder (independent of the font): Windows Terminal's default, and the PowerShell 7 profile block.
 Write-Step 'Terminal start folder'
-$wtFilesDir = @(
-  "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
-  "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
-  "$env:LOCALAPPDATA\Microsoft\Windows Terminal\settings.json"
-) | Where-Object { Test-Path $_ }
-foreach ($wt in $wtFilesDir) {
+foreach ($wt in $wtSettings) {
+  Backup-TerminalSettings $wt
   $r = Set-TerminalStartDir $wt 'C:\dev'
   $msg = switch ($r) { 'set' { "start folder set to C:\dev in $wt" } 'kept' { "a start folder is already set in $wt; left as is" } default { "no defaults block in $wt; set the start folder by hand" } }
   Write-Host "    $msg"
 }
+$ps7Profile = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Microsoft.PowerShell_profile.ps1'
+$old = if (Test-Path $ps7Profile) { [IO.File]::ReadAllText($ps7Profile) } else { '' }
+if ($old) { Copy-Item $ps7Profile (Join-Path $backup 'Microsoft.PowerShell_profile.ps1') }
+$new = Set-ProfileBlock $old 'if ((Get-Location).Path -eq "$env:SystemRoot\System32") { Set-Location C:\dev }'
+if ($new -ne $old) {
+  New-Item -ItemType Directory -Force (Split-Path $ps7Profile) | Out-Null
+  Write-Utf8NoBom $ps7Profile $new
+}
+Write-Host "    PowerShell 7 profile: $ps7Profile"
 
 # 5. Verify
 $ErrorActionPreference = 'Continue'
