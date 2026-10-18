@@ -228,7 +228,7 @@ function Set-ProfileBlock([string]$text, [string]$body) {
 
 # Hooks this repo used to install. The merge keeps machine hooks it doesn't know, so a retired one would live on
 # forever; drop every hook whose command mentions a retired script, and any group or event left empty.
-$retiredHooks = @('block-dangerous-git.sh', 'bigquery-headers.py', '.bigquery-token.json')
+$retiredHooks = @('block-dangerous-git.sh', 'bigquery-headers.py', '.bigquery-token.json', 'history_sync')
 function Remove-RetiredHooks($current, [string[]]$retired) {
   if (-not $current.PSObject.Properties['hooks'] -or $null -eq $current.hooks) { return $current }
   $events = [ordered]@{}
