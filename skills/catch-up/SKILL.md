@@ -12,7 +12,7 @@ current project. Keep it cheap: the digest goes to a Haiku agent, never into thi
 1. Run, with the session's working directory as `<cwd>`:
 
    ```bash
-   python -S ~/.claude/skills/catch-up/history_sync.py extract --cwd "<cwd>"
+   python -I -S ~/.claude/skills/catch-up/history_sync.py extract --cwd "<cwd>"
    ```
 
    If it prints `Nothing new…` or `No OneDrive history folder…`, tell the user that line and stop.
@@ -34,7 +34,7 @@ current project. Keep it cheap: the digest goes to a Haiku agent, never into thi
 5. Only after steps 3 and 4, run:
 
    ```bash
-   python -S ~/.claude/skills/catch-up/history_sync.py mark
+   python -I -S ~/.claude/skills/catch-up/history_sync.py mark
    ```
 
    Then the next catch-up and the session-start notice cover only newer sessions.

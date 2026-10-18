@@ -96,7 +96,7 @@ def take_lock(path):
 
 def detach():
     """Re-runs `sync` in a process that outlives the hook, so a session never waits for the copy."""
-    cmd = [sys.executable, "-S", os.path.abspath(__file__), "sync"]
+    cmd = [sys.executable, "-I", "-S", os.path.abspath(__file__), "sync"]
     io = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
     if os.name != "nt":
         subprocess.Popen(cmd, start_new_session=True, **io)
