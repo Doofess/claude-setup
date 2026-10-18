@@ -144,7 +144,7 @@
 - Consumes: `new_sessions`, `match_project_dirs`, `load_state`, `save_state`, `Session` from Task 2.
 - Produces:
   - `digest_session(path: Path) -> str`
-  - `main(["extract", "--cwd", PATH, "--limit", "10"])` writes `CLAUDE_DIR/"catch-up-digest.md"` and prints one line: `digest: <path>; <n> sessions from <machines>` plus `(<m> older not included)` when some were cut. With nothing new it prints `Nothing new from other machines for this project.`
+  - `main(["extract", "--cwd", PATH, "--limit", "10"])` writes `CLAUDE_DIR/"catch-up-digest.md"` and prints one line: `digest: <path>; <n> sessions from <machines>` plus `(<m> older left for the next /catch-up)` when some were cut. With nothing new it prints `Nothing new from other machines for this project.`
   - `main(["mark"])` moves `pending` into `read`.
 
 - [ ] **Step 1: Write the failing tests.** Build JSONL fixtures in the test with `json.dumps` lines.
@@ -157,7 +157,7 @@
     - non-user/assistant record types such as `attachment`
   - `test_digest_survives_bad_lines`: a truncated last line and a non-JSON line are skipped, and the valid records still appear.
   - `test_digest_header_and_cap`: the header line is `## <session id> · <first timestamp> → <last timestamp>`. A session over 8000 chars keeps its first 2000 and last 6000 chars, with a `[… <n> chars cut …]` marker in between.
-  - `test_extract_limits_and_marks_all_pending`: 20 new sessions with `--limit 15` gives 15 in the digest, newest-by-mtime chosen and printed oldest-first. The printed line contains `(5 older not included)`. `pending` holds all 20 keys.
+  - `test_extract_limits_and_leaves_older_unread`: 20 new sessions with `--limit 15` gives 15 in the digest, newest-by-mtime chosen and printed oldest-first. The printed line contains `(5 older left for the next /catch-up)`. `pending` holds only the 15 digested keys; after `mark`, the 5 older are still new.
   - `test_mark_moves_pending_to_read`: after `mark`, `check` prints nothing and `pending == {}`.
   - `test_extract_nothing_new`: it prints the "Nothing new" line and writes no digest.
 

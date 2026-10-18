@@ -78,6 +78,15 @@ class CopyTest(Env):
         self.assertEqual(hs.copy_new(self.src, self.dst), (1, 0))
         self.assertEqual((self.dst / "a.jsonl").read_text(), "one\ntwo\n")
 
+    def test_same_size_rewrite_soon_after_copy_is_copied(self):
+        f = write(self.src / "a.md", "aaa")
+        hs.copy_new(self.src, self.dst)
+        t = f.stat().st_mtime_ns + 1_000_000_000
+        f.write_text("bbb")
+        os.utime(f, ns=(t, t))
+        self.assertEqual(hs.copy_new(self.src, self.dst), (1, 0))
+        self.assertEqual((self.dst / "a.md").read_text(), "bbb")
+
     def test_never_deletes_extra_destination_files(self):
         write(self.src / "a.jsonl")
         old = write(self.dst / "old.jsonl")
@@ -135,6 +144,18 @@ class CopyTest(Env):
         os.utime(lock, (old, old))
         self.run_main(["sync"])
         self.assertTrue((self.root / "ROTEM" / "projects" / "a.jsonl").exists())
+
+
+    def test_locked_sync_asks_holder_to_run_again(self):
+        write(self.claude / "history-sync.lock", "123")
+        self.run_main(["sync"])
+        self.assertTrue((self.claude / "history-sync.rerun").exists())
+        (self.claude / "history-sync.lock").unlink()
+        calls = []
+        with mock.patch.object(hs, "copy_new", lambda s, d: calls.append(1) or (0, 0)):
+            self.run_main(["sync"])
+        self.assertEqual(len(calls), 2)
+        self.assertFalse((self.claude / "history-sync.rerun").exists())
 
 
 class CheckTest(Env):
@@ -233,18 +254,22 @@ class DigestTest(Env):
         self.assertIn("prompt 0 ", body)
         self.assertIn("prompt 39 ", body)
 
-    def test_extract_limits_and_marks_all_pending(self):
+    def test_extract_limits_and_leaves_older_unread(self):
         for i in range(20):
             f = self.other_session(f"s{i:02d}", [rec("user", f"task {i}")])
             os.utime(f, (1_000_000 + i, 1_000_000 + i))
         code, out = self.run_main(["extract", "--cwd", r"C:\dev", "--limit", "15"])
         self.assertEqual(code, 0)
         self.assertIn("15 sessions from DESKTOP", out)
-        self.assertIn("(5 older not included)", out)
+        self.assertIn("(5 older left for the next /catch-up)", out)
         digest = (self.claude / "catch-up-digest.md").read_text(encoding="utf-8")
         self.assertNotIn("task 4\n", digest)
         self.assertLess(digest.index("task 5"), digest.index("task 19"))
-        self.assertEqual(len(hs.load_state()["pending"]), 20)
+        self.assertEqual(len(hs.load_state()["pending"]), 15)
+        self.run_main(["mark"])
+        _, out = self.run_main(["extract", "--cwd", r"C:\dev", "--limit", "15"])
+        self.assertIn("5 sessions from DESKTOP", out)
+        self.assertIn("task 0", (self.claude / "catch-up-digest.md").read_text(encoding="utf-8"))
 
     def test_mark_moves_pending_to_read(self):
         self.other_session("s1", [rec("user", "hello")])

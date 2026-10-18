@@ -16,7 +16,7 @@ current project. Keep it cheap: the digest goes to a Haiku agent, never into thi
    ```
 
    If it prints `Nothing new…` or `No OneDrive history folder…`, tell the user that line and stop.
-   Otherwise it prints `digest: <path>; <n> sessions from <machines>` (plus how many older ones were left out).
+   Otherwise it prints `digest: <path>; <n> sessions from <machines>` (plus how many older ones wait for the next `/catch-up`).
 
 2. Dispatch an `Explore` agent with `model: haiku`. Don't Read the digest yourself. Brief:
 

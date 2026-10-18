@@ -8,7 +8,7 @@ My Claude Code configuration, versioned so every machine runs the same setup.
 | `settings.json` | merged into `~/.claude/settings.json` (plugins, status line, model and effort, skill overrides) |
 | `agents/*.md` | `~/.claude/agents/` (`Explore` on Haiku without CLAUDE.md, replacing the built-in; `worker` on Sonnet at medium effort for implementation briefs) |
 | `mcp_off.py` | not installed; the installer runs it to turn the claude.ai Adobe connector off once per project in `~/.claude.json` |
-| `statusline.py` | `~/.claude/statusline.py` (settings launch it as `python -S -c "import statusline; statusline.main()"` with `~/.claude` on `sys.path`, so each one-second render loads the cached `__pycache__/*.pyc` instead of recompiling the script; the installer deletes that cache when it copies a new version) |
+| `statusline.py` | `~/.claude/statusline.py` (settings launch it as `python -I -S -c "import statusline; statusline.main()"` with `~/.claude` on `sys.path`, so each one-second render loads the cached `__pycache__/*.pyc` instead of recompiling the script; the installer deletes that cache when it copies a new version) |
 | `skills/<name>/` | `~/.claude/skills/<name>/` (personal skills; `underwater-photoshop` drives local Photoshop) |
 | `skills/catch-up/` | `~/.claude/skills/catch-up/` (`history_sync.py`, run by the history hooks, and the `/catch-up` skill; see [Conversation history sync](#conversation-history-sync)) |
 | `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see its README) |

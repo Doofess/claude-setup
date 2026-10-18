@@ -5,7 +5,7 @@
   extract [--cwd PATH] [--limit N]     write those sessions' prompts and replies to ~/.claude/catch-up-digest.md
   mark                                 record the extracted sessions as read
 
-Stdlib only: hooks run it as `python -S`.
+Stdlib only: hooks run it as `python -I -S`.
 """
 import json
 import os
@@ -20,7 +20,6 @@ from typing import NamedTuple
 
 CLAUDE_DIR = Path.home() / ".claude"
 LOCK_STALE_S = 2 * 3600
-MTIME_SLACK_NS = 2_000_000_000   # OneDrive and FAT round mtimes; a copy is "changed" only past this
 DEFAULT_LIMIT = 10
 MSG_CAP = 800                    # chars per prompt or reply
 SESSION_CAP, HEAD, TAIL = 8000, 2000, 6000   # a longer session keeps its start and its end
@@ -50,7 +49,7 @@ def machine_name():
 # ---- sync ----
 
 def copy_new(src, dst):
-    """Copies files under src that are missing in dst, differ in size, or are newer. Returns (copied, errors)."""
+    """Copies files under src that are missing in dst or differ in size or mtime (copy2 keeps mtime). Returns (copied, errors)."""
     copied = errors = 0
     for dirpath, _dirs, files in os.walk(src):
         rel = Path(dirpath).relative_to(src)
@@ -61,7 +60,7 @@ def copy_new(src, dst):
                 st = s.stat()
                 try:
                     dt = d.stat()
-                    if dt.st_size == st.st_size and st.st_mtime_ns <= dt.st_mtime_ns + MTIME_SLACK_NS:
+                    if dt.st_size == st.st_size and dt.st_mtime_ns == st.st_mtime_ns:
                         continue
                 except FileNotFoundError:
                     pass
@@ -115,11 +114,16 @@ def cmd_sync(background):
     if background:
         detach()
         return 0
-    lock = CLAUDE_DIR / "history-sync.lock"
+    lock, rerun = CLAUDE_DIR / "history-sync.lock", CLAUDE_DIR / "history-sync.rerun"
     if not take_lock(lock):
+        rerun.touch()   # the running copy may have passed files this session has since written
         return 0
     try:
         copied, errors = copy_new(CLAUDE_DIR / "projects", root / machine_name() / "projects")
+        if rerun.exists():
+            rerun.unlink()
+            more = copy_new(CLAUDE_DIR / "projects", root / machine_name() / "projects")
+            copied, errors = copied + more[0], errors + more[1]
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
         (CLAUDE_DIR / "history-sync.log").write_text(f"{stamp} copied {copied} errors {errors}\n", encoding="utf-8")
     finally:
@@ -185,7 +189,10 @@ def load_state():
 
 
 def save_state(state):
-    (CLAUDE_DIR / "catch-up-state.json").write_text(json.dumps(state, indent=1), encoding="utf-8")
+    path = CLAUDE_DIR / "catch-up-state.json"
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(state, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def machines_of(sessions):
@@ -276,11 +283,11 @@ def cmd_extract(cwd, limit):
     digest = CLAUDE_DIR / "catch-up-digest.md"
     parts = [f"# {s.machine} · {s.path.parent.name}\n{digest_session(s.path)}" for s in chosen]
     digest.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
-    state["pending"] = {s.key: s.mtime_ns for s in sessions}
+    state["pending"] = {s.key: s.mtime_ns for s in chosen}   # the rest stay unread
     save_state(state)
     line = f"digest: {digest}; {len(chosen)} session{'s' if len(chosen) != 1 else ''} from {machines_of(chosen)}"
     if len(sessions) > len(chosen):
-        line += f" ({len(sessions) - len(chosen)} older not included)"
+        line += f" ({len(sessions) - len(chosen)} older left for the next /catch-up)"
     print(line)
     return 0
 
@@ -307,7 +314,7 @@ def main(argv=None):
         except Exception:
             return 0
     if cmd == "extract":
-        return cmd_extract(option(args, "--cwd", os.getcwd()), int(option(args, "--limit", DEFAULT_LIMIT)))
+        return cmd_extract(option(args, "--cwd", os.getcwd()), max(1, int(option(args, "--limit", DEFAULT_LIMIT))))
     if cmd == "mark":
         return cmd_mark()
     print(__doc__)
