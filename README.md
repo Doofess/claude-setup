@@ -10,6 +10,7 @@ My Claude Code configuration, versioned so every machine runs the same setup.
 | `mcp_off.py` | not installed; the installer runs it to turn the claude.ai Adobe connector off once per project in `~/.claude.json` |
 | `statusline.py` | `~/.claude/statusline.py` (settings launch it as `python -S -c "import statusline; statusline.main()"` with `~/.claude` on `sys.path`, so each one-second render loads the cached `__pycache__/*.pyc` instead of recompiling the script; the installer deletes that cache when it copies a new version) |
 | `skills/<name>/` | `~/.claude/skills/<name>/` (personal skills; `underwater-photoshop` drives local Photoshop) |
+| `skills/catch-up/` | `~/.claude/skills/catch-up/` (`history_sync.py`, run by the history hooks, and the `/catch-up` skill; see [Conversation history sync](#conversation-history-sync)) |
 | `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see its README) |
 
 Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers), `.credentials.json`, `history.jsonl`, `~/.remember/`.
@@ -42,6 +43,26 @@ Synced plugins and claude.ai connectors follow the account, so they need no setu
    The installer also installs JetBrainsMono Nerd Font through winget when the machine has no Nerd Font, and sets it as the Windows Terminal default only when that file names no font yet (the status line's icons need one; `-SkipFont` turns this off). It never overwrites a font you chose, and removes hooks this repo has retired.
 4. Restart Claude Code and open a new terminal tab. In any repo, run `/setup-matt-pocock-skills` once.
 5. Photo work: `python -m venv ~/.claude/skills/underwater-photoshop/.venv` and `pip install -r skills/underwater-photoshop/requirements.txt` into it. Needs Photoshop 2026 installed (COM `Photoshop.Application`).
+
+## Conversation history sync
+
+Each machine copies its `~/.claude/projects` (transcripts, subagent logs, auto-memory) to
+`%OneDrive%\Projects\CLI Conversation History\<COMPUTERNAME>\projects`. The local folder stays where it is and is
+only read. The copy adds and updates files and never deletes, so OneDrive keeps sessions that the local cleanup
+(`cleanupPeriodDays: 365`) has already removed.
+
+- `Stop` and `SessionEnd` hooks run `history_sync.py sync --detach`. It copies only changed files, in a background
+  process, so a reply or an exit never waits for it. A lock stops overlapping runs, and the last run's result is in
+  `~/.claude/history-sync.log`.
+- A `SessionStart` hook prints one line when another machine has new sessions in the current project. It prints
+  nothing otherwise, and nothing when OneDrive is missing.
+- `/catch-up` extracts only the prompts and replies of those sessions (the newest 10, capped at about 8k characters
+  each), has a Haiku agent summarize them, and saves decisions and open todos to memory. What has been read is kept
+  in `~/.claude/catch-up-state.json`, per machine.
+- `--resume` still lists only this machine's sessions. The other machine's copies are files to read, not sessions to
+  resume.
+- A project is matched by its folder name (`C:\dev` is `C--dev`). If the other machine keeps the repo at a different
+  path, it falls back to the folder's last segment.
 
 ## Keybindings
 
