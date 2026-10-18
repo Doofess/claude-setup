@@ -20,14 +20,12 @@ current project. Keep it cheap: the digest goes to a Haiku agent, never into thi
 
 2. Dispatch an `Explore` agent with `model: haiku`. Don't Read the digest yourself. Brief:
 
-   > Read `<digest path>`, the prompts (USER) and replies (CLAUDE) from sessions on another machine. Each `#` header
-   > names the machine and the project's folder there; file paths in the digest are that machine's. Return at most
+   > Read `<digest path>`, the prompts (USER) and replies (CLAUDE) from sessions on another machine. Return at most
    > 400 words under these headings: **Done**, **Decisions**, **Files and repos touched**, **Open todos**,
    > **Affects this machine** (config to pull, installs, branches to fetch). Use only what the digest says; write
    > "none" for an empty heading.
 
-3. Show the user the summary, headed with the machines and session count from step 1. Where the other machine keeps
-   the project at a different path, say so, and give this machine's path (`<cwd>`) for anything to do here.
+3. Show the user the summary, headed with the machines and session count from step 1.
 
 4. Save what will still matter later (decisions, open todos, the state of a project) to your memory system as
    project memories, with absolute dates and the source machine. Skip the narration of what happened, and update

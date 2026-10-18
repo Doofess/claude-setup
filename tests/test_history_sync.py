@@ -21,11 +21,6 @@ def write(path, text="x"):
     return path
 
 
-def make_repo(path, url, remote="origin"):
-    write(path / ".git" / "config", f'[core]\n\tbare = false\n[remote "{remote}"]\n\turl = {url}\n\tfetch = x\n')
-    return path
-
-
 def rec(kind, content, **extra):
     return json.dumps({"type": kind, "timestamp": extra.pop("ts", "2026-10-18T09:00:00Z"),
                        "message": {"content": content}, **extra})
@@ -133,36 +128,29 @@ class CopyTest(Env):
         self.assertEqual(self.run_main(["sync"])[0], 0)
         self.assertEqual((self.root / "ROTEM" / "projects" / "C--dev" / "a.jsonl").read_text(), "aaa")
         self.assertIn("copied 1 errors 0", (self.claude / "history-sync.log").read_text())
-        lock = hs.take_lock(self.claude / "history-sync.lock")
-        self.assertIsNotNone(lock)
-        hs.release(lock)
+        self.assertFalse((self.claude / "history-sync.lock").exists())
 
     def test_sync_exits_zero_when_no_root(self):
         with mock.patch.dict(os.environ, {"OneDrive": str(self.tmp / "nowhere")}):
             self.assertEqual(self.run_main(["sync"]), (0, ""))
         self.assertFalse((self.tmp / "nowhere").exists())
 
-    def test_lock_blocks_second_sync_until_released(self):
+    def test_lock_blocks_second_sync(self):
         write(self.claude / "projects" / "a.jsonl")
-        held = hs.take_lock(self.claude / "history-sync.lock")
-        self.assertIsNone(hs.take_lock(self.claude / "history-sync.lock"))
+        lock = write(self.claude / "history-sync.lock", "123")
         self.run_main(["sync"])
-        self.assertFalse((self.root / "ROTEM" / "projects" / "a.jsonl").exists())
-        hs.release(held)
+        self.assertFalse((self.root / "ROTEM").exists())
+        old = time.time() - 3 * 3600
+        os.utime(lock, (old, old))
         self.run_main(["sync"])
         self.assertTrue((self.root / "ROTEM" / "projects" / "a.jsonl").exists())
 
-    def test_old_lock_file_does_not_block(self):
-        write(self.claude / "projects" / "a.jsonl")
-        write(self.claude / "history-sync.lock", "123")
-        self.run_main(["sync"])
-        self.assertTrue((self.root / "ROTEM" / "projects" / "a.jsonl").exists())
 
     def test_locked_sync_asks_holder_to_run_again(self):
-        held = hs.take_lock(self.claude / "history-sync.lock")
+        write(self.claude / "history-sync.lock", "123")
         self.run_main(["sync"])
         self.assertTrue((self.claude / "history-sync.rerun").exists())
-        hs.release(held)
+        (self.claude / "history-sync.lock").unlink()
         calls = []
         with mock.patch.object(hs, "copy_new", lambda s, d: calls.append(1) or (0, 0)):
             self.run_main(["sync"])
@@ -181,9 +169,12 @@ class CheckTest(Env):
         self.assertEqual([d.name for d in hs.match_project_dirs(self.tmp / "p", r"C:\dev")], ["C--dev"])
         self.assertEqual([d.name for d in hs.match_project_dirs(self.tmp / "p", "/c/dev")], ["C--dev"])
 
-    def test_no_index_means_exact_path_only(self):
+    def test_match_falls_back_to_last_segment(self):
         (self.tmp / "p" / "C--dev-bookandry").mkdir(parents=True)
-        self.assertEqual(hs.match_project_dirs(self.tmp / "p", r"D:\work\bookandry"), [])
+        self.assertEqual([d.name for d in hs.match_project_dirs(self.tmp / "p", r"D:\work\bookandry")],
+                         ["C--dev-bookandry"])
+        self.assertEqual(hs.match_project_dirs(self.tmp / "p", r"D:\work\other"), [])
+        self.assertEqual(hs.match_project_dirs(self.tmp / "p", "D:\\"), [])
 
     def test_new_sessions_excludes_this_machine_case_insensitive(self):
         self.other_session("a", ["{}"], machine="ROTEM")
@@ -222,97 +213,7 @@ class CheckTest(Env):
             self.assertEqual(self.run_main(["check"], json.dumps({"cwd": "C:\\dev"})), (0, ""))
 
 
-class MatchTest(Env):
-    """Matching the other machine's project folders by git remote, and the index sync writes for that."""
-
-    def dirs(self, index):
-        projects = self.tmp / "p"
-        for name in index:
-            (projects / name).mkdir(parents=True, exist_ok=True)
-        return projects
-
-    def names(self, projects, cwd, index, remote):
-        return [d.name for d in hs.match_project_dirs(projects, cwd, index, remote)]
-
-    def test_normalize_remote(self):
-        want = "github.com/doofess/claude-setup"
-        for url in ("git@github.com:Doofess/claude-setup.git", "https://github.com/Doofess/Claude-Setup/",
-                    "ssh://git@github.com/Doofess/claude-setup", "https://user@github.com/Doofess/claude-setup.git"):
-            self.assertEqual(hs.normalize_remote(url), want, url)
-
-    def test_repo_remote_reads_origin_from_files(self):
-        repo = make_repo(self.tmp / "r", "git@github.com:a/b.git")
-        (repo / "x" / "y").mkdir(parents=True)
-        self.assertEqual(hs.repo_remote(repo), "github.com/a/b")
-        self.assertEqual(hs.repo_remote(repo / "x" / "y"), "github.com/a/b")
-        self.assertEqual(hs.repo_remote(repo / "gone" / "dir"), "github.com/a/b")
-        write(repo / ".git" / "worktrees" / "wt" / "commondir", "../..\n")
-        write(self.tmp / "wt" / ".git", f"gitdir: {repo / '.git' / 'worktrees' / 'wt'}\n")
-        self.assertEqual(hs.repo_remote(self.tmp / "wt"), "github.com/a/b")
-        (self.tmp / "plain").mkdir()
-        self.assertIsNone(hs.repo_remote(self.tmp / "plain"))
-        make_repo(self.tmp / "up", "git@github.com:a/c.git", remote="upstream")
-        self.assertIsNone(hs.repo_remote(self.tmp / "up"))
-
-    def test_same_remote_matches_other_paths_and_worktrees(self):
-        index = {"D--code-foo": {"cwd": r"D:\code\foo", "remote": "github.com/a/foo"},
-                 "D--code-foo--claude-worktrees-t1": {"cwd": r"D:\code\foo\.claude\worktrees\t1",
-                                                      "remote": "github.com/a/foo"},
-                 "C--dev-my-foo": {"cwd": r"C:\dev\my-foo", "remote": "github.com/a/my-foo"},
-                 "D--other-foo": {"cwd": r"D:\other\foo", "remote": "github.com/z/foo"}}
-        self.assertEqual(self.names(self.dirs(index), r"C:\dev\foo", index, "github.com/a/foo"),
-                         ["D--code-foo", "D--code-foo--claude-worktrees-t1"])
-
-    def test_same_path_different_repo_is_not_a_match(self):
-        index = {"C--dev-foo": {"cwd": r"C:\dev\foo", "remote": "github.com/z/foo"}}
-        self.assertEqual(self.names(self.dirs(index), r"C:\dev\foo", index, "github.com/a/foo"), [])
-        index["C--dev-foo"]["remote"] = None
-        self.assertEqual(self.names(self.dirs(index), r"C:\dev\foo", index, "github.com/a/foo"), ["C--dev-foo"])
-
-    def test_outside_a_repo_matches_exact_folder_name_only(self):
-        index = {"D--notes": {"cwd": r"D:\notes", "remote": None},
-                 "C--dev-my-notes": {"cwd": r"C:\dev\my-notes", "remote": None},
-                 "E--notes": {"cwd": r"E:\notes", "remote": "github.com/a/notes"},
-                 "F--notes": {"cwd": None, "remote": None}}
-        projects = self.dirs(index)
-        (projects / "G--notes").mkdir()
-        self.assertEqual(self.names(projects, r"C:\x\notes", index, None), ["D--notes"])
-        self.assertEqual(self.names(projects, "D:\\", index, None), [])
-
-    def test_sync_writes_index_once(self):
-        repo = make_repo(self.tmp / "foo", "https://github.com/a/foo.git")
-        write(self.claude / "projects" / "C--foo" / "s.jsonl",
-              json.dumps({"type": "user", "cwd": str(repo)}) + "\n")
-        (self.claude / "projects" / "C--empty" / "memory").mkdir(parents=True)
-        self.run_main(["sync"])
-        path = self.root / "ROTEM" / "projects-index.json"
-        self.assertEqual(json.loads(path.read_text(encoding="utf-8")),
-                         {"C--empty": {"cwd": None, "remote": None},
-                          "C--foo": {"cwd": str(repo), "remote": "github.com/a/foo"}})
-        old = time.time() - 3600
-        os.utime(path, (old, old))
-        self.run_main(["sync"])
-        self.assertAlmostEqual(path.stat().st_mtime, old, delta=1)
-
-    def test_check_and_digest_use_index(self):
-        repo = make_repo(self.tmp / "here" / "foo", "git@github.com:a/foo.git")
-        self.other_session("s1", [rec("user", "build it")], project="D--code-foo")
-        write(self.root / "DESKTOP" / "projects-index.json",
-              json.dumps({"D--code-foo": {"cwd": r"D:\code\foo", "remote": "github.com/a/foo"}}))
-        _, out = self.run_main(["check"], json.dumps({"cwd": str(repo)}))
-        self.assertTrue(out.startswith("1 new session from DESKTOP"), out)
-        self.run_main(["extract", "--cwd", str(repo)])
-        self.assertIn("# DESKTOP · D:\\code\\foo\n",
-                      (self.claude / "catch-up-digest.md").read_text(encoding="utf-8"))
-
-
 class DigestTest(Env):
-    def test_digest_strips_unclosed_reminder(self):
-        f = self.other_session("s1", [rec("user", "hello <system-reminder>secret context")])
-        out = hs.digest_session(f)
-        self.assertIn("USER: hello", out)
-        self.assertNotIn("secret", out)
-
     def test_digest_keeps_prompts_and_replies(self):
         f = self.other_session("s1", [
             rec("user", "fix the login bug", ts="2026-10-17T10:00:00Z"),

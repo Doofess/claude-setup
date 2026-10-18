@@ -5,10 +5,6 @@
   extract [--cwd PATH] [--limit N]     write those sessions' prompts and replies to ~/.claude/catch-up-digest.md
   mark                                 record the extracted sessions as read
 
-Projects match across machines by path, or by git remote when the repo lives elsewhere: each sync writes
-<MACHINE>/projects-index.json with every project folder's working directory and origin URL, read from .git/config
-(git is never run, and no repo is written to).
-
 Stdlib only: hooks run it as `python -I -S`.
 """
 import json
@@ -23,12 +19,12 @@ from pathlib import Path
 from typing import NamedTuple
 
 CLAUDE_DIR = Path.home() / ".claude"
+LOCK_STALE_S = 2 * 3600
 DEFAULT_LIMIT = 10
 MSG_CAP = 800                    # chars per prompt or reply
 SESSION_CAP, HEAD, TAIL = 8000, 2000, 6000   # a longer session keeps its start and its end
 NOTHING = "Nothing new from other machines for this project."
-REMINDER = re.compile(r"<system-reminder>.*?(?:</system-reminder>|\Z)", re.S)   # an unclosed one runs to the end
-CWD = re.compile(r'"cwd":\s*"((?:[^"\\]|\\.)*)"')
+REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
 
 
 class Session(NamedTuple):
@@ -82,32 +78,19 @@ def copy_new(src, dst):
 
 
 def take_lock(path):
-    """An OS lock on path's first byte, or None when another sync holds it. The OS drops it when the holder exits,
-    so a crashed sync never leaves a stale lock behind."""
-    fh = open(path, "a+b")
     try:
-        fh.seek(0)
-        if os.name == "nt":
-            import msvcrt
-            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        fh.close()
-        return None
-    return fh
-
-
-def release(fh):
-    try:
-        fh.seek(0)
-        if os.name == "nt":
-            import msvcrt
-            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-    except OSError:
-        pass
-    fh.close()
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        try:
+            if time.time() - path.stat().st_mtime < LOCK_STALE_S:
+                return False
+            path.unlink()
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except OSError:
+            return False
+    os.write(fd, str(os.getpid()).encode())
+    os.close(fd)
+    return True
 
 
 def detach():
@@ -131,26 +114,23 @@ def cmd_sync(background):
     if background:
         detach()
         return 0
-    rerun = CLAUDE_DIR / "history-sync.rerun"
-    lock = take_lock(CLAUDE_DIR / "history-sync.lock")
-    if lock is None:
+    lock, rerun = CLAUDE_DIR / "history-sync.lock", CLAUDE_DIR / "history-sync.rerun"
+    if not take_lock(lock):
         rerun.touch()   # the running copy may have passed files this session has since written
         return 0
     try:
-        mine = root / machine_name()
-        copied, errors = copy_new(CLAUDE_DIR / "projects", mine / "projects")
+        copied, errors = copy_new(CLAUDE_DIR / "projects", root / machine_name() / "projects")
         if rerun.exists():
             rerun.unlink()
-            more = copy_new(CLAUDE_DIR / "projects", mine / "projects")
+            more = copy_new(CLAUDE_DIR / "projects", root / machine_name() / "projects")
             copied, errors = copied + more[0], errors + more[1]
-        try:
-            write_index(CLAUDE_DIR / "projects", mine / "projects-index.json")
-        except OSError:
-            errors += 1
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
         (CLAUDE_DIR / "history-sync.log").write_text(f"{stamp} copied {copied} errors {errors}\n", encoding="utf-8")
     finally:
-        release(lock)
+        try:
+            lock.unlink()
+        except OSError:
+            pass
     return 0
 
 
@@ -161,121 +141,22 @@ def mangle(path):
     return re.sub(r"[^A-Za-z0-9]", "-", path)
 
 
-def native(cwd):
-    return re.sub(r"^/([A-Za-z])(/|$)", r"\1:/", cwd) if os.name == "nt" else cwd   # Git Bash /c/dev is C:/dev
-
-
-def last_segment(path):
-    return re.split(r"[\\/]", (path or "").rstrip("\\/"))[-1]
-
-
-def normalize_remote(url):
-    """host/owner/repo, lowercase, for any of git's URL forms (ssh, scp-style, https with or without .git)."""
-    u = re.sub(r"\.git$", "", url.strip().lower().rstrip("/"))
-    u = re.sub(r"^[a-z][a-z0-9+.-]*://", "", u)
-    u = re.sub(r"^[^@/]*@", "", u)
-    return re.sub(r"^([^/:]+):(?!\d+/)", r"\1/", u)
-
-
-def repo_remote(path):
-    """origin's normalized URL for the git repo holding path (worktrees included), or None. Reads files only."""
+def match_project_dirs(projects, cwd):
+    """The project folder for cwd; when the other machine keeps the repo elsewhere, folders ending in its last segment."""
     try:
-        p = Path(path).resolve()
-        for d in (p, *p.parents):
-            dot = d / ".git"
-            if dot.is_dir():
-                gitdir = dot
-                break
-            if dot.is_file():
-                m = re.match(r"gitdir:\s*(.+)", dot.read_text(encoding="utf-8", errors="replace").strip())
-                if not m:
-                    return None
-                gitdir = (d / m.group(1).strip()).resolve()
-                common = gitdir / "commondir"
-                if common.is_file():
-                    gitdir = (gitdir / common.read_text(encoding="utf-8").strip()).resolve()
-                break
-        else:
-            return None
-        config = (gitdir / "config").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    section = re.search(r'^\s*\[remote\s+"origin"\]\s*$(.*?)(?=^\s*\[|\Z)', config, re.M | re.S)
-    url = section and re.search(r"^\s*url\s*=\s*(.+?)\s*$", section.group(1), re.M)
-    return normalize_remote(url.group(1)) if url else None
-
-
-def project_cwd(proj):
-    """The working directory recorded in the project folder's transcripts, or None before the first one."""
-    for f in sorted(proj.glob("*.jsonl"))[:3]:
-        try:
-            with open(f, encoding="utf-8", errors="replace") as fh:
-                for _, raw in zip(range(50), fh):
-                    m = CWD.search(raw)
-                    if m:
-                        return json.loads('"' + m.group(1) + '"')
-        except (OSError, ValueError):
-            continue
-    return None
-
-
-def load_json(path):
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def write_json(path, data):
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=1, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def write_index(projects, path):
-    """{folder: {cwd, remote}} for this machine's project folders. Known folders keep their entry; the file is
-    rewritten only when a folder is added or its working directory first shows up, so OneDrive uploads it rarely."""
-    old = load_json(path)
-    new = {}
-    for d in sorted(d for d in projects.iterdir() if d.is_dir()):
-        entry = old.get(d.name)
-        if isinstance(entry, dict) and entry.get("cwd"):
-            new[d.name] = entry
-        else:
-            cwd = project_cwd(d)
-            new[d.name] = {"cwd": cwd, "remote": repo_remote(cwd) if cwd else None}
-    if new != old:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_json(path, new)
-
-
-def match_project_dirs(projects, cwd, index=None, remote=None):
-    """The other machine's folders for this project. Same path (unless both sides are repos with different remotes),
-    plus every folder of the same git repo wherever it lives, worktrees included. Outside a repo, where the paths
-    differ: folders, also outside a repo, whose recorded path ends in the same folder name."""
-    index = index or {}
-    try:
-        dirs = sorted(d for d in projects.iterdir() if d.is_dir())
+        dirs = [d for d in projects.iterdir() if d.is_dir()]
     except OSError:
         return []
-    cwd = native(cwd)
+    cwd = re.sub(r"^/([A-Za-z])(/|$)", r"\1:/", cwd)   # Git Bash form /c/dev means C:/dev
     exact = mangle(cwd).lower()
-
-    def theirs(d):
-        entry = index.get(d.name)
-        return entry if isinstance(entry, dict) else {}
-
-    hits = [d for d in dirs
-            if (d.name.lower() == exact and not (remote and theirs(d).get("remote") not in (None, remote)))
-            or (remote and theirs(d).get("remote") == remote)]
-    if hits or remote:
+    hits = [d for d in dirs if d.name.lower() == exact]
+    if hits:
         return hits
-    last = last_segment(cwd).lower()
+    last = re.split(r"[\\/]", cwd.rstrip("\\/"))[-1]
     if not last or last.endswith(":"):
         return []
-    return [d for d in dirs if theirs(d).get("cwd") and not theirs(d).get("remote")
-            and last_segment(theirs(d)["cwd"]).lower() == last]
+    base = mangle(last).lower()
+    return sorted(d for d in dirs if d.name.lower() == base or d.name.lower().endswith("-" + base))
 
 
 def new_sessions(root, me, cwd, read):
@@ -284,9 +165,8 @@ def new_sessions(root, me, cwd, read):
         machines = [m for m in root.iterdir() if m.is_dir() and m.name.lower() != me.lower()]
     except OSError:
         return []
-    remote = repo_remote(native(cwd))
     for m in sorted(machines):
-        for proj in match_project_dirs(m / "projects", cwd, load_json(m / "projects-index.json"), remote):
+        for proj in match_project_dirs(m / "projects", cwd):
             for f in sorted(proj.glob("*.jsonl")):
                 try:
                     mtime = f.stat().st_mtime_ns
@@ -299,12 +179,20 @@ def new_sessions(root, me, cwd, read):
 
 
 def load_state():
-    state = load_json(CLAUDE_DIR / "catch-up-state.json")
+    try:
+        state = json.loads((CLAUDE_DIR / "catch-up-state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
     return {"read": dict(state.get("read") or {}), "pending": dict(state.get("pending") or {})}
 
 
 def save_state(state):
-    write_json(CLAUDE_DIR / "catch-up-state.json", state)
+    path = CLAUDE_DIR / "catch-up-state.json"
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(state, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def machines_of(sessions):
@@ -393,13 +281,7 @@ def cmd_extract(cwd, limit):
         return 0
     chosen = sessions[-limit:]
     digest = CLAUDE_DIR / "catch-up-digest.md"
-    indexes = {m: load_json(root / m / "projects-index.json") for m in {s.machine for s in chosen}}
-
-    def where(s):   # the other machine's path for the project, so its file paths aren't read as this machine's
-        entry = indexes[s.machine].get(s.path.parent.name)
-        return (entry.get("cwd") if isinstance(entry, dict) else None) or s.path.parent.name
-
-    parts = [f"# {s.machine} · {where(s)}\n{digest_session(s.path)}" for s in chosen]
+    parts = [f"# {s.machine} · {s.path.parent.name}\n{digest_session(s.path)}" for s in chosen]
     digest.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
     state["pending"] = {s.key: s.mtime_ns for s in chosen}   # the rest stay unread
     save_state(state)
