@@ -61,8 +61,12 @@ only read. The copy adds and updates files and never deletes, so OneDrive keeps 
   in `~/.claude/catch-up-state.json`, per machine.
 - `--resume` still lists only this machine's sessions. The other machine's copies are files to read, not sessions to
   resume.
-- A project is matched by its folder name (`C:\dev` is `C--dev`). If the other machine keeps the repo at a different
-  path, it falls back to the folder's last segment.
+- A project is matched by path (`C:\dev` is the folder `C--dev`), and by git remote when the other machine keeps the
+  repo elsewhere: each sync writes `<COMPUTERNAME>\projects-index.json` with every project folder's working directory
+  and `origin` URL, read from `.git/config` (git is never run and no repo is touched). So `C:\devoo` here and
+  `D:\codeoo` there are one project when both point at the same repo, worktrees included, and two repos that share a
+  name or a path are not. Outside a repo, a different path matches only the same last folder name.
+- The lock is an OS file lock, released when the copying process exits, so a crash never leaves it stuck.
 
 ## Keybindings
 
