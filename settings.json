@@ -26,7 +26,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "python -I -S -c \"import os,sys;sys.path.insert(0,os.path.expanduser('~/.claude'));import statusline;statusline.main()\" --icons nerd",
+    "command": "python -S -c \"import os,sys;sys.path.insert(0,os.path.expanduser('~/.claude'));import statusline;statusline.main()\" --icons nerd",
     "refreshInterval": 1
   },
   "deniedMcpServers": [
@@ -68,18 +68,6 @@
     }
   },
   "autoCompactWindow": 200000,
-  "cleanupPeriodDays": 365,
-  "hooks": {
-    "SessionStart": [
-      { "hooks": [{ "type": "command", "timeout": 10, "command": "python -I -S -c \"import os,sys;sys.path.insert(0,os.path.expanduser('~/.claude/skills/catch-up'));import history_sync;sys.exit(history_sync.main())\" check" }] }
-    ],
-    "SessionEnd": [
-      { "hooks": [{ "type": "command", "timeout": 10, "command": "python -I -S -c \"import os,sys;sys.path.insert(0,os.path.expanduser('~/.claude/skills/catch-up'));import history_sync;sys.exit(history_sync.main())\" sync --detach" }] }
-    ],
-    "Stop": [
-      { "hooks": [{ "type": "command", "timeout": 10, "command": "python -I -S -c \"import os,sys;sys.path.insert(0,os.path.expanduser('~/.claude/skills/catch-up'));import history_sync;sys.exit(history_sync.main())\" sync --detach" }] }
-    ]
-  },
   "skillOverrides": {
     "chrome-browser": "name-only",
     "built-in-browser": "name-only",
