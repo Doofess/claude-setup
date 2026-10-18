@@ -278,7 +278,7 @@ def cmd_extract(cwd, limit):
     digest.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
     state["pending"] = {s.key: s.mtime_ns for s in sessions}
     save_state(state)
-    line = f"digest: {digest}; {len(chosen)} sessions from {machines_of(chosen)}"
+    line = f"digest: {digest}; {len(chosen)} session{'s' if len(chosen) != 1 else ''} from {machines_of(chosen)}"
     if len(sessions) > len(chosen):
         line += f" ({len(sessions) - len(chosen)} older not included)"
     print(line)
