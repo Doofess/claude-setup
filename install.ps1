@@ -301,7 +301,7 @@ foreach ($f in 'CLAUDE.md', 'settings.json', 'statusline.py', 'keybindings.json'
 }
 
 # 2. Copy files
-Write-Step 'Copying CLAUDE.md, statusline.py, skills/, agents/'
+Write-Step 'Copying CLAUDE.md, statusline.py, skills/, agents/, themes/'
 Copy-Item (Join-Path $repo 'CLAUDE.md') $claudeDir -Force
 Copy-Item (Join-Path $repo 'statusline.py') $claudeDir -Force
 # Python trusts __pycache__/statusline.*.pyc while the source's size and mtime match what the cache recorded, and
@@ -317,6 +317,11 @@ foreach ($skill in Get-ChildItem (Join-Path $repo 'skills') -Directory -ErrorAct
 if (Test-Path (Join-Path $repo 'agents')) {
   New-Item -ItemType Directory -Force (Join-Path $claudeDir 'agents') | Out-Null
   Copy-Item (Join-Path $repo 'agents\*.md') (Join-Path $claudeDir 'agents') -Force
+}
+# Themes: each file under themes/ becomes ~/.claude/themes/<name>.json, picked by "theme": "custom:<name>".
+if (Test-Path (Join-Path $repo 'themes')) {
+  New-Item -ItemType Directory -Force (Join-Path $claudeDir 'themes') | Out-Null
+  Copy-Item (Join-Path $repo 'themes\*.json') (Join-Path $claudeDir 'themes') -Force
 }
 
 # 3. Merge settings.json

@@ -1,0 +1,7 @@
+{
+  "name": "Readable",
+  "base": "dark",
+  "overrides": {
+    "userMessageBackgroundHover": "#0c0c0c"
+  }
+}
