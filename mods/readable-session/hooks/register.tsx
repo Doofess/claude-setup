@@ -299,18 +299,130 @@ function capped(lines: OutLine[]): OutLine[] {
   return [...lines.slice(0, OUT_LINES), { text: `+${lines.length - OUT_LINES} more lines`, color: SUB }]
 }
 
-/** A diff's hunks as lines, added green and removed red. */
+// The diff markers' colours, as the terminal scheme draws them (brightRed, brightGreen):
+// removed the light red, added a very light grey. diffAdded and diffRemoved are
+// backgrounds, too dark to be text.
+const MARK_COLOR: Record<'dark' | 'light', { added: string; removed: string }> = {
+  dark: { added: '#E4E4E4', removed: '#FF8787' },
+  light: { added: '#585858', removed: '#D70000' },
+}
+
+/** A diff's hunks as lines, each in its marker's colour. */
 function diffLines(patch: unknown): OutLine[] {
   const hunks = Array.isArray(patch) ? (patch as { lines?: unknown }[]) : []
   const out: OutLine[] = []
   for (const h of hunks) {
     for (const l of Array.isArray(h.lines) ? (h.lines as unknown[]) : []) {
       const s = plain(str(l))
-      out.push({ text: s, color: s.startsWith('+') ? 'diffAdded' : s.startsWith('-') ? 'diffRemoved' : SUB })
+      out.push({ text: s, color: s.startsWith('+') ? MARK_COLOR[tone].added : s.startsWith('-') ? MARK_COLOR[tone].removed : SUB })
     }
   }
   return out
 }
+
+/** Text a Text or Code may hold: no escape sequences, and no control characters
+ * but tab and newline (a tree holding one is refused, and the engine draws instead). */
+const printable = (s: string) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
+
+/** One drawing of `Code` holds at most this many characters. */
+const CODE_CHARS = 100_000
+
+export type DiffRun =
+  | { kind: 'removed'; rows: { no: number; code: string }[] }
+  | { kind: 'kept'; hunk: string }
+  | { kind: 'gap' }
+
+export type DiffRuns = { runs: DiffRun[]; width: number; chars: number }
+
+/** A patch's hunks split into runs. On the dark-ansi base the engine draws removed
+ * lines faint (half brightness), so the mod draws those itself, white on
+ * diffRemoved, and hands each run of added and unchanged lines to the engine's
+ * diff as a hunk of its own (syntax colours, gutter, diffAdded). Hunks are parted
+ * by a gap; `width` is the digits of the widest line number. */
+export function diffRuns(patch: unknown): DiffRuns {
+  const hunks = Array.isArray(patch) ? (patch as Record<string, unknown>[]) : []
+  const out: DiffRuns = { runs: [], width: 1, chars: 0 }
+  for (const h of hunks) {
+    const lines = Array.isArray(h?.lines) ? (h.lines as unknown[]).map(l => printable(str(l))) : []
+    let oldNo = Number(h?.oldStart) || 1
+    let newNo = Number(h?.newStart) || 1
+    const ends = [oldNo + (Number(h?.oldLines) || 0), newNo + (Number(h?.newLines) || 0)]
+    out.width = Math.max(out.width, ...ends.map(n => String(Math.max(1, n - 1)).length))
+    if (out.runs.length && lines.length) out.runs.push({ kind: 'gap' })
+    let kept: { oldAt: number; newAt: number; old: number; new: number; lines: string[] } | null = null
+    const endKept = () => {
+      if (!kept) return
+      const hunk = `@@ -${kept.oldAt},${kept.old} +${kept.newAt},${kept.new} @@\n${kept.lines.join('\n')}`
+      out.runs.push({ kind: 'kept', hunk })
+      out.chars += hunk.length
+      kept = null
+    }
+    for (const line of lines) {
+      const mark = line[0]
+      if (mark === '-') {
+        endKept()
+        let run = out.runs[out.runs.length - 1]
+        if (run?.kind !== 'removed') out.runs.push((run = { kind: 'removed', rows: [] }))
+        if (run.kind === 'removed') run.rows.push({ no: oldNo++, code: line.slice(1).replace(/\t/g, '    ') })
+        out.chars += line.length
+      } else if (mark === '+' || mark === ' ') {
+        kept ??= { oldAt: oldNo, newAt: newNo, old: 0, new: 0, lines: [] }
+        kept.lines.push(line)
+        kept.new++
+        newNo++
+        if (mark === ' ') {
+          kept.old++
+          oldNo++
+        }
+      }
+    }
+    endKept()
+  }
+  return out
+}
+
+/** The engine's diff, with removed lines drawn by the mod (see diffRuns). */
+function diffView(ui: any, d: DiffRuns, path: string) {
+  const { Box, Text, Code } = ui
+  const rows: any[] = []
+  d.runs.forEach((run, i) => {
+    if (run.kind === 'gap') {
+      rows.push(
+        <Text key={`g${i}`} color={SUB}>
+          {' '.repeat(d.width + 1)}...
+        </Text>,
+      )
+    } else if (run.kind === 'kept') {
+      rows.push(<Code key={`k${i}`} source={run.hunk} format="diff" path={path || undefined} />)
+    } else {
+      run.rows.forEach((r, j) =>
+        rows.push(
+          <Box key={`r${i}.${j}`} flexDirection="row" backgroundColor="diffRemoved">
+            <Text color={MARK_COLOR[tone].removed}>{` ${String(r.no).padStart(d.width)} -`}</Text>
+            <Text color={TEXT}>{r.code || ' '}</Text>
+          </Box>,
+        ),
+      )
+    }
+  })
+  return <Box flexDirection="column">{rows}</Box>
+}
+
+const DIFF_TOOLS = new Set(['Edit', 'MultiEdit', 'Write'])
+
+/** The diff of an Edit or Write result for the mod to draw, or null where the
+ * engine's stays: another tool, no hunks (a new file), a staged edit, or too
+ * long for one Code drawing. */
+export function diffOf(tool: string, output: unknown): DiffRuns | null {
+  if (!DIFF_TOOLS.has(tool) || !output || typeof output !== 'object') return null
+  const o = output as Record<string, unknown>
+  if (o.staged) return null
+  const d = diffRuns(o.structuredPatch)
+  return d.runs.length && d.chars <= CODE_CHARS ? d : null
+}
+
+/** Claude Code wraps pasted text in these tags for the model; its own row hides them. */
+export const promptText = (text: string) => text.replace(/<\/?pasted_content(?:\s+id="[^"]*")?\s*>\n?/g, '')
 
 /** What an expanded card draws under its header, from the call's stored
  * result: a shell's stdout (stderr red), a diff, a list of files, or a line
@@ -493,7 +605,7 @@ export const register: Register = on => {
         <Text color={ACCENT} bold>
           {I.you}  You prompted
         </Text>
-        <Text>{e.props.text}</Text>
+        <Text>{promptText(e.props.text)}</Text>
       </Box>
     )
   })
@@ -575,10 +687,12 @@ export const register: Register = on => {
       const { Box, Text } = $.ui.resolve(e)
       const state = callState(p)
       const d = describeTool(p.tool, p.input)
-      const lines = outputLines(p.tool, p.output, state)
+      const diff = state === 'done' ? diffOf(p.tool, p.output) : null
+      const lines = diff ? [] : outputLines(p.tool, p.output, state)
       return (
         <Box flexDirection="column" borderStyle="round" borderColor={state === 'failed' ? FAIL : kindColor(d.kind)} paddingX={1}>
           {row(Text, d, state, { expanded: true, cols: cols(e, CARD_SLACK) })}
+          {diff && diffView($.ui.resolve(e), diff, str((p.output as Record<string, unknown>).filePath))}
           {lines.map((l, i) => (
             <Text key={`o${i}`} color={l.color}>
               {l.text || ' '}
@@ -589,6 +703,16 @@ export const register: Register = on => {
     }
     const { Text } = $.ui.resolve(e)
     return row(Text, describeTool(p.tool, p.input), callState(p), { cols: cols(e, ROW_SLACK) })
+  })
+
+  // An Edit or Write result: the engine's diff, but removed lines in full white
+  // (the dark-ansi base draws them faint). Anything else is the engine's.
+  on('ui.render', { component: 'ToolResult' }, ($, e, next) => {
+    const p = e.props
+    if (e.surface !== 'terminal' || p.isErrored) return next(e)
+    const diff = diffOf(p.tool, p.output)
+    if (!diff) return next(e)
+    return diffView($.ui.resolve(e), diff, str((p.output as Record<string, unknown>).filePath))
   })
 
   // The band above the prompt: the calls running now or just finished, and
