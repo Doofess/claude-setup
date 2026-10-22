@@ -1,0 +1,23 @@
+{
+  "name": "Readable",
+  "background": "#0C0C0C",
+  "foreground": "#CCCCCC",
+  "cursorColor": "#FFAF5F",
+  "selectionBackground": "#585858",
+  "black": "#0C0C0C",
+  "red": "#FF5F5F",
+  "green": "#FFD7AF",
+  "yellow": "#D7D75F",
+  "blue": "#AF5F00",
+  "purple": "#AF875F",
+  "cyan": "#D7AF87",
+  "white": "#FFFFFF",
+  "brightBlack": "#767676",
+  "brightRed": "#FF8787",
+  "brightGreen": "#E4E4E4",
+  "brightYellow": "#FFFF87",
+  "brightBlue": "#D7875F",
+  "brightPurple": "#FF8700",
+  "brightCyan": "#FFAF87",
+  "brightWhite": "#F2F2F2"
+}

@@ -67,7 +67,7 @@
       "effortLevel": "high"
     }
   },
-  "autoCompactWindow": 200000,
+  "autoCompactWindow": 300000,
   "skillOverrides": {
     "chrome-browser": "name-only",
     "built-in-browser": "name-only",
