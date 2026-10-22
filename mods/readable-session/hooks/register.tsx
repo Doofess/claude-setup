@@ -24,19 +24,19 @@ export type Kind =
   | 'websearch' | 'webfetch' | 'agent' | 'skill' | 'mcp'
 
 // Same hue per tool on both: light on dark themes, darker on light ones. All from
-// the repo's palettes (see statusline.py THEMES), no two tools alike: changes in
-// orange, shells in yellow, reading and searching in browns and peaches,
-// agents and skills in red, MCP servers in grey.
+// the repo's palettes (see statusline.py THEMES), no two tools alike: edits in
+// white (near-black on light), writes in orange, shells in yellow, reading and
+// searching in browns and peaches, agents and skills in red, MCP servers in grey.
 const KIND: Record<'dark' | 'light', Record<Kind, string>> = {
   dark: {
-    edit: '#FF8700', write: '#FFAF5F',
+    edit: '#FFFFFF', write: '#FFAF5F',
     bash: '#FFFF87', pwsh: '#D7D75F',
     read: '#AF875F', grep: '#D7AF87', glob: '#AF5F00',
     websearch: '#FFD7AF', webfetch: '#D7875F',
     agent: '#FF8787', skill: '#FF5F5F', mcp: '#BCBCBC',
   },
   light: {
-    edit: '#D75F00', write: '#AF5F00',
+    edit: '#1C1C1C', write: '#AF5F00',
     bash: '#AF8700', pwsh: '#878700',
     read: '#875F00', grep: '#AF875F', glob: '#5F3000',
     websearch: '#D7875F', webfetch: '#AF5F5F',
@@ -300,11 +300,11 @@ function capped(lines: OutLine[]): OutLine[] {
 }
 
 // The diff markers' colours, as the terminal scheme draws them (brightRed, brightGreen):
-// removed the light red, added a very light grey. diffAdded and diffRemoved are
-// backgrounds, too dark to be text.
+// removed the light red, added the status line's $ green. diffAdded and
+// diffRemoved are backgrounds, too dark to be text.
 const MARK_COLOR: Record<'dark' | 'light', { added: string; removed: string }> = {
-  dark: { added: '#E4E4E4', removed: '#FF8787' },
-  light: { added: '#585858', removed: '#D70000' },
+  dark: { added: '#87D787', removed: '#FF8787' },
+  light: { added: '#008700', removed: '#D70000' },
 }
 
 /** A diff's hunks as lines, each in its marker's colour. */
@@ -419,6 +419,17 @@ export function diffOf(tool: string, output: unknown): DiffRuns | null {
   if (o.staged) return null
   const d = diffRuns(o.structuredPatch)
   return d.runs.length && d.chars <= CODE_CHARS ? d : null
+}
+
+/** The files a Bash command changed, each with its diff for the mod to draw, or
+ * null where the engine's stays: no change with a removed line (a created file's
+ * diff has none), or one too long for one Code drawing. */
+export function bashDiffs(output: unknown): { path: string; diff: DiffRuns }[] | null {
+  const files = (output as { bashEditDiff?: { files?: unknown } } | null)?.bashEditDiff?.files
+  if (!Array.isArray(files)) return null
+  const out = (files as Record<string, unknown>[]).map(f => ({ path: str(f?.filePath), diff: diffRuns(f?.hunks) }))
+  if (!out.some(f => f.diff.runs.some(r => r.kind === 'removed'))) return null
+  return out.every(f => f.diff.chars <= CODE_CHARS) ? out : null
 }
 
 /** Claude Code wraps pasted text in these tags for the model; its own row hides them. */
@@ -706,13 +717,34 @@ export const register: Register = on => {
   })
 
   // An Edit or Write result: the engine's diff, but removed lines in full white
-  // (the dark-ansi base draws them faint). Anything else is the engine's.
-  on('ui.render', { component: 'ToolResult' }, ($, e, next) => {
+  // (the dark-ansi base draws them faint). A Bash command that changed files:
+  // the engine draws its output, the mod each file's diff below it. Anything
+  // else is the engine's.
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     const p = e.props
     if (e.surface !== 'terminal' || p.isErrored) return next(e)
+    const ui = $.ui.resolve(e)
+    if (p.tool === 'Bash') {
+      const files = bashDiffs(p.output)
+      if (!files) return next(e)
+      const { bashEditDiff: _, ...output } = p.output as Record<string, unknown>
+      const inner = await next({ ...e, props: { ...p, output } })
+      const { Box, Text } = ui
+      return (
+        <Box flexDirection="column">
+          {inner}
+          {files.map((f, i) => (
+            <Box key={`f${i}`} flexDirection="column">
+              <Text color={SUB}>{printable(f.path)}</Text>
+              {diffView(ui, f.diff, f.path)}
+            </Box>
+          ))}
+        </Box>
+      )
+    }
     const diff = diffOf(p.tool, p.output)
     if (!diff) return next(e)
-    return diffView($.ui.resolve(e), diff, str((p.output as Record<string, unknown>).filePath))
+    return diffView(ui, diff, str((p.output as Record<string, unknown>).filePath))
   })
 
   // The band above the prompt: the calls running now or just finished, and

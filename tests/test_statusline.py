@@ -154,6 +154,8 @@ class PaletteTest(unittest.TestCase):
         for key, value in overrides.items():
             m = re.fullmatch(r"#([0-9a-fA-F]{6})", value)
             self.assertIsNotNone(m, f"{key}: {value} is not #rrggbb")
+            if key.startswith("diffAdded"):
+                continue  # added lines are green on purpose (test_diffs_are_dark_tints)
             self.assert_palette(tuple(int(m.group(1)[i:i + 2], 16) for i in (0, 2, 4)), key)
 
     def test_cost_is_green(self):
@@ -163,18 +165,18 @@ class PaletteTest(unittest.TestCase):
             self.assertTrue(90 <= h * 360 <= 150 and s > 0.3, name)
 
     def test_diffs_are_dark_tints(self):
-        # Light text is drawn on the diff backgrounds: removed lines dark red, added lines dark grey.
+        # Light text is drawn on the diff backgrounds: removed lines dark red, added lines dark green.
         # On the dark-ansi base Claude Code rounds them to xterm-256 (a dark tint like #4E2A2A came
         # out grey), so each must be an exact cube or grey-ramp colour.
         import colorsys
         import json
         with open(os.path.join(self.ROOT, "themes", "readable.json"), encoding="utf-8") as f:
             overrides = json.load(f)["overrides"]
-        for side, kind in (("Added", "grey"), ("Removed", "warm")):
+        for side, kind in (("Added", "green"), ("Removed", "warm")):
             for suffix in ("", "Dimmed", "Word"):
                 key = f"diff{side}{suffix}"
                 rgb = tuple(int(overrides[key][i:i + 2], 16) for i in (1, 3, 5))
-                self.assertEqual(palette_of(rgb), kind, key)
+                self.assertEqual(palette_of(rgb) or ("green" if rgb[1] > max(rgb[0], rgb[2]) else None), kind, key)
                 self.assertIn(rgb, [xterm_rgb(n) for n in range(16, 256)], key)
                 self.assertLess(colorsys.rgb_to_hsv(*(c / 255 for c in rgb))[2], 0.55, key)
 
@@ -194,17 +196,17 @@ class PaletteTest(unittest.TestCase):
         names = ["black", "red", "green", "yellow", "blue", "purple", "cyan", "white"]
         self.assertTrue(set(names + ["bright" + n.title() for n in names]) <= set(scheme))
         for key, value in scheme.items():
-            if key not in ("name", "brightBlue"):  # brightBlue is blue on purpose, below
+            if key not in ("name", "brightBlue", "brightGreen"):  # blue and green on purpose, below
                 self.assert_palette(tuple(int(value[i:i + 2], 16) for i in (1, 3, 5)), f"scheme {key}")
         self.assertEqual(scheme["brightRed"], "#FF8787")   # − markers: the light red
-        self.assertEqual(scheme["brightGreen"], "#E4E4E4")  # + markers: very light grey
+        self.assertEqual(scheme["brightGreen"], "#87D787")  # + markers: the status line's $ green (xterm 114)
         self.assertEqual(scheme["white"], "#FFFFFF")  # removed lines are drawn faint in white: half is #808080
         # Claude Code's ANSI syntax slots, given Monokai's roles in the palettes.
         roles = {"brightPurple": "#FF5F5F",  # keywords: red, Monokai's pink
                  "brightCyan": "#FF8700",    # const/def/class, types, built-ins: orange, Monokai's cyan
                  "brightYellow": "#FFFF87",  # function and class names: yellow, Monokai's green
                  "brightBlue": "#3B78FF",    # inline code, numbers, true/None: Campbell's bright blue
-                 "brightGreen": "#E4E4E4",   # strings, tied to the + marker: light grey
+                 "brightGreen": "#87D787",   # strings, tied to the + marker: green
                  "brightBlack": "#8A8A8A"}   # comments: grey
         self.assertEqual({k: scheme[k] for k in roles}, roles)
 
@@ -215,6 +217,8 @@ class PaletteTest(unittest.TestCase):
         colours = re.findall(r"#([0-9A-Fa-f]{6})\b", text)
         self.assertGreaterEqual(len(colours), 10)  # five tool kinds, dark and light
         for h in colours:
+            if h.upper() in ("87D787", "008700"):
+                continue  # the + marks: the status line's $ greens (xterm 114 and 28)
             self.assert_palette(tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)), f"register.tsx #{h}")
 
     def test_installer_colours(self):

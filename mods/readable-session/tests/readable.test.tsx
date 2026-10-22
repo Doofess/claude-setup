@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { brief, describeTool, diffOf, diffRuns, kindColor, outputLines, promptText } from '../hooks/register.tsx'
+import { bashDiffs, brief, describeTool, diffOf, diffRuns, kindColor, outputLines, promptText } from '../hooks/register.tsx'
 
 describe('describeTool', () => {
   test('names the kind of work in plain words', () => {
@@ -53,6 +53,7 @@ describe('describeTool', () => {
     const all = [...new Set(Object.values(kinds))]
     for (const t of ['dark', 'light'] as const) expect(new Set(all.map(k => kindColor(k, t))).size).toBe(all.length)
     expect(kindColor('read', 'light')).not.toBe(kindColor('read', 'dark'))
+    expect(kindColor('edit', 'dark')).toBe('#FFFFFF')
   })
 
   test("draws each tool's output from its stored result", () => {
@@ -67,7 +68,7 @@ describe('describeTool', () => {
     expect(long[40]?.text).toBe('+10 more lines')
     expect(outputLines('Read', { type: 'image', file: { originalSize: 58 * 1024 } }, 'done')[0]?.text).toBe('Read image (58KB)')
     const diff = outputLines('Edit', { structuredPatch: [{ lines: [' a', '-b', '+c'] }] }, 'done')
-    expect(diff.map(l => l.color)).toEqual(['subtle', '#FF8787', '#E4E4E4'])
+    expect(diff.map(l => l.color)).toEqual(['subtle', '#FF8787', '#87D787'])
     expect(outputLines('Glob', { numFiles: 1, filenames: ['C:/dev/app/x.ts'] }, 'done').map(l => l.text)).toEqual([
       'Found 1 file',
       'app/x.ts',
@@ -121,6 +122,35 @@ describe('diffs', () => {
     const kept = await ui.findAll({ type: 'Code' })
     expect(kept.map(k => k.props.format)).toEqual(['diff', 'diff', 'diff'])
     expect(kept[0]?.props.path).toBe('C:/dev/x.py')
+  })
+})
+
+describe('bash diffs', () => {
+  const hunks = [{ oldStart: 3, oldLines: 2, newStart: 3, newLines: 2, lines: ['-old', '+new', ' same'] }]
+  const output = (files: unknown[]) => ({ stdout: 'done', stderr: '', bashEditDiff: { files } })
+
+  test("a command that removed lines is the mod's; one that only added stays the engine's", () => {
+    expect(bashDiffs(output([{ filePath: 'C:/dev/a.py', hunks }]))?.map(f => f.path)).toEqual(['C:/dev/a.py'])
+    expect(bashDiffs(output([{ filePath: 'C:/dev/n.py', created: true, hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 1, lines: ['+x'] }] }]))).toBe(null)
+    expect(bashDiffs({ stdout: 'hi' })).toBe(null)
+  })
+
+  test("the output stays the engine's, the diff below it has white removed lines", async ($, on) => {
+    on('ui.render', async (_$: any, e: any) => {
+      const { Text } = _$.ui.resolve(e)
+      return <Text>{`ENGINE ${Object.keys(e.props.output).join(',')}`}</Text>
+    })
+    const ui = await $.ui.mount({
+      plugin: 'readable-session',
+      surface: 'terminal',
+      component: 'ToolResult',
+      props: { tool_use_id: 't2', tool: 'Bash', isErrored: false, output: output([{ filePath: 'C:/dev/a.py', hunks }]) },
+    })
+    const removed = await ui.findAll({ type: 'Box', text: /-old$/ })
+    expect(removed[0]?.props.backgroundColor).toBe('diffRemoved')
+    expect(await ui.find({ type: 'Text', text: 'ENGINE stdout,stderr' })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: 'C:/dev/a.py' })).toBeTruthy()
+    expect((await ui.findAll({ type: 'Code' })).map(k => k.props.format)).toEqual(['diff'])
   })
 })
 
