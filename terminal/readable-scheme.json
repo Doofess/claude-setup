@@ -12,12 +12,12 @@
   "purple": "#AF875F",
   "cyan": "#D7AF87",
   "white": "#FFFFFF",
-  "brightBlack": "#767676",
+  "brightBlack": "#8A8A8A",
   "brightRed": "#FF8787",
   "brightGreen": "#E4E4E4",
   "brightYellow": "#FFFF87",
-  "brightBlue": "#D7875F",
-  "brightPurple": "#FF8700",
-  "brightCyan": "#FFAF87",
+  "brightBlue": "#D7AF87",
+  "brightPurple": "#FF5F5F",
+  "brightCyan": "#FF8700",
   "brightWhite": "#F2F2F2"
 }
