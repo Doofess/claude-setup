@@ -194,7 +194,7 @@ class PaletteTest(unittest.TestCase):
         names = ["black", "red", "green", "yellow", "blue", "purple", "cyan", "white"]
         self.assertTrue(set(names + ["bright" + n.title() for n in names]) <= set(scheme))
         for key, value in scheme.items():
-            if key != "name":
+            if key not in ("name", "brightBlue"):  # brightBlue is blue on purpose, below
                 self.assert_palette(tuple(int(value[i:i + 2], 16) for i in (1, 3, 5)), f"scheme {key}")
         self.assertEqual(scheme["brightRed"], "#FF8787")   # − markers: the light red
         self.assertEqual(scheme["brightGreen"], "#E4E4E4")  # + markers: very light grey
@@ -203,7 +203,7 @@ class PaletteTest(unittest.TestCase):
         roles = {"brightPurple": "#FF5F5F",  # keywords: red, Monokai's pink
                  "brightCyan": "#FF8700",    # const/def/class, types, built-ins: orange, Monokai's cyan
                  "brightYellow": "#FFFF87",  # function and class names: yellow, Monokai's green
-                 "brightBlue": "#D7AF87",    # numbers, true/None (and inline code): tan, Monokai's purple
+                 "brightBlue": "#3B78FF",    # inline code, numbers, true/None: Campbell's bright blue
                  "brightGreen": "#E4E4E4",   # strings, tied to the + marker: light grey
                  "brightBlack": "#8A8A8A"}   # comments: grey
         self.assertEqual({k: scheme[k] for k in roles}, roles)

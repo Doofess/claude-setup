@@ -207,8 +207,8 @@ function Set-TerminalStartDir([string]$path, [string]$dir) {
 }
 
 # Windows Terminal colour scheme, as text like the two above. The scheme named $name is replaced (it is ours) or added
-# to "schemes"; profiles.defaults gets "colorScheme" only when it names none. Returns 'set', 'kept' (another scheme is
-# the default; ours is still there to pick) or 'none' (no defaults block).
+# to "schemes", and made the only colorScheme: profiles.defaults names it and no profile names another. Returns 'set',
+# or 'none' (no defaults block: the scheme is added, nothing else changes).
 function Set-TerminalScheme([string]$path, [string]$schemeJson, [string]$name) {
   $text = [IO.File]::ReadAllText($path)
   $old = $text
@@ -227,23 +227,18 @@ function Set-TerminalScheme([string]$path, [string]$schemeJson, [string]$name) {
       $text = $text.Insert($top.Index + 1, ' "schemes": [' + $obj + '],')
     }
   }
-  $r = 'none'
-  $d = [regex]::Match($text, '"defaults"\s*:\s*\{')
-  if ($d.Success) {
-    $depth = 1; $i = $d.Index + $d.Length
-    while ($i -lt $text.Length -and $depth -gt 0) {
-      $c = $text[$i]
-      if ($c -eq '{') { $depth++ } elseif ($c -eq '}') { $depth-- }
-      $i++
-    }
-    $block = $text.Substring($d.Index, $i - $d.Index)
-    $set = [regex]::Match($block, '"colorScheme"\s*:\s*"([^"]*)"')
-    if (-not $set.Success) {
-      $text = $text.Insert($d.Index + $d.Length, ' "colorScheme": "' + $name + '",'); $r = 'set'
-    } elseif ($set.Groups[1].Value -eq $name) { $r = 'set' } else { $r = 'kept' }
-  }
+  if (-not [regex]::IsMatch($text, '"defaults"\s*:\s*\{')) { if ($text -ne $old) { Write-Utf8NoBom $path $text }; return 'none' }
+  # Every machine shows the same colours: each colorScheme (a name, or a light/dark pair) is dropped, from the
+  # defaults and from every profile, and the defaults name ours.
+  $key = '"colorScheme"\s*:\s*(?:"[^"]*"|\{[^{}]*\})'
+  $text = [regex]::Replace($text, "$key\s*,\s*", '')
+  $text = [regex]::Replace($text, ",\s*$key", '')
+  $text = [regex]::Replace($text, $key, '')
+  $d = [regex]::Match($text, '"defaults"\s*:\s*\{\s*')
+  $sep = if ($text[$d.Index + $d.Length] -eq '}') { '' } else { ', ' }
+  $text = $text.Insert($d.Index + $d.Length, '"colorScheme": "' + $name + '"' + $sep)
   if ($text -ne $old) { Write-Utf8NoBom $path $text }
-  return $r
+  return 'set'
 }
 
 # Windows Terminal keeps settings.json per install (Store, Preview, unpackaged). Each is backed up once per run under
@@ -475,7 +470,7 @@ $schemeJson = [IO.File]::ReadAllText((Join-Path $repo 'terminal/readable-scheme.
 foreach ($wt in $wtSettings) {
   Backup-TerminalSettings $wt
   $r = Set-TerminalScheme $wt $schemeJson 'Readable'
-  $msg = switch ($r) { 'set' { "Readable colour scheme is the default in $wt" } 'kept' { "another colour scheme is the default in $wt; left as is (Readable is there to pick)" } default { "no defaults block in $wt; pick the Readable scheme by hand" } }
+  $msg = switch ($r) { 'set' { "Readable colour scheme is the default in $wt (per-profile schemes cleared)" } default { "no defaults block in $wt; pick the Readable scheme by hand" } }
   Write-Host "    $msg"
 }
 $ps7Profile = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Microsoft.PowerShell_profile.ps1'
@@ -494,6 +489,15 @@ Write-Step 'Status line smoke test'
 $sample = '{"model":{"display_name":"Test"},"workspace":{"current_dir":"' + ($HOME -replace '\\', '/') + '"},"cwd":"' + ($HOME -replace '\\', '/') + '","context_window":{"used_percentage":1}}'
 $sl = Test-StatusLine $claudeDir $sample
 if (-not $sl.Ok) { $failures += "statusline.py failed: $($sl.Output)" }
+
+# The tool rows and diffs are the readable-session mod's: Claude Code loads it from the folder settings name.
+Write-Step 'readable-session mod'
+$modDir = (Join-Path $repo 'mods/readable-session') -replace '\\', '/'
+$dirs = [string](Get-Content (Join-Path $claudeDir 'settings.json') -Raw | ConvertFrom-Json).env.CLAUDE_CODE_PLUGIN_DIRS
+$check = & claude plugin validate $modDir 2>&1
+if ($dirs -notmatch [regex]::Escape($modDir)) { $failures += "CLAUDE_CODE_PLUGIN_DIRS ('$dirs') does not name $modDir" }
+elseif ($LASTEXITCODE -ne 0) { $failures += "readable-session does not validate: $(($check | Select-Object -Last 3) -join ' ')" }
+else { Write-Host "    $(& claude --version) loads $modDir" }
 
 Write-Step 'MCP health'
 & claude mcp list 2>&1 | Where-Object { $_ -match 'Needs authentication|Failed|error' } | ForEach-Object { Write-Color "    $_" 228 }
