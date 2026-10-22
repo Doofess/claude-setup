@@ -199,6 +199,14 @@ class PaletteTest(unittest.TestCase):
         self.assertEqual(scheme["brightRed"], "#FF8787")   # − markers: the light red
         self.assertEqual(scheme["brightGreen"], "#E4E4E4")  # + markers: very light grey
         self.assertEqual(scheme["white"], "#FFFFFF")  # removed lines are drawn faint in white: half is #808080
+        # Claude Code's ANSI syntax slots, given Monokai's roles in the palettes.
+        roles = {"brightPurple": "#FF5F5F",  # keywords: red, Monokai's pink
+                 "brightCyan": "#FF8700",    # const/def/class, types, built-ins: orange, Monokai's cyan
+                 "brightYellow": "#FFFF87",  # function and class names: yellow, Monokai's green
+                 "brightBlue": "#D7AF87",    # numbers, true/None (and inline code): tan, Monokai's purple
+                 "brightGreen": "#E4E4E4",   # strings, tied to the + marker: light grey
+                 "brightBlack": "#8A8A8A"}   # comments: grey
+        self.assertEqual({k: scheme[k] for k in roles}, roles)
 
     def test_readable_session_tool_colours(self):
         import re
