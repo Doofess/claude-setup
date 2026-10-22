@@ -41,20 +41,18 @@ describe('describeTool', () => {
     })
   })
 
-  test('groups tools into kinds, each with its own tone; the rest stay text', () => {
-    expect(describeTool('Bash', { command: 'ls' }).kind).toBe('shell')
-    expect(describeTool('PowerShell', { command: 'ls' }).kind).toBe('shell')
-    expect(describeTool('Edit', { file_path: 'a.ts' }).kind).toBe('change')
-    expect(describeTool('Write', { file_path: 'a.ts' }).kind).toBe('change')
-    for (const t of ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch']) expect(describeTool(t, {}).kind).toBe('look')
-    expect(describeTool('Agent', {}).kind).toBe('delegate')
-    expect(describeTool('Skill', {}).kind).toBe('delegate')
-    expect(describeTool('mcp__x__y', {}).kind).toBe('connect')
+  test('gives each tool its own tone; the rest stay text', () => {
+    const kinds = {
+      Bash: 'bash', PowerShell: 'pwsh', Write: 'write', Edit: 'edit', MultiEdit: 'edit', Read: 'read',
+      Grep: 'grep', Glob: 'glob', WebSearch: 'websearch', WebFetch: 'webfetch', Agent: 'agent', Task: 'agent',
+      Skill: 'skill', mcp__x__y: 'mcp',
+    } as const
+    for (const [tool, kind] of Object.entries(kinds)) expect(describeTool(tool, {}).kind).toBe(kind)
     expect(describeTool('TodoWrite', {}).kind).toBe(undefined)
     expect(kindColor(undefined)).toBe('text')
-    const tones = (['look', 'change', 'shell', 'delegate', 'connect'] as const).map(k => kindColor(k, 'dark'))
-    expect(new Set(tones).size).toBe(5)
-    expect(kindColor('look', 'light')).not.toBe(kindColor('look', 'dark'))
+    const all = [...new Set(Object.values(kinds))]
+    for (const t of ['dark', 'light'] as const) expect(new Set(all.map(k => kindColor(k, t))).size).toBe(all.length)
+    expect(kindColor('read', 'light')).not.toBe(kindColor('read', 'dark'))
   })
 
   test("draws each tool's output from its stored result", () => {
@@ -183,7 +181,7 @@ describe('drawing on terminal', () => {
     })
     const card = await ui.find({ type: 'Box' })
     expect(card?.props.borderStyle).toBe('round')
-    expect(card?.props.borderColor).toBe(kindColor('look'))
+    expect(card?.props.borderColor).toBe(kindColor('read'))
     expect(card?.props.backgroundColor).toBe(undefined)
     expect(card?.text ?? '').toContain('app/main.py · Python')
     expect(card?.text ?? '').toContain('Read 40 lines')

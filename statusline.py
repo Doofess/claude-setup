@@ -8,9 +8,10 @@ One line, always (Claude Code draws its own mode line below it), left to right:
     project › branch ~N “session-name” │ model · effort │ ctx N% bar used/compact-at │
     5h N% bar →reset │ 7d N% bar →reset pace │ $cost │ session time │ ✓ mcp N · version │
     venv │ :ports
-ctx counts to the point where Claude Code compacts (CLAUDE_CODE_AUTO_COMPACT_WINDOW, else
-settings.json autoCompactWindow, else the model window, less the 33k Claude Code holds back),
-so 100% means "compacts next". The pace marker beside 7d compares usage with the share of the
+ctx counts to the point where Claude Code compacts, worked out the way Claude Code does it
+(see compact_window: CLAUDE_CODE_AUTO_COMPACT_WINDOW, else the model's own or the top-level
+autoCompactWindow from managed, local, project and user settings, else the model window,
+less the 33k Claude Code holds back), so 100% means "compacts next". The pace marker beside 7d compares usage with the share of the
 week gone: "on pace" within 10 points, "▲ ahead" 10-25 over, "▲▲" over 25; nothing when well
 under or when the reset time is unknown.
 
@@ -64,40 +65,47 @@ def fg(n):
 RST = "\033[0m"
 
 # Two palettes of xterm-256 indices. The dark one is the default; STATUSLINE_THEME=light
-# picks colours with at least 3:1 contrast on a white background. One accent (Claude
-# terracotta) marks the model and the high effort levels; the rest is neutral text or grey.
-# Stage colours (green, yellow, orange, red by percentage) are kept for the meters and
-# health state alone: no model family, effort level or other text borrows one, so a stage
-# colour always means a stage.
+# picks colours with at least 3:1 contrast on a white background. Like the rest of this repo
+# (themes/readable.json, install.ps1), every colour comes from five palettes: orange (the main
+# one), brown, yellow, red and grey (hues 345-65°, or no hue at all):
+#   dark:  orange 208 #FF8700, 223 #FFD7AF peach, 173 #D7875F terracotta; brown 137 #AF875F;
+#          yellow 228 #FFFF87 (banana); red 203 #FF5F5F; greys 238-255
+#   light: orange 166 #D75F00, 130 #AF5F00; brown 94 #875F00; yellow 136 #AF8700;
+#          red 160 #D70000; greys 235-250
+# Meters go grey while low, then yellow, orange and red as they near the limit. Each model
+# family has its own palette. The one exception is green: the $ cost, and lines added (+N)
+# beside lines removed in red, the colours of Claude Code's own diffs.
 THEMES = {
     "dark": {
         "DIM": 252,      # secondary text: the terminal's usual light grey, not a faint dim
         "SEP": 240,      # the │ between items: dimmer than the labels
         "TRACK": 238,    # the empty part of a bar
-        "STAGES": (114, 221, 208), "RED": 203,
-        "GREEN": 114, "AMBER": 221, "CYAN": 252,  # clean branch and ticks; dirty branch and updates; name, venv (neutral)
+        "STAGES": (250, 228, 215), "RED": 203,
+        "GREEN": 223, "AMBER": 228, "CYAN": 252,  # clean branch and ticks; dirty branch and updates; name, venv (neutral)
         "PROJECT": 255,  # near-white: the item that leads the line
-        "MODEL": 173,    # Claude terracotta, the one accent
+        "MODEL": 173,    # Claude terracotta: a model of no known family
         "ACCENT": 173,   # the max and xhigh effort levels
-        "MODEL_COLORS": {"opus": 173, "sonnet": 173, "haiku": 173, "fable": 173},
+        "COST": 114,     # the $ cost and lines added: green, like Claude Code's diffs (outside the palettes)
+        "REPO": 137,     # the GitHub repository: brown
+        "MODEL_COLORS": {"fable": 203, "opus": 208, "sonnet": 228, "haiku": 137},
     },
     "light": {
         "DIM": 244, "SEP": 250, "TRACK": 250,
-        "STAGES": (28, 136, 166), "RED": 160,
-        "GREEN": 28, "AMBER": 136, "CYAN": 244,
-        "PROJECT": 235, "MODEL": 130, "ACCENT": 130,
-        "MODEL_COLORS": {"opus": 130, "sonnet": 130, "haiku": 130, "fable": 130},
+        "STAGES": (244, 136, 166), "RED": 160,
+        "GREEN": 130, "AMBER": 136, "CYAN": 244,
+        "PROJECT": 235, "MODEL": 130, "ACCENT": 130, "COST": 28, "REPO": 94,
+        "MODEL_COLORS": {"fable": 160, "opus": 166, "sonnet": 136, "haiku": 94},
     },
 }
-STAGE_LIMITS = (50, 70, 85)  # yellow from 50%, orange from 70%, red from 85%
+STAGE_LIMITS = (50, 70, 85)  # grey below 50%, yellow from 50%, orange from 70%, red from 85%
 
 
 def set_theme(name):
     """Install the named palette ('dark' unless name is 'light') into the colour globals."""
-    global DIM, SEP, BAR_TRACK, STAGES, RED, GREEN, AMBER, CYAN, PROJECT, MODEL, COST, MODEL_COLORS, EFFORT
+    global DIM, SEP, BAR_TRACK, STAGES, RED, GREEN, AMBER, CYAN, PROJECT, MODEL, COST, REPO, MODEL_COLORS, EFFORT
     t = THEMES.get(name) or THEMES["dark"]
     DIM, RED, GREEN, AMBER, CYAN = fg(t["DIM"]), fg(t["RED"]), fg(t["GREEN"]), fg(t["AMBER"]), fg(t["CYAN"])
-    PROJECT, MODEL, COST = fg(t["PROJECT"]), fg(t["MODEL"]), fg(t["DIM"])
+    PROJECT, MODEL, COST, REPO = fg(t["PROJECT"]), fg(t["MODEL"]), fg(t["COST"]), fg(t["REPO"])
     STAGES = tuple(zip(STAGE_LIMITS, (fg(n) for n in t["STAGES"])))  # (below this %, colour), then RED
     SEP = f" {fg(t['SEP'])}│{RST} "  # one space each side: room for three bars on one 120-column line
     BAR_TRACK = fg(t["TRACK"])
@@ -201,6 +209,7 @@ NERD_ICONS = {
     "reload": "",      # fa-refresh
     "warn": "",        # fa-warning
     "tag": "",         # fa-tag: replaces the quotes round the session name
+    "repo": "",        # fa-github: before the GitHub repository
     "segment": "",  # powerline slants: one tilted full-height bar segment
 }
 ICON = dict(PLAIN_ICONS)
@@ -319,7 +328,7 @@ def ic(name, color=DIM):
 
 
 def color_pct(p):
-    """Four clear stages: green, yellow from 50%, orange from 70%, red from 85%."""
+    """Four clear stages: grey, yellow from 50%, orange from 70%, red from 85%."""
     for limit, color in STAGES:
         if p < limit:
             return color
@@ -405,23 +414,123 @@ def _tokens_used(cw):
 
 # Claude Code compacts this far below the window: room for the reply (20k) plus a 13k buffer.
 # Transcripts confirm it: with a 200k window, auto-compaction fires at ~167k.
-COMPACT_HEADROOM = 33_000
+REPLY_ROOM = 20_000
+COMPACT_HEADROOM = REPLY_ROOM + 13_000
+WINDOW_RANGE = (100_000, 1_000_000)  # the autoCompactWindow values Claude Code accepts
 
 
-def compact_window(env, settings, model_window):
-    """The token count at which Claude Code compacts: the window (CLAUDE_CODE_AUTO_COMPACT_WINDOW,
-    else settings.json's autoCompactWindow, else the model's whole window; None when unknown)
-    less COMPACT_HEADROOM. The window is never above the model's: a larger setting cannot be reached."""
-    window = int(model_window) if _number(model_window) and model_window > 0 else None
-    for raw in ((env or {}).get("CLAUDE_CODE_AUTO_COMPACT_WINDOW"), (settings or {}).get("autoCompactWindow")):
+def canonical_model(model_id):
+    """The model's canonical name, as Claude Code keys modelSettings: 'claude-opus-5-5[1m]',
+    'claude-opus-5-5-20260101' and 'us.anthropic.claude-opus-5-5-v1:0' are all 'claude-opus-5-5'."""
+    m = str(model_id or "").strip().lower()
+    m = re.sub(r"\[[^\]]*\]$", "", m)                    # [1m]
+    m = re.sub(r"^(?:[a-z]{2,4}\.)?anthropic\.", "", m)  # Bedrock 'us.anthropic.'
+    m = re.sub(r"-v\d+(?::\d+)?$", "", m)                # Bedrock '-v1:0'
+    return re.sub(r"[-@]\d{8}$", "", m)                  # dated, Vertex '@20260101'
+
+
+def _window_value(raw):
+    """A setting as a window in tokens, 'auto', or None when it is not one Claude Code accepts."""
+    if isinstance(raw, str) and raw.strip().lower() == "auto":
+        return "auto"
+    if isinstance(raw, bool):
+        return None
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return n if WINDOW_RANGE[0] <= n <= WINDOW_RANGE[1] else None
+
+
+def autocompact_setting(env, layers, model_id=None):
+    """The auto-compact window Claude Code applies to model_id: tokens, 'auto', or None (not set).
+
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW wins. Then the settings layers, highest precedence first:
+    in one layer a modelSettings entry for this model (keyed by its canonical name, else any
+    spelling of it) beats the layer's top-level autoCompactWindow, and the first layer with
+    either decides. /autocompact saves the per-model entry. 'auto' here means the model's whole
+    window: Claude Code can also get tuned windows per model from its server, which rank just
+    above the user's settings.json. They are not read here (autoCompactWindowsCache in
+    ~/.claude.json may hold a copy; it is empty on this setup), so if they ever apply, ctx drifts.
+    """
+    raw = (env or {}).get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+    if raw is not None:
         try:
             n = int(raw)
+            if n > 0:
+                return n
         except (TypeError, ValueError):
+            pass
+    canon = canonical_model(model_id) if model_id else None
+    for layer in layers:
+        if not isinstance(layer, dict):
             continue
-        if n > 0:
-            window = min(n, window) if window else n
-            break
-    return max(window - COMPACT_HEADROOM, 1) if window else None
+        per_model = layer.get("modelSettings")
+        if canon and isinstance(per_model, dict):
+            spellings = [k for k in per_model if canonical_model(k) == canon]
+            for key in sorted(spellings, key=lambda k: k != canon):  # the canonical key first
+                entry = per_model[key]
+                value = _window_value(entry.get("autoCompactWindow")) if isinstance(entry, dict) else None
+                if value is not None:
+                    return value
+        value = _window_value(layer.get("autoCompactWindow"))
+        if value is not None:
+            return value
+    return None
+
+
+def compact_window(env, settings, model_window, model_id=None):
+    """The token count at which Claude Code compacts, or None when it never does or the window is unknown.
+
+    settings: the settings layers, highest precedence first (or one settings dict). The window
+    is autocompact_setting(), else the model's whole window, and never above the model's: a
+    larger setting cannot be reached. Claude Code compacts COMPACT_HEADROOM below it, or
+    earlier with CLAUDE_AUTOCOMPACT_PCT_OVERRIDE (a percentage of the window less REPLY_ROOM).
+    DISABLE_AUTO_COMPACT or DISABLE_COMPACT turn compaction off.
+    """
+    env = env or {}
+    if any(str(env.get(k, "")).strip().lower() in ("1", "true", "yes", "on")
+           for k in ("DISABLE_AUTO_COMPACT", "DISABLE_COMPACT")):
+        return None
+    layers = [settings] if isinstance(settings, dict) else list(settings or ())
+    window = int(model_window) if _number(model_window) and model_window > 0 else None
+    n = autocompact_setting(env, layers, model_id)
+    if isinstance(n, int):
+        window = min(n, window) if window else n
+    if not window:
+        return None
+    usable = window - REPLY_ROOM
+    point = usable - (COMPACT_HEADROOM - REPLY_ROOM)
+    try:
+        pct = float(env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") or "")
+    except ValueError:
+        pct = 0.0
+    if 0 < pct <= 100:
+        point = min(int(usable * pct / 100), point)
+    return max(point, 1)
+
+
+def settings_layers(project_dir=None):
+    """Claude Code's settings files that can set autoCompactWindow, highest precedence first:
+    managed, the project's settings.local.json and settings.json, then the user's."""
+    if os.name == "nt":
+        managed = os.path.join(os.environ.get("ProgramFiles") or r"C:\Program Files", "ClaudeCode")
+    elif sys.platform == "darwin":
+        managed = "/Library/Application Support/ClaudeCode"
+    else:
+        managed = "/etc/claude-code"
+    paths = [os.path.join(managed, "managed-settings.json")]
+    if project_dir:
+        paths += [os.path.join(project_dir, ".claude", "settings.local.json"),
+                  os.path.join(project_dir, ".claude", "settings.json")]
+    paths.append(os.path.join(CLAUDE_DIR, "settings.json"))
+    return [_read_json(p) for p in paths]
+
+
+def autocompact_enabled():
+    """False when the autoCompactEnabled setting in ~/.claude.json (/config) is off."""
+    path = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or HOME, ".claude.json")
+    return _read_json(path).get("autoCompactEnabled") is not False
 
 
 def context_tokens(cw, window=None):
@@ -455,6 +564,28 @@ def context_pct(cw, window=None):
 
 def fmt_cost(c):
     return f"{COST}${c:.2f}{RST}"
+
+
+def fmt_lines(cost):
+    """This session's lines changed, '+120 −30' (added green, removed red), or '' before any."""
+    def count(key):
+        try:
+            return max(int(cost.get(key) or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+    added, removed = count("total_lines_added"), count("total_lines_removed")
+    parts = ([f"{COST}+{fmt_tokens(added)}{RST}"] if added else []) + ([f"{RED}−{fmt_tokens(removed)}{RST}"] if removed else [])
+    return " ".join(parts)
+
+
+def repo_tag(data):
+    """The GitHub repository Claude Code found for this directory, 'owner/name', or ''."""
+    repo = data.get("repo")
+    if not isinstance(repo, dict) or not repo.get("owner") or not repo.get("name"):
+        return ""
+    if str(repo.get("host") or "github.com").lower() != "github.com":
+        return ""
+    return f"{ic('repo', REPO)}{REPO}{repo['owner']}/{repo['name']}{RST}"
 
 
 WEEK_SECONDS = 7 * 86400
@@ -1554,10 +1685,14 @@ def gather_extras(data, cache=None):
     extras = {"proj": _basename(cwd) if cwd else "", "git": None, "name": "", "marks": [],
               "compact": None, "ports": "", "venv": ""}  # marks: health_marks()'s list
     size = (data.get("context_window") or {}).get("context_window_size")
+    model_id = (data.get("model") or {}).get("id")
+    project = ws.get("project_dir") or data.get("cwd")
     try:
+        # Keyed by model and project too: each picks its own settings (modelSettings, .claude/).
         extras["compact"] = _probe_cache(cache).get(
-            f"compact:{size}", HEALTH_TTL,
-            lambda: compact_window(os.environ, _read_json(os.path.join(CLAUDE_DIR, "settings.json")), size))
+            "compact:" + json.dumps([size, model_id, project]), HEALTH_TTL,
+            lambda: compact_window(os.environ, settings_layers(project), size, model_id)
+            if autocompact_enabled() else None)
     except Exception:
         pass
     for key, probe in (("git", lambda: git_info(cwd, cache)),
@@ -1586,14 +1721,15 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
     usage: merge_usage() result, or None when nothing is known yet. extras: gather_extras()'s
     result; without it only the session's own items show. Left to right:
 
-        project › branch ~N “session-name” │ model · effort │ ctx % bar tokens │
-        5h % bar →reset │ 7d % bar →reset pace │ $cost │ session time │ health │
-        venv │ :ports
+        project › branch ~N “session-name” │ owner/repo │ model · effort │ ctx % bar tokens │
+        5h % bar →reset │ 7d % bar →reset pace │ $cost │ +added −removed │ session time │
+        health │ venv │ :ports
 
     A window's →reset countdown shows only from RESET_FROM percent and belongs to its meter:
     it is never dropped on its own. The line is made for a 120-column window. When it does
     not fit `width`, things go in this order, each only if the line is still too wide:
 
+      0. the GitHub repository, then the lines changed,
       1. the pace marker, 2. venv and ports, 3. session time,
       4. the healthy health cluster ('✓ mcp 3 · 2.1.296'),
       5. health problems, last one first, each by name ('▲ discord', '↑ 2.2.0', '~reload'); when
@@ -1611,6 +1747,9 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
 
     Model and the three percentages always stay, with their countdowns: at 100% they need
     47 columns ('Opus 5.5 │ ctx 100% │ 5h 100% →1h │ 7d 100% →3d'), the floor of the line.
+
+    A line that fits with room to spare is spread to exactly `width`: the spare columns are
+    shared out as spaces round the │ separators, so the line ends at the right edge.
     """
     now = time.time() if now is None else now
     cw = data.get("context_window", {}) or {}
@@ -1630,6 +1769,8 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
             if key == "seven_day" and w:
                 week_pace = fmt_pace(pace(w["pct"], w["resets_at"], now))
     cost = fmt_cost(float((data.get("cost", {}) or {}).get("total_cost_usd", 0.0) or 0.0))
+    lines = fmt_lines(data.get("cost", {}) or {})
+    repo = repo_tag(data)
     session = session_time(data)
     tag = name_tag(ex["name"]) if ex.get("name") else ""
     marks = list(ex.get("marks") or [])
@@ -1669,6 +1810,8 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
             out.append(f"{text} {week_pace}" if label == "7d" and s["pace"] and week_pace else text)
         if s["cost"]:
             out.append(cost)
+        if s["lines"] and lines:
+            out.append(lines)
         if s["session"] and session:
             out.append(session)
         out += [text for i, (text, _, _) in enumerate(marks) if i not in s["dropped"]]
@@ -1677,6 +1820,8 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
             out.append(f"{color}{glyph}{RST}")
         if s["extras"]:
             out += [x for x in (ex.get("venv"), ex.get("ports")) if x]
+        if s["repo"] and repo:
+            out.insert(0, repo)
         first = " ".join(x for x in (where(s, out), tag if s["name"] else "") if x)
         line = [first] + out if first else out
         if s["marker"] and marker and marker[2]:
@@ -1691,7 +1836,7 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
         return line
 
     # The drop order, as patches applied one after the other to the state.
-    steps = [{"pace": False}, {"extras": False}, {"session": False}]
+    steps = [{"repo": False}, {"lines": False}, {"pace": False}, {"extras": False}, {"session": False}]
     healthy = [i for i, (_, level, _) in enumerate(marks) if level == OK]
     needy = [i for i, (_, level, _) in enumerate(marks) if level > OK]
     steps += [{"dropped": i} for i in reversed(healthy)]
@@ -1701,7 +1846,7 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
               {"tokens": False}, {"bars": 2}, {"bars": 1}, {"bars": 0}, {"cost": False},
               {"effort": False}, {"model": "short"}, {"marker": False}]
 
-    state = {"pace": True, "extras": True, "session": True, "dropped": set(),
+    state = {"repo": True, "lines": True, "pace": True, "extras": True, "session": True, "dropped": set(),
              "marker": False, "name": True, "branch": "full", "proj": "full", "tokens": True,
              "bars": len(meters), "cost": True, "effort": True, "model": "full"}
     best = items(state)
@@ -1714,7 +1859,23 @@ def format_statusline(data, usage=None, now=None, show_usage=True, extras=None, 
             best = items(state)
         if width is None or visible_width(SEP.join(best)) <= width:
             break
-    return SEP.join(best)
+    return spread(best, width)
+
+
+def spread(parts, width):
+    """`parts` joined by SEP and widened to exactly `width` columns with spaces shared out round
+    the separators (each gap's extra split between its two sides, the remainder to the first gaps).
+    A line already as wide or wider, one item, or no width: joined as it is."""
+    line = SEP.join(parts)
+    slack = (width or 0) - visible_width(line)
+    gaps = len(parts) - 1
+    if slack <= 0 or gaps < 1:
+        return line
+    out = parts[0]
+    for i, part in enumerate(parts[1:]):
+        extra = slack // gaps + (1 if i < slack % gaps else 0)
+        out += " " * (extra // 2) + SEP + " " * (extra - extra // 2) + part
+    return out
 
 
 # --- demo --------------------------------------------------------------------
@@ -1728,7 +1889,9 @@ def demo_lines(now=None, width=None):
             "context_window": {"used_percentage": 8, "context_window_size": 1_000_000,
                                "current_usage": {"input_tokens": 2, "cache_creation_input_tokens": 787,
                                                  "cache_read_input_tokens": 83_211}},
-            "cost": {"total_cost_usd": 103.21, "total_duration_ms": 5_580_000}}
+            "cost": {"total_cost_usd": 103.21, "total_duration_ms": 5_580_000,
+                     "total_lines_added": 412, "total_lines_removed": 87},
+            "repo": {"host": "github.com", "owner": "Doofess", "name": "claude-setup"}}
 
     def usage_at(week_pct):
         return merge_usage({"five_hour": {"used_percentage": 40, "resets_at": now + 2 * 3600 + 600},

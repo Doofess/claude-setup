@@ -8,7 +8,7 @@ const agents = atom({ plugin: 'readable-session', key: 'agents' } as const, {})
 
 // Theme keys, so the mod follows `theme: auto` on dark and light terminals.
 // One accent (`claude`), kept for your prompts and command cards; green, amber
-// and red mean state only. The kind of work has its own muted cool tone (KIND).
+// and red mean state only. Each tool has its own tone (KIND).
 const TEXT = 'text'
 const SUB = 'subtle'
 const ACCENT = 'claude'
@@ -17,16 +17,31 @@ const WARN = 'warning'
 const FAIL = 'error'
 const WAIT = 'permission'
 
-/** What a tool call does, by group; each draws its icon, verb and card border
- * in one muted tone. A tool in none of them stays `text`. */
-export type Kind = 'look' | 'change' | 'shell' | 'delegate' | 'connect'
+/** Which tool a call is; each draws its icon, verb and card border in its own
+ * tone. A tool in none of them stays `text`. */
+export type Kind =
+  | 'bash' | 'pwsh' | 'write' | 'edit' | 'read' | 'grep' | 'glob'
+  | 'websearch' | 'webfetch' | 'agent' | 'skill' | 'mcp'
 
-// Same hue per kind on both: light on dark themes, darker on light ones. Cool
-// tones opposite Claude's orange, so the accent stands out; connect is a warm
-// stone that ties back to it.
+// Same hue per tool on both: light on dark themes, darker on light ones. All from
+// the repo's palettes (see statusline.py THEMES), no two tools alike: changes in
+// orange, shells in yellow, reading and searching in browns and peaches,
+// agents and skills in red, MCP servers in grey.
 const KIND: Record<'dark' | 'light', Record<Kind, string>> = {
-  dark: { look: '#7FB5C9', change: '#9DA8E0', shell: '#86BFB0', delegate: '#C9A9D6', connect: '#B8AFA3' },
-  light: { look: '#2F6C82', change: '#4F5BA6', shell: '#2E7363', delegate: '#7E5A91', connect: '#6B6358' },
+  dark: {
+    edit: '#FF8700', write: '#FFAF5F',
+    bash: '#FFFF87', pwsh: '#D7D75F',
+    read: '#AF875F', grep: '#D7AF87', glob: '#AF5F00',
+    websearch: '#FFD7AF', webfetch: '#D7875F',
+    agent: '#FF8787', skill: '#FF5F5F', mcp: '#BCBCBC',
+  },
+  light: {
+    edit: '#D75F00', write: '#AF5F00',
+    bash: '#AF8700', pwsh: '#878700',
+    read: '#875F00', grep: '#AF875F', glob: '#5F3000',
+    websearch: '#D7875F', webfetch: '#AF5F5F',
+    agent: '#D75F5F', skill: '#D70000', mcp: '#6C6C6C',
+  },
 }
 
 /** Set from the `theme` setting at session start and on each change; a theme
@@ -116,38 +131,38 @@ export function describeTool(tool: string, input: unknown): Described {
   const fileDetail = file ? shortPath(file) + (lang ? ` · ${lang}` : '') : ''
   switch (tool) {
     case 'Bash':
-      return { icon: I.shell, verb: 'Running Bash', past: 'Ran Bash', kind: 'shell', detail: commandLine(str(i.command)) }
+      return { icon: I.shell, verb: 'Running Bash', past: 'Ran Bash', kind: 'bash', detail: commandLine(str(i.command)) }
     case 'PowerShell':
-      return { icon: I.pwsh, verb: 'Running PowerShell', past: 'Ran PowerShell', kind: 'shell', detail: commandLine(str(i.command)) }
+      return { icon: I.pwsh, verb: 'Running PowerShell', past: 'Ran PowerShell', kind: 'pwsh', detail: commandLine(str(i.command)) }
     case 'Write':
-      return { icon: I.write, verb: 'Writing', past: 'Wrote', kind: 'change', detail: fileDetail }
+      return { icon: I.write, verb: 'Writing', past: 'Wrote', kind: 'write', detail: fileDetail }
     case 'Edit':
     case 'MultiEdit':
     case 'NotebookEdit':
-      return { icon: I.edit, verb: 'Editing', past: 'Edited', kind: 'change', detail: fileDetail }
+      return { icon: I.edit, verb: 'Editing', past: 'Edited', kind: 'edit', detail: fileDetail }
     case 'Read':
-      return { icon: I.read, verb: 'Reading', past: 'Read', kind: 'look', detail: fileDetail }
+      return { icon: I.read, verb: 'Reading', past: 'Read', kind: 'read', detail: fileDetail }
     case 'Grep':
       return {
         icon: I.search,
-        kind: 'look',
+        kind: 'grep',
         verb: 'Searching code',
         past: 'Searched code',
         detail: `"${str(i.pattern)}"` + (str(i.path) ? `  in ${base(str(i.path))}` : ''),
       }
     case 'Glob':
-      return { icon: I.search, verb: 'Finding files', past: 'Found files', kind: 'look', detail: str(i.pattern) }
+      return { icon: I.search, verb: 'Finding files', past: 'Found files', kind: 'glob', detail: str(i.pattern) }
     case 'WebSearch':
-      return { icon: I.web, verb: 'Searching the web', past: 'Searched the web', kind: 'look', detail: `"${str(i.query)}"` }
+      return { icon: I.web, verb: 'Searching the web', past: 'Searched the web', kind: 'websearch', detail: `"${str(i.query)}"` }
     case 'WebFetch':
-      return { icon: I.fetch, verb: 'Fetching', past: 'Fetched', kind: 'look', detail: str(i.url).replace(/^https?:\/\//, '') }
+      return { icon: I.fetch, verb: 'Fetching', past: 'Fetched', kind: 'webfetch', detail: str(i.url).replace(/^https?:\/\//, '') }
     case 'Agent':
     case 'Task': {
       const type = str(i.subagent_type) || 'agent'
-      return { icon: I.agent, verb: `Starting ${type}`, past: `Started ${type}`, kind: 'delegate', detail: str(i.description) }
+      return { icon: I.agent, verb: `Starting ${type}`, past: `Started ${type}`, kind: 'agent', detail: str(i.description) }
     }
     case 'Skill':
-      return { icon: I.skill, verb: 'Using skill', past: 'Used skill', kind: 'delegate', detail: str(i.skill) }
+      return { icon: I.skill, verb: 'Using skill', past: 'Used skill', kind: 'skill', detail: str(i.skill) }
     case 'TodoWrite':
       return { icon: I.task, verb: 'Updating tasks', past: 'Updated tasks', detail: '' }
   }
@@ -156,7 +171,7 @@ export function describeTool(tool: string, input: unknown): Described {
     const server = mcp[1].replace(/^plugin_[^_]+_/, '').replace(/^claude_ai_/, '').replace(/_/g, ' ')
     return {
       icon: I.plug,
-      kind: 'connect',
+      kind: 'mcp',
       verb: `Using ${server}`,
       past: `Used ${server}`,
       detail: mcp[2].replace(/_/g, ' '),

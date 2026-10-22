@@ -13,7 +13,9 @@
   5. Turns the claude.ai Adobe connector off in each known project once (see mcp_off.py; /mcp turns it back on)
   6. Installs a Nerd Font through winget when the machine has none, and sets it as the Windows Terminal default
      font when no font is configured there (the status line's icons need one)
-  7. Sets the Windows Terminal start folder, and adds a PowerShell 7 profile block that leaves System32 for C:\dev
+  7. Sets the Windows Terminal start folder, and adds a PowerShell 7 profile block that leaves System32 for C:\dev.
+     Adds the Readable colour scheme (terminal/readable-scheme.json) and makes it the default when no scheme is set:
+     the readable theme's dark-ansi base draws syntax, diff markers and inline code in the terminal's 16 colours
   8. Smoke-tests the status line and lists MCP health
 
 .PARAMETER SkipPlugins
@@ -34,7 +36,11 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $backup = Join-Path $claudeDir "backups\claude-setup-$stamp"
 $failures = @()
 
-function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
+# Output colours come from the repo's two palettes, orange and grey (xterm-256 indices, as in statusline.py):
+# 208 orange for steps, 223 peach for success, 228 yellow for warnings, 203 red for failures, 244 grey.
+# The 16 Write-Host console colours have no orange, so these are ANSI escapes ([char]27: `e needs PS 6+).
+function Write-Color($msg, [int]$color) { Write-Host "$([char]27)[38;5;${color}m$msg$([char]27)[0m" }
+function Write-Step($msg) { Write-Color "==> $msg" 208 }
 function Write-Utf8NoBom($path, $text) {
   [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
 }
@@ -198,6 +204,46 @@ function Set-TerminalStartDir([string]$path, [string]$dir) {
   if ($text.Substring($m.Index, $i - $m.Index) -match '"startingDirectory"\s*:') { return 'kept' }
   Write-Utf8NoBom $path ($text.Insert($m.Index + $m.Length, ' "startingDirectory": "' + $dir.Replace('\', '\\') + '",'))
   return 'set'
+}
+
+# Windows Terminal colour scheme, as text like the two above. The scheme named $name is replaced (it is ours) or added
+# to "schemes"; profiles.defaults gets "colorScheme" only when it names none. Returns 'set', 'kept' (another scheme is
+# the default; ours is still there to pick) or 'none' (no defaults block).
+function Set-TerminalScheme([string]$path, [string]$schemeJson, [string]$name) {
+  $text = [IO.File]::ReadAllText($path)
+  $old = $text
+  $obj = $schemeJson | ConvertFrom-Json | ConvertTo-Json -Compress
+  $m = [regex]::Match($text, '\{[^{}]*"name"\s*:\s*"' + [regex]::Escape($name) + '"[^{}]*\}')
+  if ($m.Success) {
+    $text = $text.Remove($m.Index, $m.Length).Insert($m.Index, $obj)
+  } else {
+    $s = [regex]::Match($text, '"schemes"\s*:\s*\[')
+    if ($s.Success) {
+      $sep = if ($text.Substring($s.Index + $s.Length).TrimStart().StartsWith(']')) { '' } else { ',' }
+      $text = $text.Insert($s.Index + $s.Length, " $obj$sep")
+    } else {
+      $top = [regex]::Match($text, '(?m)^\{')
+      if (-not $top.Success) { return 'none' }
+      $text = $text.Insert($top.Index + 1, ' "schemes": [' + $obj + '],')
+    }
+  }
+  $r = 'none'
+  $d = [regex]::Match($text, '"defaults"\s*:\s*\{')
+  if ($d.Success) {
+    $depth = 1; $i = $d.Index + $d.Length
+    while ($i -lt $text.Length -and $depth -gt 0) {
+      $c = $text[$i]
+      if ($c -eq '{') { $depth++ } elseif ($c -eq '}') { $depth-- }
+      $i++
+    }
+    $block = $text.Substring($d.Index, $i - $d.Index)
+    $set = [regex]::Match($block, '"colorScheme"\s*:\s*"([^"]*)"')
+    if (-not $set.Success) {
+      $text = $text.Insert($d.Index + $d.Length, ' "colorScheme": "' + $name + '",'); $r = 'set'
+    } elseif ($set.Groups[1].Value -eq $name) { $r = 'set' } else { $r = 'kept' }
+  }
+  if ($text -ne $old) { Write-Utf8NoBom $path $text }
+  return $r
 }
 
 # Windows Terminal keeps settings.json per install (Store, Preview, unpackaged). Each is backed up once per run under
@@ -393,15 +439,15 @@ if (-not $SkipFont) {
   Write-Step 'Nerd Font'
   $weInstalled = $false
   if (@(Get-NerdFontFiles).Count -gt 0) {
-    Write-Host '    a Nerd Font is already installed' -ForegroundColor DarkGray
+    Write-Color '    a Nerd Font is already installed' 244
   } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
     $savedEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     & winget install --id $nerdFontId -e --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
     $ErrorActionPreference = $savedEap
     $weInstalled = @(Get-NerdFontFiles).Count -gt 0
-    if ($weInstalled) { Write-Host "    installed $nerdFontFace" } else { Write-Host "    winget could not install $nerdFontId; install a Nerd Font by hand (https://www.nerdfonts.com)" -ForegroundColor Yellow }
+    if ($weInstalled) { Write-Host "    installed $nerdFontFace" } else { Write-Color "    winget could not install $nerdFontId; install a Nerd Font by hand (https://www.nerdfonts.com)" 228 }
   } else {
-    Write-Host '    winget not found; install a Nerd Font by hand (https://www.nerdfonts.com)' -ForegroundColor Yellow
+    Write-Color '    winget not found; install a Nerd Font by hand (https://www.nerdfonts.com)' 228
   }
   # Point Windows Terminal at the font only when this run installed it, or the machine has JetBrainsMono.
   $haveFace = $weInstalled -or (@(Get-NerdFontFiles | Where-Object { $_.Name -like 'JetBrainsMono*' }).Count -gt 0)
@@ -412,7 +458,7 @@ if (-not $SkipFont) {
       $msg = switch ($r) { 'set' { "font set to $nerdFontFace in $wt" } 'kept' { "a font is already set in $wt; left as is" } default { "no defaults block in $wt; set the font by hand" } }
       Write-Host "    $msg"
     }
-    if (@($wtSettings).Count -eq 0) { Write-Host '    Windows Terminal not found; set the terminal font to a Nerd Font by hand' -ForegroundColor Yellow }
+    if (@($wtSettings).Count -eq 0) { Write-Color '    Windows Terminal not found; set the terminal font to a Nerd Font by hand' 228 }
   }
 }
 
@@ -422,6 +468,14 @@ foreach ($wt in $wtSettings) {
   Backup-TerminalSettings $wt
   $r = Set-TerminalStartDir $wt 'C:\dev'
   $msg = switch ($r) { 'set' { "start folder set to C:\dev in $wt" } 'kept' { "a start folder is already set in $wt; left as is" } default { "no defaults block in $wt; set the start folder by hand" } }
+  Write-Host "    $msg"
+}
+Write-Step 'Terminal colours'
+$schemeJson = [IO.File]::ReadAllText((Join-Path $repo 'terminal/readable-scheme.json'))
+foreach ($wt in $wtSettings) {
+  Backup-TerminalSettings $wt
+  $r = Set-TerminalScheme $wt $schemeJson 'Readable'
+  $msg = switch ($r) { 'set' { "Readable colour scheme is the default in $wt" } 'kept' { "another colour scheme is the default in $wt; left as is (Readable is there to pick)" } default { "no defaults block in $wt; pick the Readable scheme by hand" } }
   Write-Host "    $msg"
 }
 $ps7Profile = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Microsoft.PowerShell_profile.ps1'
@@ -442,13 +496,13 @@ $sl = Test-StatusLine $claudeDir $sample
 if (-not $sl.Ok) { $failures += "statusline.py failed: $($sl.Output)" }
 
 Write-Step 'MCP health'
-& claude mcp list 2>&1 | Where-Object { $_ -match 'Needs authentication|Failed|error' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
+& claude mcp list 2>&1 | Where-Object { $_ -match 'Needs authentication|Failed|error' } | ForEach-Object { Write-Color "    $_" 228 }
 
 Write-Host ''
 if ($failures.Count -eq 0) {
-  Write-Host 'DONE: all checks passed. Restart Claude Code to load the new config.' -ForegroundColor Green
+  Write-Color 'DONE: all checks passed. Restart Claude Code to load the new config.' 223
 } else {
-  Write-Host 'DONE WITH FAILURES:' -ForegroundColor Red
-  $failures | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+  Write-Color 'DONE WITH FAILURES:' 203
+  $failures | ForEach-Object { Write-Color "  - $_" 203 }
   exit 1
 }
