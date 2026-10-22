@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { brief, describeTool, kindColor, outputLines } from '../hooks/register.tsx'
+import { brief, describeTool, diffOf, diffRuns, kindColor, outputLines, promptText } from '../hooks/register.tsx'
 
 describe('describeTool', () => {
   test('names the kind of work in plain words', () => {
@@ -67,7 +67,7 @@ describe('describeTool', () => {
     expect(long[40]?.text).toBe('+10 more lines')
     expect(outputLines('Read', { type: 'image', file: { originalSize: 58 * 1024 } }, 'done')[0]?.text).toBe('Read image (58KB)')
     const diff = outputLines('Edit', { structuredPatch: [{ lines: [' a', '-b', '+c'] }] }, 'done')
-    expect(diff.map(l => l.color)).toEqual(['subtle', 'diffRemoved', 'diffAdded'])
+    expect(diff.map(l => l.color)).toEqual(['subtle', '#FF8787', '#E4E4E4'])
     expect(outputLines('Glob', { numFiles: 1, filenames: ['C:/dev/app/x.ts'] }, 'done').map(l => l.text)).toEqual([
       'Found 1 file',
       'app/x.ts',
@@ -78,6 +78,57 @@ describe('describeTool', () => {
 
   test('keeps only short input fields for the running list', () => {
     expect(brief({ file_path: 'a.ts', content: 'x'.repeat(10_000) })).toEqual({ file_path: 'a.ts' })
+  })
+})
+
+describe('diffs', () => {
+  const patch = [
+    { oldStart: 9, oldLines: 4, newStart: 9, newLines: 4, lines: [' a', '-b', '-c', '+B', '+C', ' d'] },
+    { oldStart: 99, oldLines: 2, newStart: 99, newLines: 3, lines: [' x', '+y\u0007', ' z'] },
+  ]
+
+  test('removed runs are the mod\'s, the rest are engine hunks with their own numbers', () => {
+    const d = diffRuns(patch)
+    expect(d.width).toBe(3)
+    expect(d.runs).toEqual([
+      { kind: 'kept', hunk: '@@ -9,1 +9,1 @@\n a' },
+      { kind: 'removed', rows: [{ no: 10, code: 'b' }, { no: 11, code: 'c' }] },
+      { kind: 'kept', hunk: '@@ -12,1 +10,3 @@\n+B\n+C\n d' },
+      { kind: 'gap' },
+      { kind: 'kept', hunk: '@@ -99,2 +99,3 @@\n x\n+y\n z' },
+    ])
+  })
+
+  test('the engine keeps new files, staged edits and other tools', () => {
+    expect(diffOf('Write', { type: 'create', structuredPatch: [] })).toBe(null)
+    expect(diffOf('Edit', { staged: true, structuredPatch: patch })).toBe(null)
+    expect(diffOf('Bash', { structuredPatch: patch })).toBe(null)
+    expect(diffOf('Edit', { structuredPatch: patch })?.runs.length).toBe(5)
+  })
+
+  test('an Edit result draws removed lines in white on the removed background', async $ => {
+    const ui = await $.ui.mount({
+      plugin: 'readable-session',
+      surface: 'terminal',
+      component: 'ToolResult',
+      props: { tool_use_id: 't1', tool: 'Edit', isErrored: false, output: { filePath: 'C:/dev/x.py', structuredPatch: patch } },
+    })
+    const removed = await ui.findAll({ type: 'Box', text: /-b$/ })
+    expect(removed[0]?.props.backgroundColor).toBe('diffRemoved')
+    const code = await ui.find({ type: 'Text', text: 'b' })
+    expect(code?.props.color).toBe('text')
+    expect(code?.props.dimColor).toBe(undefined)
+    const kept = await ui.findAll({ type: 'Code' })
+    expect(kept.map(k => k.props.format)).toEqual(['diff', 'diff', 'diff'])
+    expect(kept[0]?.props.path).toBe('C:/dev/x.py')
+  })
+})
+
+describe('prompts', () => {
+  test('pasted text shows without the tags Claude Code wraps it in', () => {
+    expect(promptText('look:\n<pasted_content id="c2f9">\nline 1\n</pasted_content id="c2f9">\nthanks')).toBe(
+      'look:\nline 1\nthanks',
+    )
   })
 })
 
