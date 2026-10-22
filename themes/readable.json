@@ -21,9 +21,9 @@
     "fastMode": "#FF7814",
     "fastModeShimmer": "#FFA546",
 
-    "diffAdded": "#3A3A3A",
-    "diffAddedDimmed": "#303030",
-    "diffAddedWord": "#585858",
+    "diffAdded": "#005F00",
+    "diffAddedDimmed": "#005F00",
+    "diffAddedWord": "#008700",
     "diffRemoved": "#5F0000",
     "diffRemovedDimmed": "#5F0000",
     "diffRemovedWord": "#870000",
