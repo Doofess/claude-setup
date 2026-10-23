@@ -7,6 +7,8 @@ declare module 'claude-code' {
       promptTimes: PromptTimes
       /** Bumped every minute so the hint line reads the status bar's overflow file again. */
       overflowTick: number
+      /** Bumped when an agent record changes and each second while a subagent runs, so Agent rows redraw. */
+      agentTick: number
     }
   }
 }

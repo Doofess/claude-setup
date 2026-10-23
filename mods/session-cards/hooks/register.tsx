@@ -112,6 +112,102 @@ export function rowText(d: Described, state: RowState, width: number): string {
   return cut(`${d.icon} ${verb} ${d.detail}${MARK[state]}`, width)
 }
 
+const FAMILIES = ['opus', 'sonnet', 'haiku', 'fable', 'mythos'] as const
+const FAMILY_COLOURS: Record<(typeof FAMILIES)[number], string> = {
+  opus: 'magenta',
+  sonnet: 'blue',
+  haiku: 'cyan',
+  fable: 'yellowBright',
+  mythos: 'greenBright',
+}
+const EFFORT_COLOURS: Record<string, string> = {
+  low: 'green',
+  medium: 'yellow',
+  high: 'red',
+  xhigh: 'magentaBright',
+  max: 'whiteBright',
+}
+
+const familyOf = (model: string) => FAMILIES.find(family => model.toLowerCase().includes(family))
+
+/** The colour name for a model name or id (as the status bar colours it), undefined when unknown. */
+export function modelColour(model: string): string | undefined {
+  const family = familyOf(model)
+
+  return family === undefined ? undefined : FAMILY_COLOURS[family]
+}
+
+/** The colour name for an effort level, undefined when unknown. */
+export function effortColour(level: string): string | undefined {
+  return EFFORT_COLOURS[level]
+}
+
+/** The family capitalised (`Sonnet`), or the id as given when the family is unknown. */
+function modelName(model: string): string {
+  const family = familyOf(model)
+
+  return family === undefined ? model : family[0].toUpperCase() + family.slice(1)
+}
+
+/** `0s`, `48s`, `1m 0s`, `12m 5s`, `1h 2m`. */
+export function fmtElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+
+  if (seconds < 60) {
+    return `${seconds}s`
+  }
+
+  const minutes = Math.floor(seconds / 60)
+
+  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+}
+
+/** `950`, `72k`, `1.2M`, rounded as the status bar does. */
+export function fmtTokens(n: number): string {
+  if (n < 1000) {
+    return String(n)
+  }
+
+  if (Math.floor(n / 1000 + 0.5) < 1000) {
+    return `${Math.floor(n / 1000 + 0.5)}k`
+  }
+
+  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+}
+
+/** What the mod knows of one subagent. */
+export type AgentRecord = {
+  type: string
+  description: string
+  model?: string
+  effort?: string
+  startedAt: number
+  finishedAt?: number
+  tokens: number
+  action?: string
+}
+
+/** The words of an agent row: `finishedAt` set means finished. */
+export function agentRow(a: AgentRecord, now: number) {
+  const finished = a.finishedAt !== undefined
+
+  return {
+    verb: finished ? 'Ran' : 'Running',
+    type: a.type,
+    model: a.model === undefined ? undefined : modelName(a.model),
+    effort: a.effort,
+    action: finished ? 'done' : a.action ?? a.description,
+    elapsed: fmtElapsed((a.finishedAt ?? now) - a.startedAt),
+    tokens: fmtTokens(a.tokens),
+  }
+}
+
+/** Keys a tool.call carries beside the tool's own arguments. */
+const RESERVED = new Set(['tool', 'tool_use_id', 'agentId', 'consent', 'requestMeta'])
+
+/** Bumped on every change to an agent record and once a second while one runs. */
+const agentTick = atom({ plugin: 'session-cards', key: 'agentTick' } as const, 0)
+
 /** One run of the status bar's overflow: `colour` is a colour name, a hex string, or null for the default. */
 type Span = { text: string; colour: string | null; bold: boolean }
 
@@ -169,6 +265,88 @@ export const register: Register = on => {
     // The status bar rewrites the overflow file about once a minute; the hint
     // line only redraws on its own events, so a tick makes it read the file again.
     $.clock.every(60_000, () => update($, overflowTick, n => n + 1))
+
+    // Agent rows show elapsed time: redraw them each second while a subagent runs.
+    $.clock.every(1000, () => {
+      if ([...agents.values()].some(a => a.finishedAt === undefined)) {
+        return update($, agentTick, n => n + 1)
+      }
+    })
+
+    return next(e)
+  })
+
+  // What the mod knows of each subagent, by the Agent call's tool_use_id, and
+  // the subagent id its loop's events carry, mapped back to that tool_use_id.
+  // A hot reload empties both; rows are then the unknown kind until the next spawn.
+  const agents = new Map<string, AgentRecord>()
+  const byAgentId = new Map<string, string>()
+
+  const known = (agentId: string | undefined) => {
+    const toolUseId = agentId === undefined ? undefined : byAgentId.get(agentId)
+
+    return toolUseId === undefined ? undefined : agents.get(toolUseId)
+  }
+
+  on('agent.spawn', async ($, e, next) => {
+    const result = await next(e)
+    const now = await $.clock.now()
+
+    agents.set(e.tool_use_id, {
+      type: e.subagentType,
+      description: e.description,
+      model: result.model,
+      startedAt: now,
+      tokens: 0,
+    })
+
+    if (result.agentId !== undefined) {
+      byAgentId.set(result.agentId, e.tool_use_id)
+    }
+
+    await update($, agentTick, n => n + 1)
+
+    return result
+  })
+
+  on('turn.step', async function* ($, e, next) {
+    const record = known(e.agentId)
+
+    if (record !== undefined && e.effort !== undefined) {
+      record.effort = String(e.effort)
+      await update($, agentTick, n => n + 1)
+    }
+
+    const result = yield* next(e)
+
+    if (record !== undefined && result.usage !== null) {
+      record.tokens += result.usage.input_tokens + result.usage.output_tokens
+      await update($, agentTick, n => n + 1)
+    }
+
+    return result
+  })
+
+  on('tool.call', async ($, e, next) => {
+    const record = known(e.agentId)
+
+    if (record !== undefined) {
+      const args = Object.fromEntries(Object.entries(e).filter(([key]) => !RESERVED.has(key)))
+      const d = describeTool(e.tool, args, await $.session.cwd())
+      record.action = `${d.verb[0]} ${d.detail}`
+      await update($, agentTick, n => n + 1)
+    }
+
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const record = known(e.agentId)
+
+    if (record !== undefined) {
+      record.finishedAt = await $.clock.now()
+      await update($, agentTick, n => n + 1)
+    }
 
     return next(e)
   })
@@ -252,12 +430,68 @@ export const register: Register = on => {
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     const { tool, input, isRunning, isErrored, isInterrupted, isExpanded } = e.props
 
-    // Expanded rows (ctrl+o, --verbose, an unfolded group) and agents are the engine's.
-    if (e.surface !== 'terminal' || isExpanded === true || tool === 'Agent' || tool === 'Task') {
+    // Expanded rows (ctrl+o, --verbose, an unfolded group) and tasks are the engine's.
+    if (e.surface !== 'terminal' || isExpanded === true || tool === 'Task') {
       return next(e)
     }
 
     const { Box, Text } = $.ui.resolve(e)
+
+    if (tool === 'Agent') {
+      await read($, agentTick)
+
+      const columns = e.viewport?.columns ?? 120
+      const running = isRunning === true
+      const record = agents.get(e.props.tool_use_id)
+
+      // A spawn the mod never saw: the call's description and nothing else.
+      if (record === undefined) {
+        const type = asString(field(input, 'subagent_type')) || 'general-purpose'
+        const head = ` ${running ? 'Running' : 'Ran'} ${type}  `
+
+        return (
+          <Box flexDirection="row">
+            <Text color="text">{' '}</Text>
+            <Text color="text" bold>
+              {running ? 'Running' : 'Ran'}
+            </Text>
+            <Text color="text">{` ${type}  ${cut(asString(field(input, 'description')), columns - head.length)}`}</Text>
+          </Box>
+        )
+      }
+
+      const now = await $.clock.now()
+      // Ended without the mod hearing the subagent's last turn complete: it is over all the same.
+      const row = agentRow(running || record.finishedAt !== undefined ? record : { ...record, finishedAt: now }, now)
+      const mark = isInterrupted ? ' (stopped)' : isErrored ? ' ✗' : ''
+      const tail = `   ${row.elapsed} · ${row.tokens}`
+      const fixed =
+        ` ${row.verb} ${row.type}`.length +
+        (row.model === undefined ? 0 : ` · ${row.model}`.length) +
+        (row.effort === undefined ? 0 : ` · ${row.effort}`.length) +
+        2 +
+        mark.length +
+        tail.length
+
+      return (
+        <Box flexDirection="row">
+          <Text color="text">{' '}</Text>
+          <Text color="text" bold>
+            {row.verb}
+          </Text>
+          <Text color="text">{` ${row.type}`}</Text>
+          {row.model !== undefined && <Text color="text">{' · '}</Text>}
+          {row.model !== undefined && <Text color={modelColour(row.model) ?? 'text'}>{row.model}</Text>}
+          {row.effort !== undefined && <Text color="text">{' · '}</Text>}
+          {row.effort !== undefined && <Text color={effortColour(row.effort) ?? 'text'}>{row.effort}</Text>}
+          <Text color="text">{`  ${cut(row.action, columns - fixed)}`}</Text>
+          {mark === ' ✗' && <Text color="error">{mark}</Text>}
+          {mark === ' (stopped)' && <Text color="text">{mark}</Text>}
+          <Text color="text">{tail}</Text>
+        </Box>
+      )
+    }
+
     const d = describeTool(tool, input, await $.session.cwd())
     const state: RowState = isInterrupted ? 'stopped' : isErrored ? 'failed' : isRunning ? 'running' : 'done'
     const verb = state === 'running' ? d.verb[0] : d.verb[1]

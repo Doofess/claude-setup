@@ -118,7 +118,7 @@ test('test_failed_call_adds_a_mark', async ($, on) => {
   await stopped.unmount()
 })
 
-test("expanded rows, agents and other surfaces are the engine's", async ($, on) => {
+test("expanded rows, tasks and other surfaces are the engine's", async ($, on) => {
   engine(on)
 
   const same = async (mount: Parameters<typeof $.ui.mount>[0]) => {
@@ -131,7 +131,6 @@ test("expanded rows, agents and other surfaces are the engine's", async ($, on) 
   }
 
   expect(await same(TOOL('Bash', BASH, { isExpanded: true }))).toBe(true)
-  expect(await same(TOOL('Agent', { description: 'dig' }))).toBe(true)
   expect(await same(TOOL('Task', { description: 'dig' }))).toBe(true)
   expect(await same({ ...TOOL('Bash', BASH), surface: 'desktop' })).toBe(true)
   expect(await same(TOOL('Bash', BASH, { isExpanded: false }))).toBe(false)
