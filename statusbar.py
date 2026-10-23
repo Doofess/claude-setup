@@ -98,11 +98,11 @@ def fmt_reset(resets_at: float, now: float) -> str:
     if minutes < 1:
         return "→now"
     if minutes < 60:
-        return f"→{minutes}m"
+        return f"→ {minutes}m"
     hours = minutes // 60
     if hours < 24:
-        return f"→{hours}h{minutes % 60}m"
-    return f"→{hours // 24}d{hours % 24}h"  # minutes would be noise this far out
+        return f"→ {hours}h{minutes % 60}m"
+    return f"→ {hours // 24}d{hours % 24}h"  # minutes would be noise this far out
 
 
 def meter(pct: float, cells: int) -> str:
