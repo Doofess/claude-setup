@@ -63,7 +63,7 @@ FACE, HEIGHT, SCHEME = "JetBrainsMono Nerd Font", "1.25", "Campbell"
 
 
 def strip_jsonc(text):
-    """Drop // and /* */ comments and trailing commas that sit outside strings."""
+    """Drop // and /* */ comments that sit outside strings. Strict: a trailing comma stays and json.loads rejects it."""
     out, i, n = [], 0, len(text)
 
     def skip_comment(j):
@@ -83,15 +83,6 @@ def strip_jsonc(text):
             i = j + 1
         elif text.startswith(("//", "/*"), i):
             i = skip_comment(i)
-        elif c == ",":
-            j = i + 1
-            while j < n and (text[j].isspace() or text.startswith(("//", "/*"), j)):
-                j = skip_comment(j) if text[j] == "/" else j + 1
-            if j < n and text[j] in "}]":
-                i += 1   # trailing comma
-            else:
-                out.append(c)
-                i += 1
         else:
             out.append(c)
             i += 1
