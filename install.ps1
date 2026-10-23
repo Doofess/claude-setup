@@ -13,7 +13,8 @@
   6. Removes the retired visual setup (custom theme, status line, readable-session mod, keybinding, Windows Terminal
      Readable scheme) from the machine
   7. Installs a Nerd Font through winget when the machine has none, and sets terminal/profile.json's font (face and
-     cellHeight) as the Windows Terminal default font whenever it differs
+     cellHeight) as the Windows Terminal default font whenever it differs, and drops a font face or cellHeight set
+     on the default profile itself
   8. Sets the Windows Terminal default colour scheme to terminal/profile.json's (Campbell) and drops a colorScheme
      set on the default profile itself, so the default applies
   9. Sets the Windows Terminal start folder, and adds a PowerShell 7 profile block that leaves System32 for C:\dev
@@ -280,6 +281,16 @@ function Set-JsoncString([string]$t, [int]$obj, [string]$key, [string]$value) {
   if ($kv) { return $t.Substring(0, $kv.ValueStart) + $lit + $t.Substring($kv.ValueEnd) }
   return Add-JsoncRaw $t $obj $key $lit
 }
+function Test-JsoncEmpty([string]$t, [int]$obj) {   # true when the object at $obj has no key left (comments aside)
+  $end = Get-JsoncEnd $t $obj
+  $i = $obj + 1
+  while ($i -lt $end) {
+    if ($t[$i] -eq '"') { return $false }
+    if ($t[$i] -eq '/') { $n = Skip-JsoncComment $t $i; if ($n -ne $i) { $i = $n; continue } }
+    $i++
+  }
+  return $true
+}
 function Remove-JsoncKey([string]$t, [int]$obj, [string]$key) {
   $kv = Find-JsoncKey $t $obj $key
   if (-not $kv) { return $t }
@@ -318,12 +329,12 @@ function Get-WtLayout([string]$t) {
   return $l
 }
 
-# What the file says today: profiles.defaults font face, cellHeight and colorScheme, and the colorScheme set on the
-# default profile itself (each $null when not set).
+# What the file says today: profiles.defaults font face, cellHeight and colorScheme, and the font face, cellHeight and
+# colorScheme set on the default profile itself (each $null when not set).
 function Read-TerminalLook([string]$path) {
   $t = [IO.File]::ReadAllText($path)
   $l = Get-WtLayout $t
-  $r = [pscustomobject]@{ HasDefaults = ($l.Defaults -ge 0); Face = $null; CellHeight = $null; Scheme = $null; ProfileScheme = $null }
+  $r = [pscustomobject]@{ HasDefaults = ($l.Defaults -ge 0); Face = $null; CellHeight = $null; Scheme = $null; ProfileFace = $null; ProfileCellHeight = $null; ProfileScheme = $null }
   if ($l.Defaults -ge 0) {
     $f = Find-JsoncKey $t $l.Defaults 'font'
     if ($f -and $t[$f.ValueStart] -eq '{') {
@@ -332,12 +343,20 @@ function Read-TerminalLook([string]$path) {
     }
     $x = Find-JsoncKey $t $l.Defaults 'colorScheme'; if ($x) { $r.Scheme = Get-JsoncString $t $x }
   }
-  if ($l.Profile -ge 0) { $x = Find-JsoncKey $t $l.Profile 'colorScheme'; if ($x) { $r.ProfileScheme = Get-JsoncString $t $x } }
+  if ($l.Profile -ge 0) {
+    $f = Find-JsoncKey $t $l.Profile 'font'
+    if ($f -and $t[$f.ValueStart] -eq '{') {
+      $x = Find-JsoncKey $t $f.ValueStart 'face'; if ($x) { $r.ProfileFace = Get-JsoncString $t $x }
+      $x = Find-JsoncKey $t $f.ValueStart 'cellHeight'; if ($x) { $r.ProfileCellHeight = Get-JsoncString $t $x }
+    }
+    $x = Find-JsoncKey $t $l.Profile 'colorScheme'; if ($x) { $r.ProfileScheme = Get-JsoncString $t $x }
+  }
   return $r
 }
 
-# Sets profiles.defaults.font to the repo's face and cellHeight (other font keys, such as size, stay). Returns the
-# result ('set', 'already set' or 'none': no defaults block) and what changed.
+# Sets profiles.defaults.font to the repo's face and cellHeight (other font keys, such as size, stay) and drops face and
+# cellHeight from the default profile's own font (it would outrank the default; the whole font goes when nothing else is
+# left in it). Returns the result ('set', 'already set' or 'none': no defaults block) and what changed.
 function Set-TerminalFont([string]$path, [string]$face, [string]$cellHeight) {
   $t = [IO.File]::ReadAllText($path)
   $l = Get-WtLayout $t
@@ -356,6 +375,21 @@ function Set-TerminalFont([string]$path, [string]$face, [string]$cellHeight) {
         $t = Set-JsoncString $t $f.ValueStart $pair[0] $pair[1]
         $changed += "$($pair[0]) $old -> $($pair[1])"
       }
+    }
+  }
+  $l = Get-WtLayout $t   # an insert moved everything after it
+  if ($l.Profile -ge 0) {
+    $pf = Find-JsoncKey $t $l.Profile 'font'
+    if ($pf -and $t[$pf.ValueStart] -eq '{') {
+      foreach ($k in 'face', 'cellHeight') {
+        $kv = Find-JsoncKey $t $pf.ValueStart $k
+        if ($kv) {
+          $changed += "removed font $k $(Get-JsoncString $t $kv) from the default profile"
+          $t = Remove-JsoncKey $t $pf.ValueStart $k
+          $pf = Find-JsoncKey $t (Get-WtLayout $t).Profile 'font'
+        }
+      }
+      if ($pf -and (Test-JsoncEmpty $t $pf.ValueStart)) { $t = Remove-JsoncKey $t (Get-WtLayout $t).Profile 'font' }
     }
   }
   if ($changed.Count -gt 0) { Write-Utf8NoBom $path $t }
@@ -840,8 +874,10 @@ Add-SameRow 'Nerd Font file' 'JetBrainsMono*Nerd*Font*' $(if ($nerdFile.Count) {
 $wtLook = if (@($wtSettings).Count -gt 0) { Read-TerminalLook @($wtSettings)[0] } else { $null }
 $wantHeight = [string]$terminalLook.font.cellHeight
 $wantScheme = [string]$terminalLook.colorScheme
-Add-SameRow 'Terminal font face' $nerdFontFace $(if ($wtLook) { "$($wtLook.Face)" } else { 'no Windows Terminal settings' }) ([bool]($wtLook -and $wtLook.Face -eq $nerdFontFace)) $fontKept
-Add-SameRow 'Terminal cellHeight' $wantHeight $(if ($wtLook) { "$($wtLook.CellHeight)" } else { 'no Windows Terminal settings' }) ([bool]($wtLook -and $wtLook.CellHeight -eq $wantHeight)) $fontKept
+$faceActual = if (-not $wtLook) { 'no Windows Terminal settings' } elseif ($wtLook.ProfileFace) { "$($wtLook.Face); default profile sets $($wtLook.ProfileFace)" } else { "$($wtLook.Face)" }
+$heightActual = if (-not $wtLook) { 'no Windows Terminal settings' } elseif ($wtLook.ProfileCellHeight) { "$($wtLook.CellHeight); default profile sets $($wtLook.ProfileCellHeight)" } else { "$($wtLook.CellHeight)" }
+Add-SameRow 'Terminal font face' "$nerdFontFace, none on the default profile" $faceActual ([bool]($wtLook -and $wtLook.Face -eq $nerdFontFace -and -not $wtLook.ProfileFace)) $fontKept
+Add-SameRow 'Terminal cellHeight' "$wantHeight, none on the default profile" $heightActual ([bool]($wtLook -and $wtLook.CellHeight -eq $wantHeight -and -not $wtLook.ProfileCellHeight)) $fontKept
 $schemeActual = if (-not $wtLook) { 'no Windows Terminal settings' } elseif ($wtLook.ProfileScheme) { "$($wtLook.Scheme); default profile sets $($wtLook.ProfileScheme)" } else { "$($wtLook.Scheme)" }
 Add-SameRow 'Terminal colour scheme' "$wantScheme, none on the default profile" $schemeActual ([bool]($wtLook -and $wtLook.Scheme -eq $wantScheme -and -not $wtLook.ProfileScheme)) ([bool]$KeepScheme)
 $themeProp = $installed.PSObject.Properties['theme']
