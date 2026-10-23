@@ -5,8 +5,8 @@ sample data instead and `--demo-json` prints that sample as the JSON Claude Code
 
 The line reads left to right: repo (owner/name), git branch, PR number │ model · effort │ a context
 meter with tokens used out of the auto-compact point │ the 5-hour and 7-day plan usage meters with the
-time until each resets │ cost. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
-short words (ctx, 5h, 7d) so the bar also reads in a font without the glyphs (the installer adds the flag
+time until each resets, each named 5H or 7D beside its icon │ cost. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
+short words (ctx, 5H, 7D) so the bar also reads in a font without the glyphs (the installer adds the flag
 on a machine with no Nerd Font). Colours are the terminal's own 16-colour palette, so the bar follows the
 terminal's scheme: cost green, each model and each effort level its own colour. Everything else is sent as
 exact 24-bit colours, never the terminal's default foreground (a light grey in most schemes): the chrome
@@ -238,7 +238,7 @@ GROUP_JOIN = {G_MODEL: sgr(WHITE, " · ")}  # "Opus · high"; every other group 
 # glyphs (then the repo, branch, PR and model carry no marker: they read on their own). Every glyph is followed
 # by a space because the non-Mono Nerd Font variants draw it wider than one cell and it would overlap the text.
 ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "pr": "\uf407", "model": "\uf2db", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073"}
-LABELS = {"ctx": "ctx", "5h": "5h", "7d": "7d"}
+LABELS = {"ctx": "ctx", "5h": "5H", "7d": "7D"}
 ICONS_RE = re.compile("[" + "".join(ICONS.values()) + "]")
 
 
@@ -279,11 +279,15 @@ def _repo_name(repo) -> str | None:
     return repo if isinstance(repo, str) and repo else None
 
 
-def _meter_piece(marks: dict, key: str, pct: float, cells: int, detail: str = "") -> str:
-    """icon, bar and figures of one meter, the icon and figures in the bar's level colour."""
+def _meter_piece(marks: dict, key: str, pct: float, cells: int, detail: str = "", name: str = "") -> str:
+    """icon, bar and figures of one meter, the icon and figures in the bar's level colour.
+
+    name: a word drawn before the bar when the marker is an icon (5H, 7D), so the window is named
+    even for a reader who does not know the glyphs; under --labels the marker is that word already."""
     fill = level_colours(pct)[0]
     figures = f" {_round_half_up(pct)}%" + (f"  {detail}" if detail else "")
-    return _mark(marks, key, meter(pct, cells), fill) + sgr(fill, figures)
+    bar = (sgr(fill, name) + " " if name and marks is ICONS else "") + meter(pct, cells)
+    return _mark(marks, key, bar, fill) + sgr(fill, figures)
 
 
 def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: str | None, icons: bool = True) -> list[Segment]:
@@ -322,7 +326,7 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
         if not isinstance(usage.get("used_percentage"), (int, float)):
             continue  # no such window for this plan: leave the segment out
         used_pct = usage["used_percentage"]
-        out.append((_meter_piece(marks, mark, used_pct, 8), meter_priority, group))
+        out.append((_meter_piece(marks, mark, used_pct, 8, name=LABELS[mark]), meter_priority, group))
         if isinstance(usage.get("resets_at"), (int, float)):
             out.append((sgr(WHITE, fmt_reset(usage["resets_at"], now)), reset_priority, group))
 

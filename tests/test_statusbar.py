@@ -141,31 +141,39 @@ class RowTest(unittest.TestCase):
         row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
         # Each icon takes a cell and a space (plain() shows the icon as a space): the non-Mono Nerd Font
         # variants draw glyphs wider than one cell, and without the space they overlap the text.
-        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus · high │   ████████ 42%  112k/267k │   ████████ 23%  →2h10m │   ████████ 41%  →3d4h │ $1.23")
+        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus · high │   ████████ 42%  112k/267k │   5H ████████ 23%  →2h10m │   7D ████████ 41%  →3d4h │ $1.23")
 
     def test_labels_instead_of_icons(self):
         # --labels: dim words for fonts without the Nerd Font glyphs; the rest of the line is the same.
         row = statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200))
-        self.assertEqual(row, "Doofess/claude-setup  main  #12 │ Opus · high │ ctx ████████ 42%  112k/267k │ 5h ████████ 23%  →2h10m │ 7d ████████ 41%  →3d4h │ $1.23")
+        self.assertEqual(row, "Doofess/claude-setup  main  #12 │ Opus · high │ ctx ████████ 42%  112k/267k │ 5H ████████ 23%  →2h10m │ 7D ████████ 41%  →3d4h │ $1.23")
+
+    def test_window_meters_name_their_window(self):
+        # The 5-hour and 7-day meters say which window they are, in the bar's level colour, beside the icon.
+        row = statusbar.fit(self.demo_row(), 200)
+        fill = statusbar.level_colours(23)[0]
+        self.assertIn(statusbar.sgr(fill, "5H") + " " + statusbar.meter(23, 8), row)
+        self.assertIn(statusbar.sgr(statusbar.level_colours(41)[0], "7D") + " " + statusbar.meter(41, 8), row)
+        self.assertEqual(statusbar.plain(row).count("5H"), 1)  # the word once, in icon mode as in --labels
 
     def test_refills_leftover_space_with_smaller_pieces(self):
-        # At 106 cells the repo (24 cells with its join) cannot fit, but the PR number and both reset times can,
+        # At 112 cells the repo (24 cells with its join) cannot fit, but the PR number and both reset times can,
         # so they come back after the repo goes: the line uses the width rather than leaving a gap.
-        row = statusbar.plain(statusbar.fit(self.demo_row(), 106))
-        self.assertLessEqual(len(row), 106)
+        row = statusbar.plain(statusbar.fit(self.demo_row(), 112))
+        self.assertLessEqual(len(row), 112)
         self.assertNotIn("Doofess", row)
         self.assertNotIn("$1.23", row)
         for marker in ("#12", "→2h10m", "→3d4h", "high"):
             self.assertIn(marker, row)
 
     def test_layout_lists_the_dropped_pieces_in_display_order(self):
-        line, dropped = statusbar.layout(self.demo_row(), 106)
-        self.assertEqual(line, statusbar.fit(self.demo_row(), 106))
+        line, dropped = statusbar.layout(self.demo_row(), 112)
+        self.assertEqual(line, statusbar.fit(self.demo_row(), 112))
         self.assertEqual([statusbar.plain(t).strip() for t, _, _ in dropped], ["Doofess/claude-setup", "$1.23"])
         self.assertEqual(statusbar.layout(self.demo_row(), 200)[1], [])
 
     def test_overflow_record(self):
-        _, dropped = statusbar.layout(self.demo_row(), 106)
+        _, dropped = statusbar.layout(self.demo_row(), 112)
         record = statusbar.overflow_record(dropped, 110, self.NOW)
         self.assertEqual(record["columns"], 110)
         self.assertEqual(record["written_at"], self.NOW)
