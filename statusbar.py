@@ -8,11 +8,12 @@ meter with tokens used out of the auto-compact point │ the 5-hour and 7-day pl
 time until each resets │ cost. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
 short words (ctx, 5h, 7d) so the bar also reads in a font without the glyphs (the installer adds the flag
 on a machine with no Nerd Font). Colours are the terminal's own 16-colour palette, so the bar follows the
-terminal's scheme: cost green, each model and each effort level its own colour. Separators and the place
-and model icons stay in the default foreground: nothing is grey. Two things use exact 24-bit colours instead:
-the repo name, in the violet Claude Code highlights with (its dark theme's `permission` colour, rgb
-177,185,249), and the three 8-cell meters, whose icon, figures, filled blocks and (darker) unfilled blocks
-all take the meter's level: green below 50%, yellow from 50, orange from 70, red from 90.
+terminal's scheme: cost green, each model and each effort level its own colour. Everything else is sent as
+exact 24-bit colours, never the terminal's default foreground (a light grey in most schemes): the chrome
+(separators, the place and model icons, branch, PR number, reset times) in pure white; the repo name in the
+violet Claude Code highlights with (its dark theme's `permission` colour, rgb 177,185,249); and the three
+8-cell meters, whose icon, figures, filled blocks and (darker) unfilled blocks all take the meter's level:
+green below 50%, yellow from 50, orange from 70, red from 90. Nothing is grey.
 
 Width fitting: the line may use COLUMNS minus a small margin that Claude Code keeps for itself. Each
 piece (a segment) has a priority. While the line is too wide, the piece with the highest priority
@@ -47,6 +48,8 @@ RED = 31
 BOLD = 1
 # Claude Code's own highlight colour (the dark theme's `permission` token), 24-bit so it matches exactly: the repo name.
 VIOLET = "38;2;177;185;249"
+# The chrome: pure white, 24-bit, because the terminal's default foreground is a light grey in most schemes.
+WHITE = "38;2;255;255;255"
 # One colour per model family and per effort level, from the terminal's 16.
 MODEL_COLOURS = {"opus": 35, "sonnet": 34, "haiku": 36, "fable": 95, "mythos": 95}
 EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": RED, "xhigh": 91, "max": 91}
@@ -221,7 +224,7 @@ def branch(start_dir: str, stop_dir: str | None = None) -> str | None:
 
 MARGIN = 4  # cells Claude Code keeps for its own spacing around the status line
 DEFAULT_COLUMNS = 120
-SEPARATOR = " │ "  # separators, icons and labels all stay in the default (white) foreground: no grey text
+SEPARATOR = sgr(WHITE, " │ ")  # separators, icons and labels are explicit white: no grey text
 
 # (text with colours, priority, group): priority 0 never drops, a higher number drops sooner;
 # segments of one group sit together and groups are joined by a separator.
@@ -229,7 +232,7 @@ Segment = tuple[str, int, int]
 # Drop order, least important first (the user's call: cost, then reset times, then the rest).
 P_COST, P_7D_RESET, P_5H_RESET, P_PR, P_REPO, P_EFFORT, P_7D, P_5H = 8, 7, 6, 5, 4, 3, 2, 1
 G_PLACE, G_MODEL, G_CONTEXT, G_5H, G_7D, G_COST = range(6)
-GROUP_JOIN = {G_MODEL: " · "}  # "Opus · high"; every other group joins its pieces with two spaces
+GROUP_JOIN = {G_MODEL: sgr(WHITE, " · ")}  # "Opus · high"; every other group joins its pieces with two spaces
 
 # Markers before a piece: a Nerd Font glyph (the default) or, with --labels, a short word for fonts without the
 # glyphs (then the repo, branch, PR and model carry no marker: they read on their own). Every glyph is followed
@@ -249,12 +252,11 @@ def _num(value, default: float = 0) -> float:
 
 def _mark(markers: dict, key: str, text: str, colour: str | None = None) -> str:
     """text with its marker (icon or label) in front, or bare when this marker set has none for key.
-    With colour, the marker (and its space) is drawn in it."""
+    The marker (and its space) is drawn in colour, white by default."""
     marker = markers.get(key)
     if not marker:
         return text
-    marker += " "
-    return (sgr(colour, marker) if colour else marker) + text
+    return sgr(colour or WHITE, marker + " ") + text
 
 
 def model_colour(name: str) -> int | None:
@@ -296,9 +298,9 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     if repo:
         out.append((_mark(marks, "repo", sgr(VIOLET, repo)), P_REPO, G_PLACE))
     if branch_name:
-        out.append((_mark(marks, "branch", branch_name), 0, G_PLACE))
+        out.append((_mark(marks, "branch", sgr(WHITE, branch_name)), 0, G_PLACE))
     if number:
-        out.append((_mark(marks, "pr", f"#{number}"), P_PR, G_PLACE))
+        out.append((_mark(marks, "pr", sgr(WHITE, f"#{number}")), P_PR, G_PLACE))
     if name:
         out.append((_mark(marks, "model", sgr(BOLD, _coloured(str(name), model_colour(str(name))))), 0, G_MODEL))
         if effort:
@@ -321,7 +323,7 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
         used_pct = usage["used_percentage"]
         out.append((_meter_piece(marks, mark, used_pct, 8), meter_priority, group))
         if isinstance(usage.get("resets_at"), (int, float)):
-            out.append((fmt_reset(usage["resets_at"], now), reset_priority, group))
+            out.append((sgr(WHITE, fmt_reset(usage["resets_at"], now)), reset_priority, group))
 
     cost = _dict(data.get("cost"))
     if isinstance(cost.get("total_cost_usd"), (int, float)):

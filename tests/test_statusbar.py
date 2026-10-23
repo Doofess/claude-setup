@@ -226,12 +226,25 @@ class RowTest(unittest.TestCase):
     def test_repo_is_violet_and_nothing_is_grey(self):
         raw = statusbar.fit(self.demo_row(), 200)
         self.assertIn(f"\x1b[{statusbar.VIOLET}mDoofess/claude-setup", raw)  # Claude Code's own highlight colour
-        self.assertNotIn("\x1b[90m", raw)  # icons, separators and labels are in the default (white) foreground
+        self.assertNotIn("\x1b[90m", raw)
+        self.assertNotIn("\x1b[2m", raw)
+
+    def test_everything_visible_has_an_explicit_colour(self):
+        # The terminal's default foreground is a light grey in most schemes, so the chrome (icons, branch, PR,
+        # separators, reset times) is sent as exact white rather than left to the default.
+        for icons in (True, False):
+            for span in statusbar.spans(statusbar.fit(self.demo_row(icons=icons), 200)):
+                if span["text"].strip():
+                    self.assertIsNotNone(span["colour"], repr(span["text"]))
+        raw = statusbar.fit(self.demo_row(), 200)
+        self.assertIn(statusbar.sgr(statusbar.WHITE, "main"), raw)
+        self.assertIn(statusbar.sgr(statusbar.WHITE, " │ "), raw)
+        self.assertIn(statusbar.sgr(statusbar.WHITE, "→2h10m"), raw)
 
     def test_colours_are_the_sixteen_or_the_named_ones(self):
         # The terminal's 16, plus the repo's violet (Claude Code's exact theme colour) and the meter levels (24-bit).
         text = statusbar.fit(self.demo_row(), 200)
-        allowed = {"0", "1", statusbar.VIOLET} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
+        allowed = {"0", "1", statusbar.VIOLET, statusbar.WHITE} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
         allowed |= {code for pair in statusbar.LEVELS.values() for code in pair}
         self.assertEqual(set(re.findall(r"\x1b\[([0-9;]+)m", text)) - allowed, set())
 
