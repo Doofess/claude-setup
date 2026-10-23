@@ -189,7 +189,8 @@ MARGIN = 4  # cells Claude Code keeps for its own spacing around the status line
 DEFAULT_COLUMNS = 120
 SEPARATOR = sgr(DIM, "  │  ")
 
-# Nerd Font glyphs, one cell wide each.
+# Nerd Font glyphs. Each is followed by a space: the non-Mono Nerd Font variants (the Windows Terminal default
+# here is "JetBrainsMono Nerd Font") draw them wider than one cell, and without the space they overlap the text.
 ICON_REPO, ICON_BRANCH, ICON_PR, ICON_MODEL = "", "", "", ""
 ICON_CONTEXT, ICON_5H, ICON_7D = "", "", ""
 ICONS_RE = re.compile("[]")
@@ -208,7 +209,7 @@ def _num(value, default: float = 0) -> float:
 
 
 def _icon(glyph: str, text: str) -> str:
-    return sgr(DIM, glyph) + text
+    return sgr(DIM, glyph) + " " + text
 
 
 def _repo_name(repo) -> str | None:

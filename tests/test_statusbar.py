@@ -112,11 +112,12 @@ class RowsTest(unittest.TestCase):
 
     def test_row_one_places_and_colours(self):
         r1 = statusbar.plain(statusbar.fit(self.demo_rows()[0], 120))
-        self.assertEqual(r1, " Doofess/claude-setup  main  #12  │   Opus · high")
+        # Each icon takes a cell and a space: the non-Mono Nerd Font variants draw glyphs wider than one cell.
+        self.assertEqual(r1, "  Doofess/claude-setup   main   #12  │    Opus · high")
 
     def test_row_two_meters(self):
         r2 = statusbar.plain(statusbar.fit(self.demo_rows()[1], 120))
-        self.assertEqual(r2, " ███░░░░░ 42%  112k/267k  │   █░░░░ 23% →2h10m  │   ██░░░ 41% →3d4h  │  $1.23 +156 −23")
+        self.assertEqual(r2, "  ███░░░░░ 42%  112k/267k  │    █░░░░ 23% →2h10m  │    ██░░░ 41% →3d4h  │  $1.23 +156 −23")
 
     def test_narrow_window_keeps_context_and_model(self):
         r1, r2 = (statusbar.plain(statusbar.fit(r, 44)) for r in self.demo_rows())
@@ -130,8 +131,8 @@ class RowsTest(unittest.TestCase):
 
     def test_absent_data(self):
         r1, r2 = self.demo_rows(rate_limits={}, pr=None, effort=None, cost=None, context_window={"total_input_tokens": 0, "context_window_size": 300_000})
-        self.assertEqual(statusbar.plain(statusbar.fit(r1, 120)), " Doofess/claude-setup  main  │   Opus")
-        self.assertEqual(statusbar.plain(statusbar.fit(r2, 120)), " ░░░░░░░░ 0%  0/267k")
+        self.assertEqual(statusbar.plain(statusbar.fit(r1, 120)), "  Doofess/claude-setup   main  │    Opus")
+        self.assertEqual(statusbar.plain(statusbar.fit(r2, 120)), "  ░░░░░░░░ 0%  0/267k")
 
     def test_colours_come_from_the_sixteen(self):
         text = "\n".join(statusbar.fit(r, 120) for r in self.demo_rows())
