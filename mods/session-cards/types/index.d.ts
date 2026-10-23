@@ -5,6 +5,8 @@ declare module 'claude-code' {
   interface PluginState {
     'session-cards': {
       promptTimes: PromptTimes
+      /** Bumped every minute so the hint line reads the status bar's overflow file again. */
+      overflowTick: number
     }
   }
 }

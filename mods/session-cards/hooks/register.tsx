@@ -1,3 +1,4 @@
+import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 
@@ -111,7 +112,67 @@ export function rowText(d: Described, state: RowState, width: number): string {
   return cut(`${d.icon} ${verb} ${d.detail}${MARK[state]}`, width)
 }
 
+/** One run of the status bar's overflow: `colour` is a colour name, a hex string, or null for the default. */
+type Span = { text: string; colour: string | null; bold: boolean }
+
+/** Bumped every minute so the hint line reads the overflow file again. */
+const overflowTick = atom({ plugin: 'session-cards', key: 'overflowTick' } as const, 0)
+
+const SEPARATOR = ' │ '
+
+function isSpan(value: unknown): value is Span {
+  return typeof field(value, 'text') === 'string'
+}
+
+/** The pieces in the status bar's overflow file, or null when it is missing, unreadable or not the shape. */
+function parseOverflow(text: string): Span[][] | null {
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+
+  const pieces = field(parsed, 'pieces')
+
+  if (!Array.isArray(pieces)) {
+    return null
+  }
+
+  return pieces.map(piece => (Array.isArray(piece) ? piece.filter(isSpan) : []))
+}
+
+const widthOf = (piece: Span[]): number => piece.reduce((sum, span) => sum + span.text.length, 0)
+
+/** The leading pieces whose line (`hint`, two spaces, the pieces joined) fits in `room` cells. */
+export function fitPieces(pieces: Span[][], hintWidth: number, room: number): Span[][] {
+  const fits: Span[][] = []
+  let used = hintWidth + 2
+
+  for (const piece of pieces) {
+    const next = used + (fits.length === 0 ? 0 : SEPARATOR.length) + widthOf(piece)
+
+    if (next > room) {
+      break
+    }
+
+    fits.push(piece)
+    used = next
+  }
+
+  return fits
+}
+
 export const register: Register = on => {
+  on('session.start', async ($, e, next) => {
+    // The status bar rewrites the overflow file about once a minute; the hint
+    // line only redraws on its own events, so a tick makes it read the file again.
+    $.clock.every(60_000, () => update($, overflowTick, n => n + 1))
+
+    return next(e)
+  })
+
   // A row's time is settled at its first draw and kept for every redraw. A
   // ui.render hook may not write $.state, so the claims live here, in the
   // module: `claimed` maps a row (e.requestId, the message id) to its time or
@@ -212,6 +273,52 @@ export const register: Register = on => {
         <Text color="text">{` ${cut(d.detail, room)}`}</Text>
         {state === 'failed' && <Text color="error">{mark}</Text>}
         {state === 'stopped' && <Text color="text">{mark}</Text>}
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    if (e.surface !== 'terminal') {
+      return next(e)
+    }
+
+    await read($, overflowTick)
+
+    const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE'))
+
+    if (!home) {
+      return next(e)
+    }
+
+    let pieces: Span[][] | null
+
+    try {
+      pieces = parseOverflow(await $.fs.read(`${home}/.claude/statusbar-overflow/${await $.session.id()}.json`))
+    } catch {
+      return next(e)
+    }
+
+    const { hint } = e.props
+    const fits = pieces === null ? [] : fitPieces(pieces, hint.length, (e.viewport?.columns ?? 80) - 4)
+
+    if (fits.length === 0) {
+      return next(e)
+    }
+
+    const { Box, Text } = $.ui.resolve(e)
+
+    return (
+      <Box flexDirection="row">
+        <Text dimColor>{hint}</Text>
+        <Text>{'  '}</Text>
+        {fits.map((piece, i) => [
+          i > 0 && <Text color="text">{SEPARATOR}</Text>,
+          ...piece.map(span => (
+            <Text color={span.colour ?? undefined} bold={span.bold === true}>
+              {span.text}
+            </Text>
+          )),
+        ])}
       </Box>
     )
   })
