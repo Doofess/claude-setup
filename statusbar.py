@@ -52,7 +52,7 @@ VIOLET = "38;2;177;185;249"
 WHITE = "38;2;255;255;255"
 # One colour per model family and per effort level, from the terminal's 16.
 MODEL_COLOURS = {"opus": 35, "sonnet": 34, "haiku": 36, "fable": 93, "mythos": 92}  # magenta, blue, cyan, gold, bright green
-EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": RED, "xhigh": 91, "max": 91}
+EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": RED, "xhigh": 95, "max": 97}  # a heat ramp: green, yellow, red, bright magenta, white-hot
 BLOCK = "█"
 # Meter levels: (filled colour, unfilled colour) as 24-bit SGR parameters. The unfilled part is the same hue at
 # a third of the brightness, drawn with the same solid block, so the bar reads as one coloured bar with a dark

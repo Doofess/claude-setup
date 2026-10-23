@@ -221,8 +221,11 @@ class RowTest(unittest.TestCase):
         self.assertEqual(len({c % 60 for c in codes}), len(codes))
 
     def test_effort_colours(self):
-        for level, code in [("low", 32), ("medium", 33), ("high", 31), ("xhigh", 91), ("max", 91), ("odd", None)]:
+        for level, code in [("low", 32), ("medium", 33), ("high", 31), ("xhigh", 95), ("max", 97), ("odd", None)]:
             self.assertEqual(statusbar.effort_colour(level), code, level)
+        # every level its own colour, no two of them the same hue (31 and 91 look alike in most schemes)
+        codes = list(statusbar.EFFORT_COLOURS.values())
+        self.assertEqual(len({c % 60 for c in codes}), len(codes))
 
     def test_only_common_characters(self):
         # No private-use (Nerd Font) code points: the bar must read the same in Consolas or Cascadia Mono.
