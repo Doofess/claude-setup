@@ -29,7 +29,8 @@ class FormatTest(unittest.TestCase):
         self.assertEqual(statusbar.fmt_reset(1_700_000_000 - 5, 1_700_000_000), "→now")
 
     def test_meter_fill_and_colour(self):
-        self.assertEqual(statusbar.meter(42, 8), "\x1b[32m███░░░░░\x1b[0m")
+        # Only the filled part is coloured; the unfilled part stays in the terminal's default foreground.
+        self.assertEqual(statusbar.meter(42, 8), "\x1b[32m███\x1b[0m░░░░░")
         self.assertTrue(statusbar.meter(75, 5).startswith("\x1b[33m"))
         self.assertTrue(statusbar.meter(90, 5).startswith("\x1b[31m"))
         self.assertEqual(statusbar.meter(100, 5).count("█"), 5)
@@ -118,18 +119,18 @@ class RowTest(unittest.TestCase):
         row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
         # Each icon takes a cell and a space (plain() shows the icon as a space): the non-Mono Nerd Font
         # variants draw glyphs wider than one cell, and without the space they overlap the text.
-        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus · high │   ███░░░░░ 42%  112k/267k │   █░░░░ 23%  →2h10m │   ██░░░ 41%  →3d4h │ $1.23")
+        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus · high │   ███░░░░░ 42%  112k/267k │   ██░░░░░░ 23%  →2h10m │   ███░░░░░ 41%  →3d4h │ $1.23")
 
     def test_labels_instead_of_icons(self):
         # --labels: dim words for fonts without the Nerd Font glyphs; the rest of the line is the same.
         row = statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200))
-        self.assertEqual(row, "Doofess/claude-setup  main  #12 │ Opus · high │ ctx ███░░░░░ 42%  112k/267k │ 5h █░░░░ 23%  →2h10m │ 7d ██░░░ 41%  →3d4h │ $1.23")
+        self.assertEqual(row, "Doofess/claude-setup  main  #12 │ Opus · high │ ctx ███░░░░░ 42%  112k/267k │ 5h ██░░░░░░ 23%  →2h10m │ 7d ███░░░░░ 41%  →3d4h │ $1.23")
 
     def test_refills_leftover_space_with_smaller_pieces(self):
-        # At 100 cells the repo (24 cells with its join) cannot fit, but the PR number and both reset times can,
+        # At 106 cells the repo (24 cells with its join) cannot fit, but the PR number and both reset times can,
         # so they come back after the repo goes: the line uses the width rather than leaving a gap.
-        row = statusbar.plain(statusbar.fit(self.demo_row(), 100))
-        self.assertLessEqual(len(row), 100)
+        row = statusbar.plain(statusbar.fit(self.demo_row(), 106))
+        self.assertLessEqual(len(row), 106)
         self.assertNotIn("Doofess", row)
         self.assertNotIn("$1.23", row)
         for marker in ("#12", "→2h10m", "→3d4h", "high"):
@@ -178,8 +179,14 @@ class RowTest(unittest.TestCase):
         row = statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200))
         self.assertEqual([c for c in row if ord(c) > 0x2FFF], [])
 
+    def test_repo_is_violet_and_nothing_is_grey(self):
+        raw = statusbar.fit(self.demo_row(), 200)
+        self.assertIn(f"[{statusbar.VIOLET}mDoofess/claude-setup", raw)  # Claude Code's own highlight colour
+        self.assertNotIn("[90m", raw)  # icons, separators and labels are in the default (white) foreground
+
     def test_colours_come_from_the_sixteen(self):
-        text = statusbar.fit(self.demo_row(), 200)
+        # ... except the repo's violet, which is Claude Code's exact theme colour (24-bit).
+        text = statusbar.fit(self.demo_row(), 200).replace(f"[{statusbar.VIOLET}m", "")
         allowed = {"0", "1"} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
         self.assertEqual(set(re.findall(r"\[(\d+)m", text)) - allowed, set())
 
