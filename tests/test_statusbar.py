@@ -48,6 +48,20 @@ class FormatTest(unittest.TestCase):
         self.assertEqual(statusbar.cells(statusbar.sgr(statusbar.BOLD, "Fable") + " · high"), 12)
 
 
+class SpanTest(unittest.TestCase):
+    # The overflow file carries each dropped piece as spans the mod can draw: text, a colour name or hex, bold.
+    def test_spans_split_the_colour_runs(self):
+        self.assertEqual(statusbar.spans("$" + statusbar.sgr(32, "1.23")), [
+            {"text": "$", "colour": None, "bold": False}, {"text": "1.23", "colour": "green", "bold": False}])
+        self.assertEqual(statusbar.spans(statusbar.sgr(1, statusbar.sgr(35, "Opus"))), [{"text": "Opus", "colour": "magenta", "bold": True}])
+        self.assertEqual(statusbar.spans(statusbar.sgr(91, "x"))[0]["colour"], "redBright")
+        self.assertEqual(statusbar.spans(statusbar.sgr("38;2;76;200;110", "x"))[0]["colour"], "#4cc86e")
+        self.assertEqual(statusbar.spans(""), [])
+
+    def test_adjacent_runs_in_one_style_merge(self):
+        self.assertEqual(statusbar.spans(statusbar.sgr(32, "a") + statusbar.sgr(32, "b")), [{"text": "ab", "colour": "green", "bold": False}])
+
+
 class CompactWindowTest(unittest.TestCase):
     def test_model_key_strips_date_and_1m(self):
         self.assertEqual(statusbar.model_key("claude-opus-5-5-20260101"), "claude-opus-5-5")
@@ -144,6 +158,20 @@ class RowTest(unittest.TestCase):
         for marker in ("#12", "→2h10m", "→3d4h", "high"):
             self.assertIn(marker, row)
 
+    def test_layout_lists_the_dropped_pieces_in_display_order(self):
+        line, dropped = statusbar.layout(self.demo_row(), 106)
+        self.assertEqual(line, statusbar.fit(self.demo_row(), 106))
+        self.assertEqual([statusbar.plain(t).strip() for t, _, _ in dropped], ["Doofess/claude-setup", "$1.23"])
+        self.assertEqual(statusbar.layout(self.demo_row(), 200)[1], [])
+
+    def test_overflow_record(self):
+        _, dropped = statusbar.layout(self.demo_row(), 106)
+        record = statusbar.overflow_record(dropped, 110, self.NOW)
+        self.assertEqual(record["columns"], 110)
+        self.assertEqual(record["written_at"], self.NOW)
+        self.assertEqual(len(record["pieces"]), 2)
+        self.assertEqual(record["pieces"][1], [{"text": "$1.23", "colour": "green", "bold": False}])
+
     def test_lines_changed_are_not_shown(self):
         self.assertNotIn("+156", statusbar.plain(statusbar.fit(self.demo_row(), 200)))
 
@@ -232,6 +260,49 @@ class ProgramTest(unittest.TestCase):
         self.assertIn("Opus", row)
         self.assertIn("main", row)
         self.assertIn("42%", row)
+
+    def run_bar_at_home(self, data, home, columns="60"):
+        env = dict(os.environ, COLUMNS=columns, CLAUDE_CODE_AUTO_COMPACT_WINDOW="300000", HOME=home, USERPROFILE=home)
+        p = subprocess.run([sys.executable, "-I", "-S", os.path.join(ROOT, "statusbar.py")], input=json.dumps(data), capture_output=True, text=True, encoding="utf-8", env=env)
+        return p.returncode, p.stdout
+
+    def test_writes_the_dropped_pieces_for_the_session(self):
+        # The mod draws these on Claude Code's own hint line, so they go to a file named by the session.
+        home = tempfile.mkdtemp()
+        try:
+            code, out = self.run_bar_at_home(dict(statusbar.DEMO, session_id="abc-123"), home)
+            self.assertEqual(code, 0)
+            self.assertEqual(len(out.rstrip("\n").split("\n")), 1)
+            with open(os.path.join(home, ".claude", "statusbar-overflow", "abc-123.json"), encoding="utf-8") as f:
+                record = json.load(f)
+            self.assertEqual(record["columns"], 60)
+            texts = ["".join(span["text"] for span in piece) for piece in record["pieces"]]
+            self.assertIn("$1.23", texts)
+            self.assertNotIn("Opus", "".join(texts))
+        finally:
+            shutil.rmtree(home, ignore_errors=True)
+
+    def test_no_session_id_writes_nothing(self):
+        home = tempfile.mkdtemp()
+        try:
+            code, _ = self.run_bar_at_home(statusbar.DEMO, home)
+            self.assertEqual(code, 0)
+            self.assertFalse(os.path.exists(os.path.join(home, ".claude")))
+        finally:
+            shutil.rmtree(home, ignore_errors=True)
+
+    def test_old_overflow_files_are_pruned(self):
+        folder = tempfile.mkdtemp()
+        try:
+            now = time.time()
+            for name, age in (("old.json", 90_000), ("new.json", 100)):
+                path = os.path.join(folder, name)
+                open(path, "w").close()
+                os.utime(path, (now - age, now - age))
+            statusbar.prune_overflow(folder, now)
+            self.assertEqual(sorted(os.listdir(folder)), ["new.json"])
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
 
     def test_bad_stdin_prints_an_error_row(self):
         code, out = self.run_bar("not json")

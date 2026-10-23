@@ -25,8 +25,15 @@ Claude Code auto-compacts. That point is the auto-compact window (from the envir
 settings files, else the model's own window) minus 33,000 tokens, which is the 13,000 tokens Claude
 Code keeps free plus the 20,000 it reserves for the reply. A meter at 100% means compaction is due.
 
-Standard library only. The branch is read straight from .git/HEAD, with no git subprocess, and
-nothing is written to disk. On any error the bar prints one plain `statusbar: <error>` row.
+Overflow: the pieces a narrow terminal dropped are written, per session, to
+`~/.claude/statusbar-overflow/<session_id>.json` as `{"written_at", "columns", "pieces"}`, each piece a
+list of spans `{"text", "colour", "bold"}` (colour a terminal name such as `green`/`redBright`, a hex
+value for the 24-bit ones, or null). The `session-cards` mod draws them on Claude Code's own hint line,
+to the right of the permissions text, so a piece only disappears when both lines are full. Files older
+than a day are removed on each run; a session with no id writes nothing.
+
+Standard library only. The branch is read straight from .git/HEAD, with no git subprocess. On any error
+the bar prints one plain `statusbar: <error>` row.
 """
 import json
 import os
@@ -55,6 +62,9 @@ LEVELS = {
 }
 
 SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+COLOUR_NAMES = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+OVERFLOW_DIR = os.path.join(".claude", "statusbar-overflow")
+OVERFLOW_MAX_AGE = 86_400  # seconds a session's overflow file is kept after its last write
 
 
 def sgr(code: int | str, text: str) -> str:
@@ -326,16 +336,17 @@ def _join(segments: list[Segment]) -> str:
     return SEPARATOR.join(GROUP_JOIN.get(group, "  ").join(texts) for group, texts in groups.items())
 
 
-def fit(segments: list[Segment], width: int) -> str:
-    """Joins the segments so the line fits width cells: drops the highest-priority-number piece until it fits,
-    then puts back, most important first, each dropped piece that still fits, so a wide piece that had to go
-    does not leave room unused. A line whose never-dropped pieces are still too wide is returned as it is."""
+def layout(segments: list[Segment], width: int) -> tuple[str, list[Segment]]:
+    """The line fitted to width cells, and the pieces it left out in display order: drops the
+    highest-priority-number piece until the line fits, then puts back, most important first, each dropped piece
+    that still fits, so a wide piece that had to go does not leave room unused. A line whose never-dropped
+    pieces are still too wide is returned as it is."""
     kept = list(segments)
     dropped: list[Segment] = []
     while cells(_join(kept)) > width:
         droppable = [s for s in kept if s[1] > 0]
         if not droppable:
-            return _join(kept)
+            break
         victim = max(droppable, key=lambda s: s[1])
         kept.remove(victim)
         dropped.append(victim)
@@ -343,7 +354,77 @@ def fit(segments: list[Segment], width: int) -> str:
         trial = [s for s in segments if s in kept or s is candidate]  # display order
         if cells(_join(trial)) <= width:
             kept = trial
-    return _join(kept)
+    return _join(kept), [s for s in segments if s not in kept]
+
+
+def fit(segments: list[Segment], width: int) -> str:
+    """The line `layout` fits to width cells."""
+    return layout(segments, width)[0]
+
+
+def spans(text: str) -> list[dict]:
+    """text split into runs of one style, each `{"text", "colour", "bold"}`, for the mod to draw: the colour is
+    a terminal name (`green`, `redBright`), a hex value for a 24-bit colour, or None for the default."""
+    out: list[dict] = []
+    colour: str | None = None
+    bold = False
+    pos = 0
+    for match in SGR_RE.finditer(text):
+        _add_span(out, text[pos:match.start()], colour, bold)
+        pos = match.end()
+        params = match.group()[2:-1]
+        if params in ("", "0"):
+            colour, bold = None, False
+        elif params == "1":
+            bold = True
+        elif params.startswith("38;2;"):
+            r, g, b = (int(v) for v in params.split(";")[2:5])
+            colour = f"#{r:02x}{g:02x}{b:02x}"
+        elif params.isdigit() and 30 <= int(params) <= 37:
+            colour = COLOUR_NAMES[int(params) - 30]
+        elif params.isdigit() and 90 <= int(params) <= 97:
+            colour = COLOUR_NAMES[int(params) - 90] + "Bright"
+    _add_span(out, text[pos:], colour, bold)
+    return out
+
+
+def _add_span(out: list[dict], text: str, colour: str | None, bold: bool) -> None:
+    if not text:
+        return
+    if out and out[-1]["colour"] == colour and out[-1]["bold"] == bold:
+        out[-1]["text"] += text
+    else:
+        out.append({"text": text, "colour": colour, "bold": bold})
+
+
+def overflow_record(dropped: list[Segment], columns: int, now: float) -> dict:
+    """What the overflow file holds: when it was written, the terminal width the line was fitted to, and the
+    dropped pieces as spans, in display order."""
+    return {"written_at": now, "columns": columns, "pieces": [spans(text) for text, _, _ in dropped]}
+
+
+def prune_overflow(folder: str, now: float) -> None:
+    """Removes the overflow files not written for OVERFLOW_MAX_AGE: sessions that ended."""
+    for name in os.listdir(folder):
+        path = os.path.join(folder, name)
+        try:
+            if name.endswith(".json") and os.path.getmtime(path) < now - OVERFLOW_MAX_AGE:
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def write_overflow(home: str, session_id: str, record: dict) -> None:
+    """Writes record to home/.claude/statusbar-overflow/<session_id>.json in one step (a temp file renamed over
+    it), so the mod never reads half a file, and prunes the folder's stale files."""
+    folder = os.path.join(home, OVERFLOW_DIR)
+    os.makedirs(folder, exist_ok=True)
+    prune_overflow(folder, record["written_at"])
+    path = os.path.join(folder, re.sub(r"[^\w.-]", "_", session_id) + ".json")
+    temp = f"{path}.{os.getpid()}.tmp"
+    with open(temp, "w", encoding="utf-8") as f:
+        json.dump(record, f)
+    os.replace(temp, path)
 
 
 def plain(text: str) -> str:
@@ -359,7 +440,8 @@ def _read_json(path: str) -> dict:
         return {}
 
 
-def render(data: dict, env: dict, now: float, icons: bool = True) -> str:
+def compose(data: dict, env: dict, now: float, icons: bool = True) -> tuple[str, list[Segment], int]:
+    """The fitted line, the pieces it left out, and the terminal width it was fitted for."""
     workspace = _dict(data.get("workspace"))
     current = workspace.get("current_dir") or os.getcwd()
     project = workspace.get("project_dir") or current
@@ -373,7 +455,12 @@ def render(data: dict, env: dict, now: float, icons: bool = True) -> str:
     except ValueError:
         columns = DEFAULT_COLUMNS
     width = max(columns - MARGIN, 1)
-    return fit(segments(data, env, now, files, branch_name, icons), width)
+    line, dropped = layout(segments(data, env, now, files, branch_name, icons), width)
+    return line, dropped, columns
+
+
+def render(data: dict, env: dict, now: float, icons: bool = True) -> str:
+    return compose(data, env, now, icons)[0]
 
 
 # The demo is rendered at this fixed time so its reset countdowns read 2h10m and 3d4h whenever it runs.
@@ -419,7 +506,16 @@ def main(argv: list[str]) -> int:
         elif "--demo-json" in argv:
             print(json.dumps(demo_sample(time.time())))
         else:
-            print(render(_dict(json.loads(sys.stdin.read())), os.environ, time.time(), icons))
+            data = _dict(json.loads(sys.stdin.read()))
+            now = time.time()
+            line, dropped, columns = compose(data, os.environ, now, icons)
+            print(line)
+            session_id = data.get("session_id")
+            if isinstance(session_id, str) and session_id:
+                try:
+                    write_overflow(os.path.expanduser("~"), session_id, overflow_record(dropped, columns, now))
+                except Exception:  # the line is already printed; a lost overflow file costs nothing visible
+                    pass
     except Exception as error:  # the bar must never crash Claude Code's UI
         print("statusbar:", error)
     return 0

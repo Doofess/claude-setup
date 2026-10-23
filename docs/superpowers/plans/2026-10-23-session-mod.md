@@ -4,7 +4,7 @@
 
 **Goal:** A Claude Code mod, `session-cards`, that draws your prompts as an accent-orange card headed `You prompted · 14:32`, slash-command output as a violet card headed by the command, and every tool call as a white icon-and-words row in the engine's own position and weight.
 
-**Architecture:** One hooks module with three `ui.render` hooks (`UserMessage`, `CommandOutput`, `ToolUse`) and one `prompt.submit` hook that notes the time each prompt was handed over. Colours are theme tokens only (`claude`, `permission`, `text`, `error`), so the cards follow Claude Code's own theme. The mod lives in this repo under `mods/session-cards` and loads through `CLAUDE_CODE_PLUGIN_DIRS` set by `settings.json`, as the installer expands `<repo>`.
+**Architecture:** One hooks module with four `ui.render` hooks (`UserMessage`, `CommandOutput`, `ToolUse`, `PromptHint`) and one `prompt.submit` hook that notes the time each prompt was handed over. The `PromptHint` hook draws the status bar's overflow (what `statusbar.py` dropped from its line, read from `~/.claude/statusbar-overflow/<session_id>.json`) after the engine's own hint text. Colours are theme tokens only (`claude`, `permission`, `text`, `error`), so the cards follow Claude Code's own theme. The mod lives in this repo under `mods/session-cards` and loads through `CLAUDE_CODE_PLUGIN_DIRS` set by `settings.json`, as the installer expands `<repo>`.
 
 **Tech Stack:** Claude Code plugin API (`claude-code` types), TSX, `claude plugin validate` and `claude plugin test`; PowerShell for the installer.
 
@@ -50,7 +50,7 @@ Paths: forward slashes, relative to `cwd` when under it, else as given.
 
 - Mod folder `mods/session-cards` with `.claude-plugin/plugin.json` (`name` `session-cards`, `version` `0.1.0`), `hooks/hooks.json` (`{ "modules": ["./register.tsx"] }`), `hooks/register.tsx`, `types/index.d.ts` declaring `$.state` for the mod, `tests/*.test.tsx`.
 - Before writing any mod code, load the `plugin-authoring` skill in the implementing session and read its reference for `ui.render`, `prompt.submit`, `$.state` and `claude plugin test`.
-- Colours are theme tokens only: `claude`, `permission`, `text`, `error`. No hex, no ANSI.
+- Colours are theme tokens only: `claude`, `permission`, `text`, `error`. No hex, no ANSI. The one exception is the overflow (Task 4), whose spans carry the status bar's own colours as data (`green`, `redBright`, `#4cc86e`): the mod passes each span's `colour` through to `Text` unchanged, so the two lines match.
 - Every hook returns `next(e)` for `e.surface !== 'terminal'`.
 - `claude plugin validate mods/session-cards` passes and `claude plugin test mods/session-cards` passes before each commit.
 - Commit after each task with the trailer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
@@ -61,7 +61,8 @@ Paths: forward slashes, relative to `cwd` when under it, else as given.
 2. A prompt pasted with `<pasted_content>` wrappers: the card shows the text without the wrapper lines (Task 1 test `test_paste_wrapper_lines_are_hidden`).
 3. A tool call that fails: the row keeps its words and adds the mark, in `error`, instead of the engine's red block (Task 3 test `test_failed_call_adds_a_mark`).
 4. A Bash command of several lines with no description: the row shows the first line cut to the width, never a wrapped block (Task 3 test `test_long_command_is_cut_to_the_row`).
-5. The mod loads from a repo path with spaces or a different drive on the laptop: `install.ps1` must print the loaded folder from the installed settings and `claude plugin validate` must pass there (Task 4 step 4).
+5. The mod loads from a repo path with spaces or a different drive on the laptop: `install.ps1` must print the loaded folder from the installed settings and `claude plugin validate` must pass there (Task 5 step 4).
+6. The overflow file is missing, half-written or from a wider terminal: the hint line stays the engine's own, never an error row or a wrapped line (Task 4 tests `test_no_overflow_file_passes_to_the_engine`, `test_overflow_is_cut_to_the_room`).
 
 ---
 
@@ -178,7 +179,39 @@ Row: `Box flexDirection="row"` with `Text color="text"` icon + space, `Text colo
 
 - [ ] **Step 5: Commit** — `git commit -m "session-cards: white icon-and-words tool rows"`
 
-### Task 4: Install on every machine
+### Task 4: Status bar overflow on the hint line
+
+**Files:**
+- Modify: `mods/session-cards/hooks/register.tsx` (a `ui.render` hook on `{ component: 'PromptHint' }`)
+- Modify: `mods/session-cards/types/index.d.ts` (`overflowTick: number`)
+- Test: `mods/session-cards/tests/overflow.test.tsx`
+
+**Interfaces:**
+- Consumes: the file `statusbar.py` writes, `<home>/.claude/statusbar-overflow/<session_id>.json`: `{ written_at: number, columns: number, pieces: Span[][] }`, `Span = { text: string, colour: string | null, bold: boolean }`. Home is `$.env.get("HOME")`, else `$.env.get("USERPROFILE")`; the session id is `$.session.id()`. The file is absent when the script has not run for this session, and holds `pieces: []` when nothing was dropped.
+- Produces: nothing other tasks use.
+
+The engine's hint line (`PromptHint`) reads `⏵⏵ bypass permissions on (shift+tab to cycle)` or `? for shortcuts`; `e.props.hint` is that text. The hook draws its own tree: the engine's hint as the engine draws it (dim), two spaces, then the overflow pieces joined by ` │ ` in the status bar's own colours, bold where the span says so. The pieces are cut to the room: with `columns = e.viewport?.columns ?? 80` (`viewport` is optional on the render input), the hook takes pieces in file order while `hint + "  " + joined` fits in `columns - 4` cells, and stops at the first that does not. A piece's width is its text's cells with each Nerd Font glyph (U+E000–U+F8FF) counted as 1. When no piece fits, or the file is absent, unreadable, not JSON or has no `pieces` array, the hook returns `next(e)`: the engine's own line, pills live. Drawing a tree replaces the engine's live pills, so this is the one cost of the feature and is noted in the README.
+
+The file changes once a minute (the status line refreshes every 60 s) and the hint only redraws on its own events, so `session.start` sets `$.clock.every(60_000, …)` to `update($, overflowTick, n => n + 1)`; the hook reads the atom so the tick redraws it.
+
+- [ ] **Step 1: Write the failing tests** in `overflow.test.tsx` with the test harness the `plugin-authoring` reference describes (a fixture home folder with the file written by the test; `$.env` answered from a set, `$.session.id()` fixed):
+  - `test_overflow_is_drawn_after_the_hint`: pieces `[[{text: "$1.23", colour: "green", bold: false}]]`, columns 160, hint `? for shortcuts` → the tree's text is `? for shortcuts  $1.23`, the `$1.23` run has `color: "green"`.
+  - `test_overflow_is_cut_to_the_room`: two pieces of 20 cells each, columns 50, hint of 30 cells → only the first piece is drawn (`30 + 2 + 20 = 52 > 46` means none; choose widths so exactly one fits) and the line has no `│` after it.
+  - `test_no_overflow_file_passes_to_the_engine`: no file → the result is what `next(e)` returned.
+  - `test_bad_overflow_file_passes_to_the_engine`: the file holds `{` → `next(e)`.
+  - `test_other_surfaces_pass`: `surface: 'desktop'` → `next(e)`.
+
+- [ ] **Step 2: Run** `claude plugin test mods/session-cards` — Expected: the five fail (no `PromptHint` hook registered).
+
+- [ ] **Step 3: Implement** the hook and the tick in `register.tsx`; declare `overflowTick: number` in `types/index.d.ts`.
+
+- [ ] **Step 4: Run** `claude plugin validate mods/session-cards` and `claude plugin test mods/session-cards` — Expected: both pass, all tests green.
+
+- [ ] **Step 5: README** — in the `mods/session-cards` row: the hint line shows the status bar's overflow; while it does, the engine's shortcut pills on that line are plain text.
+
+- [ ] **Step 6: Commit** — `git commit -m "session-cards: draw the status bar's overflow on the hint line"`
+
+### Task 5: Install on every machine
 
 **Files:**
 - Modify: `settings.json` (`env.CLAUDE_CODE_PLUGIN_DIRS`: `<repo>/mods/session-cards`)
@@ -198,8 +231,8 @@ Expected: `==> Session cards mod` then `2.1.308 (Claude Code) loads C:/dev/claud
 
 - [ ] **Step 5: Commit** — `git commit -m "session-cards: install and verify on every machine"`
 
-### Task 5: Live check and PR
+### Task 6: Live check and PR
 
-- [ ] **Step 1:** Restart Claude Code in `C:\dev\claude-setup`; type a prompt, run `/context`, let a Bash and an Edit run. Compare with the engine's rows: same column, same weight; the card time matches the clock. Fix differences and add a test for each.
+- [ ] **Step 1:** Restart Claude Code in `C:\dev\claude-setup`; type a prompt, run `/context`, let a Bash and an Edit run. Compare with the engine's rows: same column, same weight; the card time matches the clock. Narrow the terminal to about 100 columns: the cost and reset times leave the status line and appear, in colour, after the permissions text on the hint line; narrower still, they disappear from there too. Fix differences and add a test for each.
 - [ ] **Step 2:** `gh pr create` from branch `session-cards` with the attribution footer; merge; `git checkout main; git pull`.
 - [ ] **Step 3:** Laptop: `git pull; .\install.ps1`; the `Session cards mod` step must print the laptop's folder.
