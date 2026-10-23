@@ -108,16 +108,32 @@ class RowTest(unittest.TestCase):
         "effort": "high", "7d meter": "41%", "5h meter": "23%",
     }
 
-    def demo_row(self, **changes):
+    def demo_row(self, icons=True, **changes):
         data = json.loads(json.dumps(statusbar.DEMO))
         for k, v in changes.items():
             data[k] = v
-        return statusbar.segments(data, {}, self.NOW, [{"autoCompactWindow": 300_000}], "main")
+        return statusbar.segments(data, {}, self.NOW, [{"autoCompactWindow": 300_000}], "main", icons=icons)
 
     def test_one_row_places_everything(self):
         row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
-        # Dim text labels, no icon glyphs: every monospace font has █ ░ │ → and ·, so the bar reads the same in any font.
+        # Each icon takes a cell and a space (plain() shows the icon as a space): the non-Mono Nerd Font
+        # variants draw glyphs wider than one cell, and without the space they overlap the text.
+        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus · high │   ███░░░░░ 42%  112k/267k │   █░░░░ 23%  →2h10m │   ██░░░ 41%  →3d4h │ $1.23")
+
+    def test_labels_instead_of_icons(self):
+        # --labels: dim words for fonts without the Nerd Font glyphs; the rest of the line is the same.
+        row = statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200))
         self.assertEqual(row, "Doofess/claude-setup  main  #12 │ Opus · high │ ctx ███░░░░░ 42%  112k/267k │ 5h █░░░░ 23%  →2h10m │ 7d ██░░░ 41%  →3d4h │ $1.23")
+
+    def test_refills_leftover_space_with_smaller_pieces(self):
+        # At 100 cells the repo (24 cells with its join) cannot fit, but the PR number and both reset times can,
+        # so they come back after the repo goes: the line uses the width rather than leaving a gap.
+        row = statusbar.plain(statusbar.fit(self.demo_row(), 100))
+        self.assertLessEqual(len(row), 100)
+        self.assertNotIn("Doofess", row)
+        self.assertNotIn("$1.23", row)
+        for marker in ("#12", "→2h10m", "→3d4h", "high"):
+            self.assertIn(marker, row)
 
     def test_lines_changed_are_not_shown(self):
         self.assertNotIn("+156", statusbar.plain(statusbar.fit(self.demo_row(), 200)))
@@ -141,7 +157,7 @@ class RowTest(unittest.TestCase):
 
     def test_absent_data(self):
         row = self.demo_row(rate_limits={}, pr=None, effort=None, cost=None, context_window={"total_input_tokens": 0, "context_window_size": 300_000})
-        self.assertEqual(statusbar.plain(statusbar.fit(row, 200)), "Doofess/claude-setup  main │ Opus │ ctx ░░░░░░░░ 0%  0/267k")
+        self.assertEqual(statusbar.plain(statusbar.fit(row, 200)), "  Doofess/claude-setup    main │   Opus │   ░░░░░░░░ 0%  0/267k")
 
     def test_cost_model_and_effort_are_coloured(self):
         raw = statusbar.fit(self.demo_row(), 200)
@@ -159,7 +175,7 @@ class RowTest(unittest.TestCase):
 
     def test_only_common_characters(self):
         # No private-use (Nerd Font) code points: the bar must read the same in Consolas or Cascadia Mono.
-        row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
+        row = statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200))
         self.assertEqual([c for c in row if ord(c) > 0x2FFF], [])
 
     def test_colours_come_from_the_sixteen(self):
@@ -197,6 +213,11 @@ class ProgramTest(unittest.TestCase):
         code, out = self.run_bar("not json")
         self.assertEqual(code, 0)
         self.assertTrue(out.startswith("statusbar:"), out)
+
+    def test_demo_labels_flag(self):
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "statusbar.py"), "--demo", "--labels"], capture_output=True, text=True, encoding="utf-8")
+        self.assertIn("ctx", p.stdout)
+        self.assertEqual([c for c in p.stdout if ord(c) > 0x2FFF], [])
 
     def test_demo_flag(self):
         p = subprocess.run([sys.executable, os.path.join(ROOT, "statusbar.py"), "--demo"], capture_output=True, text=True, encoding="utf-8")

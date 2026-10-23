@@ -406,6 +406,13 @@ $current = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | Conve
 $current = Merge-ClaudeSettings $current $template $repo
 $current = Remove-RetiredHooks $current $retiredHooks
 foreach ($r in $retiredHooks) { Remove-Item (Join-Path $claudeDir "hooks\$r") -Force -ErrorAction SilentlyContinue }
+# The status bar draws Nerd Font icons; on a machine without a Nerd Font the installed command gets --labels
+# (short words instead of glyphs), so the bar reads in whatever font the terminal uses.
+$slProp = $current.PSObject.Properties['statusLine']
+if ($slProp -and $slProp.Value -and $slProp.Value.PSObject.Properties['command'] -and @(Get-NerdFontFiles).Count -eq 0) {
+  $cmd = [string]$slProp.Value.command
+  if ($cmd -notmatch '--labels') { $slProp.Value | Add-Member -NotePropertyName command -NotePropertyValue "$cmd --labels" -Force }
+}
 Write-Utf8NoBom $settingsPath (($current | ConvertTo-Json -Depth 20) + "`n")
 
 # 4. Plugins
