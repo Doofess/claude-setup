@@ -20,8 +20,12 @@ const span = (text: string, colour: string | null = null, bold = false) => ({ te
 
 // Nothing sits beneath the plugin: these hooks stand for the engine, the
 // session id and the one file the status bar wrote (null: there is none).
-const engine = (on: On, file: string | null | (() => string | null)) => {
-  mock.env(on, { HOME: 'C:/Users/me' })
+const engine = (
+  on: On,
+  file: string | null | (() => string | null),
+  env: Record<string, string> = { HOME: 'C:/Users/me' },
+) => {
+  mock.env(on, env)
   on('session.id', () => ({ value: 's1' }))
   on('fs.read', (_, e) => {
     const text = typeof file === 'function' ? file() : file
@@ -137,5 +141,16 @@ test('the file is read again when the minute ticks', async ($, on) => {
   file = JSON.stringify({ written_at: 2, columns: 160, pieces: [[span('$2.00')]] })
   await time.advance(60_000)
   expect(await line(ui)).toBe(`${HINT}  $2.00`)
+  await ui.unmount()
+})
+
+test('the folder is looked up under USERPROFILE before HOME', async ($, on) => {
+  engine(on, JSON.stringify({ written_at: 1, columns: 160, pieces: [[span('$1.23', 'green')]] }), {
+    HOME: 'C:/msys/home/me',
+    USERPROFILE: 'C:/Users/me',
+  })
+
+  const ui = await $.ui.mount(HINT_ROW(HINT, 160))
+  expect(await line(ui)).toBe(`${HINT}  $1.23`)
   await ui.unmount()
 })

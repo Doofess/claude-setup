@@ -58,7 +58,7 @@ const ROW = (toolUseId: string, props: object = {}, extra: object = {}) =>
 const TU = 'tu1'
 
 // Nothing sits beneath the plugin: these hooks stand for the engine.
-const engine = (on: On) => {
+const engine = (on: On, stepResult: { toolUses?: { name: string; input: unknown }[]; usage?: object } = {}) => {
   on('session.cwd', () => ({ value: 'C:/dev' }))
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
   on('turn.step', async function* () {
@@ -66,12 +66,18 @@ const engine = (on: On) => {
       turnId: 'u1',
       index: 0,
       answer: '',
-      toolUses: [],
+      toolUses: stepResult.toolUses ?? [],
       stopReason: 'end_turn',
-      usage: { input_tokens: 40_000, output_tokens: 32_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'claude-sonnet-5-5' },
-    } as const
+      usage: {
+        input_tokens: 40_000,
+        output_tokens: 32_000,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        model: 'claude-sonnet-5-5',
+        ...stepResult.usage,
+      },
+    } as never
   })
-  on('tool.call', () => ({ result: 'ok', text: 'ok' }) as never)
   on('turn.complete', () => ({ text: '' }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -83,17 +89,20 @@ const engine = (on: On) => {
 
 type Raise = Parameters<Parameters<typeof test>[1]>[0]
 
-const spawn = ($: Raise) =>
-  $.agent.spawn({ prompt: 'Do Task 1', description: 'Implement Task 1', subagentType: 'worker', tool_use_id: TU } as never)
+const spawn = ($: Raise, background = false) =>
+  $.agent.spawn({
+    prompt: 'Do Task 1',
+    description: 'Implement Task 1',
+    subagentType: 'worker',
+    tool_use_id: TU,
+    background,
+  } as never)
 
 const step = async ($: Raise, agentId: string) => {
   for await (const _ of $.turn.step({ turnId: 'u1', index: 0, model: 'claude-sonnet-5-5', effort: 'high', messageCount: 1, agentId })) {
     // the chunks are the engine's; the hook reads the result
   }
 }
-
-const call = ($: Raise, agentId: string) =>
-  $.tool.call({ tool: 'Grep', pattern: 'cwd', path: 'reference.md', agentId } as never)
 
 const finish = ($: Raise, agentId: string) =>
   $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 'u1', reason: 'answer', agentId })
@@ -103,13 +112,12 @@ const line = async (ui: { findAll: (q: { type: 'Text' }) => Promise<{ text: stri
 
 test('test_agent_row_shows_type_model_effort_and_action', async ($, on) => {
   const time = mock.clock(on)
-  engine(on)
+  engine(on, { toolUses: [{ name: 'Grep', input: { pattern: 'cwd', path: 'reference.md' } }] })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
   const { agentId } = await spawn($)
   await step($, agentId as string)
-  await call($, agentId as string)
   await time.advance(48_000)
 
   const ui = await $.ui.mount(ROW(TU))
@@ -153,7 +161,6 @@ test('test_finished_agent_row', async ($, on) => {
 
   const { agentId } = await spawn($)
   await step($, agentId as string)
-  await call($, agentId as string)
   await time.advance(48_000)
   await finish($, agentId as string)
   await time.advance(30_000)
@@ -180,7 +187,6 @@ test('events of an agent the mod never saw spawn change nothing', async ($, on) 
 
   await spawn($)
   await step($, 'unknown')
-  await call($, 'unknown')
   await finish($, 'unknown')
 
   const ui = await $.ui.mount(ROW(TU))
@@ -217,4 +223,68 @@ test('test_other_surfaces_and_expanded_rows_pass', async ($, on) => {
   expect(await same({ ...ROW('never-seen'), surface: 'desktop' })).toBe(true)
   expect(await same(ROW('never-seen', { tool: 'Task' }))).toBe(true)
   expect(await same(ROW('never-seen', { isExpanded: false }))).toBe(false)
+})
+
+test('the action comes from the last tool use of the step', async ($, on) => {
+  mock.clock(on)
+  engine(on, {
+    toolUses: [
+      { name: 'Read', input: { file_path: 'C:/dev/a.md' } },
+      { name: 'Grep', input: { pattern: 'cwd', path: 'reference.md' } },
+    ],
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  const { agentId } = await spawn($)
+  await step($, agentId as string)
+
+  const ui = await $.ui.mount(ROW(TU))
+  expect(await line(ui)).toMatch(/ {2}Searching cwd in reference\.md {3}/)
+  await ui.unmount()
+})
+
+test('the token figure counts cache reads and writes', async ($, on) => {
+  mock.clock(on)
+  engine(on, {
+    usage: { input_tokens: 1000, cache_read_input_tokens: 60_000, cache_creation_input_tokens: 5000, output_tokens: 6000 },
+  })
+
+  const { agentId } = await spawn($)
+  await step($, agentId as string)
+
+  const ui = await $.ui.mount(ROW(TU))
+  expect(await line(ui)).toMatch(/ · 72k$/)
+  await ui.unmount()
+})
+
+test('a background agent stays running while its row is not', async ($, on) => {
+  mock.clock(on)
+  engine(on)
+
+  await spawn($, true)
+
+  const ui = await $.ui.mount(ROW(TU, { isRunning: false }))
+  const text = await line(ui)
+  expect(text).toMatch(/^ Running worker/)
+  expect(text).not.toContain('done')
+  await ui.unmount()
+})
+
+test('a foreground agent whose row stopped running is finished, and its time stays fixed', async ($, on) => {
+  const time = mock.clock(on)
+  engine(on)
+
+  await spawn($)
+  await time.advance(5000)
+
+  const first = await $.ui.mount(ROW(TU, { isRunning: false }))
+  expect(await line(first)).toMatch(/^ Ran worker .* done {3}5s · /)
+  await first.unmount()
+
+  await time.advance(10_000)
+
+  const second = await $.ui.mount(ROW(TU, { isRunning: false }))
+  expect(await line(second)).toMatch(/ done {3}5s · /)
+  await second.unmount()
 })

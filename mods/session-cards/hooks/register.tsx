@@ -181,6 +181,7 @@ export type AgentRecord = {
   description: string
   model?: string
   effort?: string
+  background: boolean
   startedAt: number
   finishedAt?: number
   tokens: number
@@ -201,9 +202,6 @@ export function agentRow(a: AgentRecord, now: number) {
     tokens: fmtTokens(a.tokens),
   }
 }
-
-/** Keys a tool.call carries beside the tool's own arguments. */
-const RESERVED = new Set(['tool', 'tool_use_id', 'agentId', 'consent', 'requestMeta'])
 
 /** Bumped on every change to an agent record and once a second while one runs. */
 const agentTick = atom({ plugin: 'session-cards', key: 'agentTick' } as const, 0)
@@ -296,6 +294,7 @@ export const register: Register = on => {
       type: e.subagentType,
       description: e.description,
       model: result.model,
+      background: e.background,
       startedAt: now,
       tokens: 0,
     })
@@ -320,24 +319,22 @@ export const register: Register = on => {
     const result = yield* next(e)
 
     if (record !== undefined && result.usage !== null) {
-      record.tokens += result.usage.input_tokens + result.usage.output_tokens
+      const u = result.usage
+      record.tokens += u.input_tokens + u.output_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
       await update($, agentTick, n => n + 1)
     }
 
-    return result
-  })
+    // A subagent runs nested inside this mod's own tool.call frame for the Agent
+    // call, so its tool.call never reaches a hook: the step's tool uses say what it does.
+    const last = record === undefined ? undefined : result.toolUses.at(-1)
 
-  on('tool.call', async ($, e, next) => {
-    const record = known(e.agentId)
-
-    if (record !== undefined) {
-      const args = Object.fromEntries(Object.entries(e).filter(([key]) => !RESERVED.has(key)))
-      const d = describeTool(e.tool, args, await $.session.cwd())
+    if (record !== undefined && last !== undefined) {
+      const d = describeTool(last.name, last.input as Record<string, unknown>, await $.session.cwd())
       record.action = `${d.verb[0]} ${d.detail}`
       await update($, agentTick, n => n + 1)
     }
 
-    return next(e)
+    return result
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -461,8 +458,14 @@ export const register: Register = on => {
       }
 
       const now = await $.clock.now()
-      // Ended without the mod hearing the subagent's last turn complete: it is over all the same.
-      const row = agentRow(running || record.finishedAt !== undefined ? record : { ...record, finishedAt: now }, now)
+      // A foreground call whose row stopped running ended without the mod hearing
+      // the subagent's last turn complete: it is over all the same, and the time is kept.
+      // A background call's row stops running at launch; its turn.complete ends it.
+      if (!running && !record.background && record.finishedAt === undefined) {
+        record.finishedAt = now
+      }
+
+      const row = agentRow(record, now)
       const mark = isInterrupted ? ' (stopped)' : isErrored ? ' ✗' : ''
       const tail = `   ${row.elapsed} · ${row.tokens}`
       const fixed =
@@ -518,7 +521,8 @@ export const register: Register = on => {
 
     await read($, overflowTick)
 
-    const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE'))
+    // statusbar.py writes under Python's expanduser("~"), which on Windows is USERPROFILE.
+    const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
 
     if (!home) {
       return next(e)
