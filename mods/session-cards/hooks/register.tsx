@@ -197,7 +197,7 @@ export function agentRow(a: AgentRecord, now: number) {
     type: a.type,
     model: a.model === undefined ? undefined : modelName(a.model),
     effort: a.effort,
-    action: finished ? 'done' : a.action ?? a.description,
+    action: finished ? (a.action === 'remote' ? 'remote' : 'done') : a.action ?? a.description,
     elapsed: fmtElapsed((a.finishedAt ?? now) - a.startedAt),
     tokens: fmtTokens(a.tokens),
   }
@@ -286,6 +286,36 @@ export const register: Register = on => {
     return toolUseId === undefined ? undefined : agents.get(toolUseId)
   }
 
+  // The Agent call wraps the agent's whole run: it returns at completion, or at
+  // once when the agent was backgrounded (from the start or by ctrl+b mid-run).
+  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
+    const answer = await next(e)
+    const record = agents.get(e.tool_use_id)
+    const status = answer.result === undefined ? undefined : (answer.result as { status?: string }).status
+
+    if (record !== undefined && status !== undefined) {
+      const now = await $.clock.now()
+
+      if (status === 'async_launched' || status === 'remote_launched') {
+        record.background = true
+      }
+
+      // A remote agent has no local loop: no event will ever end its row.
+      if (status === 'remote_launched') {
+        record.action = 'remote'
+        record.finishedAt ??= now
+      }
+
+      if (status === 'completed') {
+        record.finishedAt ??= now
+      }
+
+      await update($, agentTick, n => n + 1)
+    }
+
+    return answer
+  })
+
   on('agent.spawn', async ($, e, next) => {
     const result = await next(e)
     const now = await $.clock.now()
@@ -320,7 +350,8 @@ export const register: Register = on => {
 
     if (record !== undefined && result.usage !== null) {
       const u = result.usage
-      record.tokens += u.input_tokens + u.output_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
+      // The latest step's counts: each call reads the whole context again, so a sum would count it once per step.
+      record.tokens = u.input_tokens + u.output_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
       await update($, agentTick, n => n + 1)
     }
 
@@ -458,8 +489,8 @@ export const register: Register = on => {
       }
 
       const now = await $.clock.now()
-      // A foreground call whose row stopped running ended without the mod hearing
-      // the subagent's last turn complete: it is over all the same, and the time is kept.
+      // Last resort: a foreground call whose row stopped running without the Agent
+      // call's result reaching the mod is over all the same, and the time is kept.
       // A background call's row stops running at launch; its turn.complete ends it.
       if (!running && !record.background && record.finishedAt === undefined) {
         record.finishedAt = now

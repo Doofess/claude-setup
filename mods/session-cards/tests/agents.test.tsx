@@ -58,8 +58,13 @@ const ROW = (toolUseId: string, props: object = {}, extra: object = {}) =>
 const TU = 'tu1'
 
 // Nothing sits beneath the plugin: these hooks stand for the engine.
-const engine = (on: On, stepResult: { toolUses?: { name: string; input: unknown }[]; usage?: object } = {}) => {
+const engine = (
+  on: On,
+  stepResult: { toolUses?: { name: string; input: unknown }[]; usage?: object | null } = {},
+  agentResult: object = { status: 'completed' },
+) => {
   on('session.cwd', () => ({ value: 'C:/dev' }))
+  on('tool.call', { tool: 'Agent' }, () => ({ ref: 'r', text: '', result: agentResult }) as never)
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
   on('turn.step', async function* () {
     return {
@@ -68,14 +73,17 @@ const engine = (on: On, stepResult: { toolUses?: { name: string; input: unknown 
       answer: '',
       toolUses: stepResult.toolUses ?? [],
       stopReason: 'end_turn',
-      usage: {
-        input_tokens: 40_000,
-        output_tokens: 32_000,
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-        model: 'claude-sonnet-5-5',
-        ...stepResult.usage,
-      },
+      usage:
+        stepResult.usage === null
+          ? null
+          : {
+              input_tokens: 40_000,
+              output_tokens: 32_000,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+              model: 'claude-sonnet-5-5',
+              ...stepResult.usage,
+            },
     } as never
   })
   on('turn.complete', () => ({ text: '' }))
@@ -97,6 +105,9 @@ const spawn = ($: Raise, background = false) =>
     tool_use_id: TU,
     background,
   } as never)
+
+const call = ($: Raise) =>
+  $.tool.call({ tool: 'Agent', tool_use_id: TU, description: 'Implement Task 1', prompt: 'Do Task 1' } as never)
 
 const step = async ($: Raise, agentId: string) => {
   for await (const _ of $.turn.step({ turnId: 'u1', index: 0, model: 'claude-sonnet-5-5', effort: 'high', messageCount: 1, agentId })) {
@@ -287,4 +298,98 @@ test('a foreground agent whose row stopped running is finished, and its time sta
   const second = await $.ui.mount(ROW(TU, { isRunning: false }))
   expect(await line(second)).toMatch(/ done {3}5s · /)
   await second.unmount()
+})
+
+test('a foreground agent sent to the background keeps running', async ($, on) => {
+  mock.clock(on)
+  const res = { usage: {} as object }
+  engine(on, res, { status: 'async_launched', agentId: 'a1', description: 'd', prompt: 'p', outputFile: 'o' })
+
+  const { agentId } = await spawn($)
+  await call($)
+  await step($, agentId as string)
+
+  const ui = await $.ui.mount(ROW(TU, { isRunning: false }))
+  const text = await line(ui)
+  expect(text).toMatch(/^ Running worker/)
+  expect(text).toMatch(/ · 72k$/)
+  expect(text).not.toContain('done')
+  await ui.unmount()
+
+  res.usage = { input_tokens: 100_000 }
+
+  await step($, agentId as string)
+
+  const again = await $.ui.mount(ROW(TU, { isRunning: false }))
+  expect(await line(again)).toMatch(/ · 132k$/)
+  await again.unmount()
+})
+
+test('a background agent is done when its turn completes', async ($, on) => {
+  const time = mock.clock(on)
+  engine(on)
+
+  const { agentId } = await spawn($, true)
+  await time.advance(5000)
+  await finish($, agentId as string)
+  await time.advance(10_000)
+
+  const ui = await $.ui.mount(ROW(TU, { isRunning: false }))
+  expect(await line(ui)).toMatch(/^ Ran worker .* done {3}5s · /)
+  await ui.unmount()
+})
+
+test('a remote agent is done at launch, with nothing more to hear', async ($, on) => {
+  const time = mock.clock(on)
+  engine(on, {}, { status: 'remote_launched', taskId: 't', sessionUrl: 'u', description: 'd', prompt: 'p', outputFile: 'o' })
+
+  await spawn($)
+  await time.advance(3000)
+  await call($)
+  await time.advance(10_000)
+
+  const ui = await $.ui.mount(ROW(TU, { isRunning: false }))
+  expect(await line(ui)).toMatch(/^ Ran worker .* remote {3}3s · /)
+  await ui.unmount()
+})
+
+test('a completed Agent call finishes the row and fixes its time', async ($, on) => {
+  const time = mock.clock(on)
+  engine(on)
+
+  await spawn($)
+  await time.advance(4000)
+  await call($)
+  await time.advance(10_000)
+
+  const ui = await $.ui.mount(ROW(TU))
+  expect(await line(ui)).toMatch(/^ Ran worker .* done {3}4s · /)
+  await ui.unmount()
+})
+
+test('the token figure is the latest step, not a sum of the cached context', async ($, on) => {
+  mock.clock(on)
+  engine(on, {
+    usage: { input_tokens: 1000, cache_read_input_tokens: 60_000, cache_creation_input_tokens: 5000, output_tokens: 6000 },
+  })
+
+  const { agentId } = await spawn($)
+  await step($, agentId as string)
+  await step($, agentId as string)
+
+  const ui = await $.ui.mount(ROW(TU))
+  expect(await line(ui)).toMatch(/ · 72k$/)
+  await ui.unmount()
+})
+
+test('a step without usage or tool uses leaves the row as it was', async ($, on) => {
+  mock.clock(on)
+  engine(on, { usage: null })
+
+  const { agentId } = await spawn($)
+  await step($, agentId as string)
+
+  const ui = await $.ui.mount(ROW(TU))
+  expect(await line(ui)).toBe(' Running worker · Sonnet · high  Implement Task 1   0s · 0')
+  await ui.unmount()
 })

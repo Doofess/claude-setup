@@ -2,3 +2,4 @@ backups/
 .superpowers/
 __pycache__/
 .claude/worktrees/
+mods/session-cards/tsconfig.json

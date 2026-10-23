@@ -272,7 +272,7 @@ function Get-JsoncObjects([string]$t, [int]$arrOpen) {   # the start index of ea
 }
 function Add-JsoncRaw([string]$t, [int]$obj, [string]$key, [string]$raw) {   # new first key of the object at $obj
   $end = Get-JsoncEnd $t $obj
-  $empty = $t.Substring($obj + 1, $end - $obj - 1).Trim() -eq ''
+  $empty = Test-JsoncEmpty $t $obj   # comments aside, so a comment-only object takes no comma
   return $t.Insert($obj + 1, ' "' + $key + '": ' + $raw + $(if ($empty) { ' ' } else { ',' }))
 }
 function Set-JsoncString([string]$t, [int]$obj, [string]$key, [string]$value) {
@@ -302,9 +302,18 @@ function Remove-JsoncKey([string]$t, [int]$obj, [string]$key) {
     while ($j -lt $t.Length -and [char]::IsWhiteSpace($t[$j])) { $j++ }
     return $t.Substring(0, $a) + $t.Substring($j)
   }
-  $k = $a
-  while ($k -gt 0 -and [char]::IsWhiteSpace($t[$k - 1])) { $k-- }
-  if ($k -gt 0 -and $t[$k - 1] -eq ',') { $a = $k - 1 }   # last key: the comma before it goes with it
+  # Last key: the comma before it goes with it, however many comments sit between the two (the comments stay).
+  # Found by scanning forward, since a line comment cannot be told from the text before it by looking back.
+  $comma = -1; $i = $obj + 1
+  while ($i -lt $a) {
+    $c = $t[$i]
+    if ($c -eq '"') { $i = Skip-JsoncString $t $i; $comma = -1; continue }
+    if ($c -eq '/') { $n = Skip-JsoncComment $t $i; if ($n -ne $i) { $i = $n; continue } }
+    if ($c -eq '{' -or $c -eq '[') { $i = (Get-JsoncEnd $t $i) + 1; $comma = -1; continue }
+    if ($c -eq ',') { $comma = $i } elseif (-not [char]::IsWhiteSpace($c)) { $comma = -1 }
+    $i++
+  }
+  if ($comma -ge 0) { return $t.Substring(0, $comma) + $t.Substring($comma + 1, $a - $comma - 1) + $t.Substring($b) }
   return $t.Substring(0, $a) + $t.Substring($b)
 }
 
