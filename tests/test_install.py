@@ -115,7 +115,9 @@ def installer_helpers():
     block = "\n".join(lines[start:end])
     for name in ("Find-JsoncKey", "Set-TerminalFont", "Set-TerminalScheme", "Read-TerminalLook"):
         assert "function %s" % name in block, name
-    writer = re.search(r"^function Write-Utf8NoBom.*?^}", source, re.S | re.M).group(0)
+    m = re.search(r"^function Write-Utf8NoBom.*?^}", source, re.S | re.M)
+    assert m is not None, "Write-Utf8NoBom"
+    writer = m.group(0)
     return writer + "\n" + block
 
 
@@ -153,7 +155,7 @@ class TerminalHelpersTest(unittest.TestCase):
         return dest
 
     def run_driver(self, mode, path):
-        r = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", self.script, mode, path, FACE, HEIGHT, SCHEME],
+        r = subprocess.run([str(PWSH), "-NoProfile", "-NonInteractive", "-File", self.script, mode, path, FACE, HEIGHT, SCHEME],
                            capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return json.loads(r.stdout)
