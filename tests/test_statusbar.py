@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -68,6 +69,7 @@ class CompactWindowTest(unittest.TestCase):
 class BranchTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
     def write(self, rel, text):
         p = os.path.join(self.tmp, rel)
@@ -90,7 +92,13 @@ class BranchTest(unittest.TestCase):
         self.assertEqual(statusbar.branch(os.path.join(self.tmp, "repo")), "0123456")
 
     def test_no_repo(self):
-        self.assertIsNone(statusbar.branch(self.tmp))
+        # The walk stops at the temp dir, so a .git above it (a dotfiles repo in the home folder) cannot leak in.
+        self.assertIsNone(statusbar.branch(self.tmp, stop_dir=self.tmp))
+
+    def test_walk_stops_at_stop_dir(self):
+        self.write("repo/.git/HEAD", "ref: refs/heads/main\n")
+        os.makedirs(os.path.join(self.tmp, "repo/src"))
+        self.assertIsNone(statusbar.branch(os.path.join(self.tmp, "repo/src"), stop_dir=os.path.join(self.tmp, "repo/src")))
 
 
 class RowsTest(unittest.TestCase):
@@ -132,7 +140,8 @@ class RowsTest(unittest.TestCase):
 
 class ProgramTest(unittest.TestCase):
     def run_bar(self, stdin, columns="120"):
-        env = dict(os.environ, COLUMNS=columns)
+        # The window is pinned so the rows read the same whatever this machine's settings say.
+        env = dict(os.environ, COLUMNS=columns, CLAUDE_CODE_AUTO_COMPACT_WINDOW="300000")
         p = subprocess.run([sys.executable, "-I", "-S", os.path.join(ROOT, "statusbar.py")], input=stdin, capture_output=True, text=True, encoding="utf-8", env=env)
         return p.returncode, p.stdout
 
@@ -141,6 +150,18 @@ class ProgramTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(len(out.rstrip("\n").split("\n")), 2)
         self.assertIn("42%", out)
+        self.assertIn("267k", out)
+
+    def test_columns_60_keeps_context_and_model(self):
+        # Review Focus 3: the real program, COLUMNS parsing and MARGIN included, at a 60-column terminal.
+        code, out = self.run_bar(json.dumps(statusbar.DEMO), columns="60")
+        self.assertEqual(code, 0)
+        r1, r2 = (statusbar.plain(r) for r in out.rstrip("\n").split("\n"))
+        self.assertLessEqual(len(r1), 56)
+        self.assertLessEqual(len(r2), 56)
+        self.assertIn("Opus", r1)
+        self.assertIn("main", r1)
+        self.assertIn("42%", r2)
 
     def test_bad_stdin_prints_an_error_row(self):
         code, out = self.run_bar("not json")

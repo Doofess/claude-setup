@@ -160,12 +160,15 @@ def _read_small(path: str) -> str | None:
         return None
 
 
-def branch(start_dir: str) -> str | None:
-    """Current branch (or the first 7 characters of a detached sha), read from .git/HEAD without git."""
+def branch(start_dir: str, stop_dir: str | None = None) -> str | None:
+    """Current branch (or the first 7 characters of a detached sha), read from .git/HEAD without git.
+
+    The walk up from start_dir ends at the drive root, or at stop_dir after looking there (tests use it)."""
     here = os.path.abspath(start_dir)
+    stop = os.path.abspath(stop_dir) if stop_dir else None
     while not os.path.exists(os.path.join(here, ".git")):
         parent = os.path.dirname(here)
-        if parent == here:
+        if parent == here or here == stop:
             return None
         here = parent
     git = os.path.join(here, ".git")

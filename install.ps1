@@ -347,8 +347,9 @@ function Get-GitBash {
   return 'bash'
 }
 
-# Runs $command (statusLine.command from the installed settings) exactly as Claude Code does on Windows with Git
-# Bash: `bash -lc`, the session JSON on stdin, COLUMNS=120. CLAUDE_CODE_AUTO_COMPACT_WINDOW is pinned to 300000
+# Runs $command (statusLine.command from the installed settings) the way Claude Code does on Windows: Git Bash
+# `-c` (a non-login shell: Claude Code spawns hooks with execa's shell option, which never reads the bash profile,
+# so python must be on the Windows PATH itself), the session JSON on stdin, COLUMNS=120. CLAUDE_CODE_AUTO_COMPACT_WINDOW is pinned to 300000
 # (the environment outranks every settings file) so the context meter reads the same on every machine. The
 # environment and the console encoding (the bar prints UTF-8) are put back afterwards.
 function Test-StatusBar([string]$command, [string]$sample) {
@@ -359,7 +360,7 @@ function Test-StatusBar([string]$command, [string]$sample) {
     $env:COLUMNS = '120'
     $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '300000'
     [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-    $out = $sample | & (Get-GitBash) -lc $command 2>&1
+    $out = $sample | & (Get-GitBash) -c $command 2>&1
     $ok = ($LASTEXITCODE -eq 0)
   } finally {
     foreach ($n in $savedEnv.Keys) { [Environment]::SetEnvironmentVariable($n, $savedEnv[$n]) }
@@ -541,8 +542,13 @@ Write-Host "    PowerShell 7 profile: $ps7Profile"
 $ErrorActionPreference = 'Continue'
 # The status bar fails silently inside Claude Code (an empty bar), so prove it here: take the command from the
 # installed settings.json (what this machine will run), feed it the sample from statusbar.py --demo-json, and
-# require two rows with the sample's model, branch, context percentage and cost.
+# require two rows with the sample's model, branch, context percentage and cost, plus the meter glyph (so the
+# UTF-8 round trip through Git Bash is proven, not assumed) and a Nerd Font on the machine (without one the
+# icons draw as empty boxes while every text check still passes).
 Write-Step 'Status bar check'
+if (@(Get-NerdFontFiles).Count -eq 0) {
+  $failures += 'status bar: no Nerd Font is installed, so the icons would draw as empty boxes (https://www.nerdfonts.com)'
+}
 $py = & python -c "import sys;print(sys.version_info[:2]>=(3,10))" 2>&1
 if (("$py").Trim() -ne 'True') {
   $failures += "status bar: python is not Python 3.10+ (the Windows Store alias?): $py"
@@ -556,7 +562,7 @@ if (("$py").Trim() -ne 'True') {
     $sample = (& python -I -S (Join-Path $repo 'statusbar.py') --demo-json) -join "`n"
     $bar = Test-StatusBar $barCommand $sample
     $rows = @($bar.Output -split "\r?\n" | Where-Object { $_ -ne '' })
-    $missing = @('Opus', 'main', '42%', '$1.23' | Where-Object { -not $bar.Output.Contains($_) })
+    $missing = @('Opus', 'main', '42%', '$1.23', [string][char]0x2588 | Where-Object { -not $bar.Output.Contains($_) })
     if ($bar.Ok -and $rows.Count -eq 2 -and $missing.Count -eq 0) {
       foreach ($row in $rows) { Write-Host "    $row" }
     } else {
