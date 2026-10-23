@@ -8,10 +8,11 @@ meter with tokens used out of the auto-compact point │ the 5-hour and 7-day pl
 time until each resets │ cost. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
 short words (ctx, 5h, 7d) so the bar also reads in a font without the glyphs (the installer adds the flag
 on a machine with no Nerd Font). Colours are the terminal's own 16-colour palette, so the bar follows the
-terminal's scheme: the filled part of each 8-cell meter green/yellow/red by use (the unfilled part in the
-default foreground), cost green, each model and each effort level its own colour. Icons, separators and
-labels stay in the default foreground: nothing is grey. The one exception to the 16 is the repo name, drawn
-in the exact violet Claude Code highlights with (its dark theme's `permission` colour, rgb 177,185,249).
+terminal's scheme: cost green, each model and each effort level its own colour. Separators and the place
+and model icons stay in the default foreground: nothing is grey. Two things use exact 24-bit colours instead:
+the repo name, in the violet Claude Code highlights with (its dark theme's `permission` colour, rgb
+177,185,249), and the three 8-cell meters, whose icon, figures, filled blocks and (darker) unfilled blocks
+all take the meter's level: green below 50%, yellow from 50, orange from 70, red from 90.
 
 Width fitting: the line may use COLUMNS minus a small margin that Claude Code keeps for itself. Each
 piece (a segment) has a priority. While the line is too wide, the piece with the highest priority
@@ -42,8 +43,16 @@ VIOLET = "38;2;177;185;249"
 # One colour per model family and per effort level, from the terminal's 16.
 MODEL_COLOURS = {"opus": 35, "sonnet": 34, "haiku": 36, "fable": 95, "mythos": 95}
 EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": RED, "xhigh": 91, "max": 91}
-FILLED = "█"
-EMPTY = "░"
+BLOCK = "█"
+# Meter levels: (filled colour, unfilled colour) as 24-bit SGR parameters. The unfilled part is the same hue at
+# a third of the brightness, drawn with the same solid block, so the bar reads as one coloured bar with a dark
+# track rather than a dotted texture. The level also colours the meter's icon and figures.
+LEVELS = {
+    "green": ("38;2;76;200;110", "38;2;25;67;37"),
+    "yellow": ("38;2;235;200;60", "38;2;78;67;20"),
+    "orange": ("38;2;255;140;40", "38;2;85;47;13"),
+    "red": ("38;2;240;80;80", "38;2;80;27;27"),
+}
 
 SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -84,11 +93,16 @@ def fmt_reset(resets_at: float, now: float) -> str:
 
 
 def meter(pct: float, cells: int) -> str:
-    """A bar of `cells` cells filled to pct. The filled part is coloured by how full the bar is; the unfilled
-    part stays in the default foreground, so the two read apart even at 2%."""
+    """A bar of `cells` solid blocks filled to pct: the filled part in the level colour, the rest in its dark shade."""
     filled = max(0, min(cells, _round_half_up(pct / 100 * cells)))
-    colour = RED if pct >= 90 else YELLOW if pct >= 70 else GREEN
-    return (sgr(colour, FILLED * filled) if filled else "") + EMPTY * (cells - filled)
+    fill, track = level_colours(pct)
+    return (sgr(fill, BLOCK * filled) if filled else "") + (sgr(track, BLOCK * (cells - filled)) if cells > filled else "")
+
+
+def level_colours(pct: float) -> tuple[str, str]:
+    """(filled, unfilled) colours for a meter at pct: green below 50, yellow from 50, orange from 70, red from 90."""
+    name = "red" if pct >= 90 else "orange" if pct >= 70 else "yellow" if pct >= 50 else "green"
+    return LEVELS[name]
 
 
 # Claude Code compacts at (auto-compact window - 13,000), measured against the context plus the 20,000
@@ -223,10 +237,14 @@ def _num(value, default: float = 0) -> float:
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else default
 
 
-def _mark(markers: dict, key: str, text: str) -> str:
-    """text with its marker (icon or label) in front, or bare when this marker set has none for key."""
+def _mark(markers: dict, key: str, text: str, colour: str | None = None) -> str:
+    """text with its marker (icon or label) in front, or bare when this marker set has none for key.
+    With colour, the marker (and its space) is drawn in it."""
     marker = markers.get(key)
-    return marker + " " + text if marker else text
+    if not marker:
+        return text
+    marker += " "
+    return (sgr(colour, marker) if colour else marker) + text
 
 
 def model_colour(name: str) -> int | None:
@@ -247,6 +265,13 @@ def _repo_name(repo) -> str | None:
     if isinstance(repo, dict):
         repo = f"{repo.get('owner')}/{repo.get('name')}" if repo.get("owner") and repo.get("name") else None
     return repo if isinstance(repo, str) and repo else None
+
+
+def _meter_piece(marks: dict, key: str, pct: float, cells: int, detail: str = "") -> str:
+    """icon, bar and figures of one meter, the icon and figures in the bar's level colour."""
+    fill = level_colours(pct)[0]
+    figures = f" {_round_half_up(pct)}%" + (f"  {detail}" if detail else "")
+    return _mark(marks, key, meter(pct, cells), fill) + sgr(fill, figures)
 
 
 def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: str | None, icons: bool = True) -> list[Segment]:
@@ -274,7 +299,7 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     size = int(_num(window.get("context_window_size"))) or 200_000
     limit = ceiling(compact_window(str(model.get("id") or ""), size, env, files))
     pct = used / limit * 100 if used > 0 and limit > 0 else 0
-    out.append((_mark(marks, "ctx", f"{meter(pct, 8)} {_round_half_up(pct)}%  {fmt_tokens(used)}/{fmt_tokens(max(limit, 0))}"), 0, G_CONTEXT))
+    out.append((_meter_piece(marks, "ctx", pct, 8, f"{fmt_tokens(used)}/{fmt_tokens(max(limit, 0))}"), 0, G_CONTEXT))
 
     for key, mark, group, meter_priority, reset_priority in (
         ("five_hour", "5h", G_5H, P_5H, P_5H_RESET),
@@ -284,7 +309,7 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
         if not isinstance(usage.get("used_percentage"), (int, float)):
             continue  # no such window for this plan: leave the segment out
         used_pct = usage["used_percentage"]
-        out.append((_mark(marks, mark, f"{meter(used_pct, 8)} {_round_half_up(used_pct)}%"), meter_priority, group))
+        out.append((_meter_piece(marks, mark, used_pct, 8), meter_priority, group))
         if isinstance(usage.get("resets_at"), (int, float)):
             out.append((fmt_reset(usage["resets_at"], now), reset_priority, group))
 

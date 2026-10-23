@@ -29,12 +29,20 @@ class FormatTest(unittest.TestCase):
         self.assertEqual(statusbar.fmt_reset(1_700_000_000 - 5, 1_700_000_000), "→now")
 
     def test_meter_fill_and_colour(self):
-        # Only the filled part is coloured; the unfilled part stays in the terminal's default foreground.
-        self.assertEqual(statusbar.meter(42, 8), "\x1b[32m███\x1b[0m░░░░░")
-        self.assertTrue(statusbar.meter(75, 5).startswith("\x1b[33m"))
-        self.assertTrue(statusbar.meter(90, 5).startswith("\x1b[31m"))
-        self.assertEqual(statusbar.meter(100, 5).count("█"), 5)
-        self.assertEqual(statusbar.meter(0, 5).count("░"), 5)
+        # Solid blocks throughout: the filled part in the level colour, the unfilled part in a darker shade of it.
+        fill, track = statusbar.level_colours(42)
+        self.assertEqual(statusbar.meter(42, 8), statusbar.sgr(fill, "███") + statusbar.sgr(track, "█████"))
+        for pct in (0, 42, 100):
+            self.assertEqual(statusbar.plain(statusbar.meter(pct, 5)), "█████")
+        self.assertEqual(statusbar.meter(0, 5), statusbar.sgr(statusbar.level_colours(0)[1], "█████"))
+
+    def test_four_levels(self):
+        # green below 50, yellow from 50, orange from 70, red from 90
+        self.assertEqual(statusbar.level_colours(49), statusbar.LEVELS["green"])
+        self.assertEqual(statusbar.level_colours(50), statusbar.LEVELS["yellow"])
+        self.assertEqual(statusbar.level_colours(70), statusbar.LEVELS["orange"])
+        self.assertEqual(statusbar.level_colours(90), statusbar.LEVELS["red"])
+        self.assertEqual(len({v for v in statusbar.LEVELS.values()}), 4)
 
     def test_cells_ignores_colour_codes(self):
         self.assertEqual(statusbar.cells(statusbar.sgr(statusbar.BOLD, "Fable") + " · high"), 12)
@@ -119,12 +127,12 @@ class RowTest(unittest.TestCase):
         row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
         # Each icon takes a cell and a space (plain() shows the icon as a space): the non-Mono Nerd Font
         # variants draw glyphs wider than one cell, and without the space they overlap the text.
-        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus · high │   ███░░░░░ 42%  112k/267k │   ██░░░░░░ 23%  →2h10m │   ███░░░░░ 41%  →3d4h │ $1.23")
+        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus · high │   ████████ 42%  112k/267k │   ████████ 23%  →2h10m │   ████████ 41%  →3d4h │ $1.23")
 
     def test_labels_instead_of_icons(self):
         # --labels: dim words for fonts without the Nerd Font glyphs; the rest of the line is the same.
         row = statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200))
-        self.assertEqual(row, "Doofess/claude-setup  main  #12 │ Opus · high │ ctx ███░░░░░ 42%  112k/267k │ 5h ██░░░░░░ 23%  →2h10m │ 7d ███░░░░░ 41%  →3d4h │ $1.23")
+        self.assertEqual(row, "Doofess/claude-setup  main  #12 │ Opus · high │ ctx ████████ 42%  112k/267k │ 5h ████████ 23%  →2h10m │ 7d ████████ 41%  →3d4h │ $1.23")
 
     def test_refills_leftover_space_with_smaller_pieces(self):
         # At 106 cells the repo (24 cells with its join) cannot fit, but the PR number and both reset times can,
@@ -158,13 +166,13 @@ class RowTest(unittest.TestCase):
 
     def test_absent_data(self):
         row = self.demo_row(rate_limits={}, pr=None, effort=None, cost=None, context_window={"total_input_tokens": 0, "context_window_size": 300_000})
-        self.assertEqual(statusbar.plain(statusbar.fit(row, 200)), "  Doofess/claude-setup    main │   Opus │   ░░░░░░░░ 0%  0/267k")
+        self.assertEqual(statusbar.plain(statusbar.fit(row, 200)), "  Doofess/claude-setup    main │   Opus │   ████████ 0%  0/267k")
 
     def test_cost_model_and_effort_are_coloured(self):
         raw = statusbar.fit(self.demo_row(), 200)
-        self.assertIn("[32m$1.23", raw)
-        self.assertIn("[35mOpus", raw)
-        self.assertIn("[31mhigh", raw)
+        self.assertIn("\x1b[32m$1.23", raw)
+        self.assertIn("\x1b[35mOpus", raw)
+        self.assertIn("\x1b[31mhigh", raw)
 
     def test_model_colours(self):
         for name, code in [("Opus", 35), ("claude-sonnet-5-5", 34), ("Haiku", 36), ("Fable 5.1", 95), ("Mythos", 95), ("Other", None)]:
@@ -179,16 +187,25 @@ class RowTest(unittest.TestCase):
         row = statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200))
         self.assertEqual([c for c in row if ord(c) > 0x2FFF], [])
 
+    def test_meter_icon_and_text_take_the_level_colour(self):
+        raw = statusbar.fit(self.demo_row(), 200)
+        fill = statusbar.level_colours(42)[0]
+        self.assertIn(statusbar.sgr(fill, statusbar.ICONS["ctx"] + " "), raw)
+        self.assertIn(statusbar.sgr(fill, " 42%  112k/267k"), raw)
+        raw = statusbar.fit(self.demo_row(icons=False), 200)
+        self.assertIn(statusbar.sgr(fill, "ctx "), raw)
+
     def test_repo_is_violet_and_nothing_is_grey(self):
         raw = statusbar.fit(self.demo_row(), 200)
-        self.assertIn(f"[{statusbar.VIOLET}mDoofess/claude-setup", raw)  # Claude Code's own highlight colour
-        self.assertNotIn("[90m", raw)  # icons, separators and labels are in the default (white) foreground
+        self.assertIn(f"\x1b[{statusbar.VIOLET}mDoofess/claude-setup", raw)  # Claude Code's own highlight colour
+        self.assertNotIn("\x1b[90m", raw)  # icons, separators and labels are in the default (white) foreground
 
-    def test_colours_come_from_the_sixteen(self):
-        # ... except the repo's violet, which is Claude Code's exact theme colour (24-bit).
-        text = statusbar.fit(self.demo_row(), 200).replace(f"[{statusbar.VIOLET}m", "")
-        allowed = {"0", "1"} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
-        self.assertEqual(set(re.findall(r"\[(\d+)m", text)) - allowed, set())
+    def test_colours_are_the_sixteen_or_the_named_ones(self):
+        # The terminal's 16, plus the repo's violet (Claude Code's exact theme colour) and the meter levels (24-bit).
+        text = statusbar.fit(self.demo_row(), 200)
+        allowed = {"0", "1", statusbar.VIOLET} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
+        allowed |= {code for pair in statusbar.LEVELS.values() for code in pair}
+        self.assertEqual(set(re.findall(r"\x1b\[([0-9;]+)m", text)) - allowed, set())
 
 
 class ProgramTest(unittest.TestCase):
