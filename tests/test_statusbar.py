@@ -202,6 +202,10 @@ class RowTest(unittest.TestCase):
         self.assertIn("\x1b[35mOpus", raw)
         self.assertIn("\x1b[31mhigh", raw)
 
+    def test_repo_icon_is_violet_like_the_repo(self):
+        raw = statusbar.fit(self.demo_row(), 200)
+        self.assertIn(statusbar.sgr(statusbar.VIOLET, statusbar.ICONS["repo"] + " "), raw)
+
     def test_model_icon_takes_the_model_colour(self):
         raw = statusbar.fit(self.demo_row(), 200)
         self.assertIn(statusbar.sgr(35, statusbar.ICONS["model"] + " "), raw)
