@@ -44,6 +44,8 @@ Round border and header in the theme's `claude` colour (Claude Code's own orange
 
 Paths: forward slashes, relative to `cwd` when under it, else as given.
 
+**Agent rows** (`ToolUse` rows whose tool is `Agent`, terminal surface; decided 2026-10-23 from a screenshot of the engine's row `> ( ) worker  Searching reference.md for cwd   1m 0s · ↓ 72.0k tokens`): one line in the same style as the tool rows, rebuilt by the mod because the engine hands a mod none of the live part. `<icon> <Verb> <type> · <Model> · <effort>  <action>   <elapsed> · <tokens>`: icon `` and the verb (`Running` → `Ran`, `✗` on error, `(stopped)` when interrupted) in `text` with the verb bold; the agent type (`worker`, `Explore`) in `text`; the model's short name in the model's colour and the effort level in its colour, the same colours as the status bar (`MODEL_COLOURS` and `EFFORT_COLOURS` in `statusbar.py`, as colour names: Opus `magenta`, Sonnet `blue`, Haiku `cyan`, Fable `yellowBright`, Mythos `greenBright`; low `green`, medium `yellow`, high `red`, xhigh `magentaBright`, max `whiteBright`); the action is the subagent's latest tool call in present tense as `describeTool` words it (`Searching reference.md for cwd` style), or the Agent call's `description` before its first call, or `done` once finished; elapsed `1m 0s` from the spawn to now (or to the finish); tokens the sum of the subagent's steps' input and output tokens as `72k`. The ` · <effort>` part is left out until a step has reported one, and the model part until the spawn resolved. The row redraws on every change and once a second while the agent runs.
+
 **Install:** `settings.json` `env.CLAUDE_CODE_PLUGIN_DIRS` is `<repo>/mods/session-cards`; the installer's existing `<repo>` expansion handles the path. The retired-setup step keeps removing only `readable-session` entries.
 
 ## Global Constraints
@@ -61,8 +63,10 @@ Paths: forward slashes, relative to `cwd` when under it, else as given.
 2. A prompt pasted with `<pasted_content>` wrappers: the card shows the text without the wrapper lines (Task 1 test `test_paste_wrapper_lines_are_hidden`).
 3. A tool call that fails: the row keeps its words and adds the mark, in `error`, instead of the engine's red block (Task 3 test `test_failed_call_adds_a_mark`).
 4. A Bash command of several lines with no description: the row shows the first line cut to the width, never a wrapped block (Task 3 test `test_long_command_is_cut_to_the_row`).
-5. The mod loads from a repo path with spaces or a different drive on the laptop: `install.ps1` must print the loaded folder from the installed settings and `claude plugin validate` must pass there (Task 5 step 4).
+5. The mod loads from a repo path with spaces or a different drive on the laptop: `install.ps1` must print the loaded folder from the installed settings and `claude plugin validate` must pass there (Task 6 step 7).
+8. A second PC after `git pull; .\install.ps1`: the same font, terminal colour scheme, Claude Code theme, status line, mod and tool versions, verified by the installer's `Same experience` step, not by eye (Task 6 steps 4 to 6).
 6. The overflow file is missing, half-written or from a wider terminal: the hint line stays the engine's own, never an error row or a wrapped line (Task 4 tests `test_no_overflow_file_passes_to_the_engine`, `test_overflow_is_cut_to_the_room`).
+7. An Agent row drawn before the mod saw its spawn (a resumed session, a hot reload mid-run): the row shows the call's description with no model, effort or figures, never a crash or an empty row (Task 5 test `test_unknown_agent_row_shows_the_description`).
 
 ---
 
@@ -211,7 +215,36 @@ The file changes once a minute (the status line refreshes every 60 s) and the hi
 
 - [ ] **Step 6: Commit** — `git commit -m "session-cards: draw the status bar's overflow on the hint line"`
 
-### Task 5: Install on every machine
+### Task 5: Agent rows with the subagent's model, effort and live activity
+
+**Files:**
+- Modify: `mods/session-cards/hooks/register.tsx` (the `ToolUse` hook stops passing `Agent` rows; `agent.spawn`, `turn.step`, `tool.call` and `turn.complete` hooks feed a module-level map; an `agentTick` atom redraws)
+- Modify: `mods/session-cards/types/index.d.ts` (`agentTick: number`)
+- Test: `mods/session-cards/tests/agents.test.tsx`
+
+**Interfaces:**
+- Consumes: `describeTool` and the row style from Task 3. From the types: `agent.spawn` input `{ tool_use_id, description, subagentType, model?, parentModel }` and result `{ model, agentId }` (hook: `const r = await next(e)`, then record); `turn.step` input with `agentId`, `model`, `effort?` and `usage` (input and output tokens); `tool.call` input with `agentId`, `tool`, `input`; `turn.complete` input with `agentId`. Grep `TurnStepInput`, `TurnUsage`, `AgentLoop`, `ToolCallInput` for the exact field names before writing the tests.
+- Produces: `export function modelColour(model: string): string | undefined` and `export function effortColour(level: string): string | undefined` (colour names as in the Spec); `export function agentRow(a: AgentRecord, now: number): { verb: string; type: string; model?: string; effort?: string; action: string; elapsed: string; tokens?: string }`; `export function fmtElapsed(ms: number): string` (`0s`, `48s`, `1m 0s`, `12m 5s`, `1h 2m`); `export function fmtTokens(n: number): string` (`950`, `72k`, `1.2M`, as the status bar does).
+
+- [ ] **Step 1: Write the failing tests** in `agents.test.tsx`:
+  - `modelColour` and `effortColour` return the Spec's names for `claude-opus-5-5`, `Sonnet`, `haiku`, `claude-fable-5-1`, `Mythos`, `other` (undefined) and for the five levels.
+  - `fmtElapsed` and `fmtTokens` for the values listed in Interfaces.
+  - `test_agent_row_shows_type_model_effort_and_action`: raise `agent.spawn` for a `worker` with description `Implement Task 1` (its `next` answering `{ model: 'claude-sonnet-5-5', agentId: 'a1' }`), a `turn.step` for `a1` with effort `high` and usage 40k in, 32k out, and a `tool.call` for `a1` of `Grep { pattern: 'cwd', path: 'reference.md' }`; mount the `Agent` `ToolUse` row with that `tool_use_id`, `isRunning: true` → the row's text reads ` Running worker · Sonnet · high  Searching cwd in reference.md   <elapsed> · 72k`, the `Sonnet` Text has `color: 'blue'`, the `high` Text `color: 'red'`, the verb bold, everything else `color: 'text'`.
+  - `test_finished_agent_row`: after `turn.complete` for `a1` and `isRunning: false` → `Ran worker · Sonnet · high  done   <elapsed> · 72k`; with `isErrored` → ` ✗` in `error`.
+  - `test_unknown_agent_row_shows_the_description`: a row whose `tool_use_id` the map does not know → `Running worker  <the call's description from e.props.input>` and nothing else.
+  - `test_other_surfaces_and_expanded_rows_pass`.
+
+- [ ] **Step 2: Run** `claude plugin test mods/session-cards` — Expected: the new tests fail (no exports, Agent rows still pass to the engine).
+
+- [ ] **Step 3: Implement.** Module map `agents: Map<toolUseId, AgentRecord>` plus `byAgentId: Map<agentId, toolUseId>`; `AgentRecord = { type, description, model?, effort?, startedAt, finishedAt?, tokens, action? }`. Each feeding hook updates the record, calls `update($, agentTick, n => n + 1)` and returns `next(e)` (for `agent.spawn`, the result of the `next` it awaited). A `$.clock.every(1000, …)` set in `session.start` ticks the atom only while some record has no `finishedAt`. The `ToolUse` hook, for `e.props.tool === 'Agent'` on the terminal with `isExpanded` not true, reads the atom and `$.clock.now()` and draws the row; Task 3's Agent/Task pass-through is removed for `Agent` (Task and other tools keep their Task 3 behaviour).
+
+- [ ] **Step 4: Run** `claude plugin test mods/session-cards` and `claude plugin validate mods/session-cards` — Expected: both pass, 19 earlier tests plus Task 4's still green.
+
+- [ ] **Step 5: README** — add the agent row to the `mods/session-cards` row.
+
+- [ ] **Step 6: Commit** — `git commit -m "session-cards: agent rows with the subagent's model, effort and live activity"`
+
+### Task 6: Install on every machine
 
 **Files:**
 - Modify: `settings.json` (`env.CLAUDE_CODE_PLUGIN_DIRS`: `<repo>/mods/session-cards`)
@@ -222,17 +255,28 @@ The file changes once a minute (the status line refreshes every 60 s) and the hi
 
 - [ ] **Step 2: install.ps1** — in `Merge-ClaudeSettings`, `CLAUDE_CODE_PLUGIN_DIRS` is unioned (`;`-separated, compared with forward slashes, case-insensitive, ours added once). New step: read `env.CLAUDE_CODE_PLUGIN_DIRS` from the installed `$settingsPath`; fail unless it contains `<repo>/mods/session-cards` (forward slashes); run `claude plugin validate <that folder>` and fail on a non-zero exit; print `<claude --version> loads <folder>`.
 
-- [ ] **Step 3: README** — table row for `mods/session-cards` (what the three hooks draw) and the merge rule for `CLAUDE_CODE_PLUGIN_DIRS`.
+- [ ] **Step 3: README** — table row for `mods/session-cards` (what the hooks draw; replace the row Task 4 wrote, which says the installer does not load the mod) and the merge rule for `CLAUDE_CODE_PLUGIN_DIRS`.
 
-- [ ] **Step 4: Run the installer**
+The same experience on another PC (asked 2026-10-23): everything that shapes what the person sees is either in this repo or verified by the installer, so `git pull; .\install.ps1` on the laptop gives the identical screen. What shapes it: the Nerd Font and its glyph widths; the Windows Terminal colour scheme (the bar's and the mod's colours are the terminal's own 16, so a different scheme is a different bar); Claude Code's theme; the status line command; the mod folder; the Claude Code, Python and Git Bash versions.
 
-Run: `pwsh -NoProfile -File C:\dev\claude-setup\install.ps1 -SkipPlugins 2>&1 | Select-String 'Session cards|DONE' -Context 0,1`
-Expected: `==> Session cards mod` then `2.1.308 (Claude Code) loads C:/dev/claude-setup/mods/session-cards`, then `DONE: all checks passed`.
+- [ ] **Step 4: Record this PC's terminal look** — measured 2026-10-23 from this PC's Windows Terminal `settings.json`: `profiles.defaults.font` is `{ "face": "JetBrainsMono Nerd Font", "cellHeight": "1.25" }`, no `colorScheme` is set anywhere (so every profile runs the built-in `Campbell` scheme), no custom `schemes`, and Claude Code's `theme` is unset (its default, `dark`). New file `terminal/profile.json`: `{ "font": { "face": "JetBrainsMono Nerd Font", "cellHeight": "1.25" }, "colorScheme": "Campbell" }`, with a `terminal/README.md` of three lines saying it is what `install.ps1` writes into `profiles.defaults` and why (the bar's and the mod's colours are the scheme's own 16).
 
-- [ ] **Step 5: Commit** — `git commit -m "session-cards: install and verify on every machine"`
+- [ ] **Step 5: install.ps1 applies it** — the `Nerd Font` step sets `profiles.defaults.font` to `terminal/profile.json`'s whenever it differs (face or cellHeight), instead of only when none is set; `-KeepFont` keeps the machine's own. A new `Terminal scheme` step sets `profiles.defaults.colorScheme` to `Campbell` whenever it differs or is unset, and removes a `colorScheme` set on the default profile itself so the default applies; `-KeepScheme` keeps the machine's own. Both print what they changed, or `already set`. `settings.json` in the repo pins `"theme": "dark"` so the merge carries it.
 
-### Task 6: Live check and PR
+- [ ] **Step 6: install.ps1 `Same experience` step** — after `Session cards mod`, before `MCP health`: a table of `name  expected  actual  ok|FAIL` for: Nerd Font file present; Windows Terminal `profiles.defaults.font` face and cellHeight; Windows Terminal `profiles.defaults.colorScheme` (`Campbell`) with none set on the default profile; Claude Code `theme` (`dark`) in the installed settings; `statusLine.command` (ends with `statusbar.py` or `statusbar.py --labels`); `CLAUDE_CODE_PLUGIN_DIRS` contains the mod folder; `claude --version` at least `2.1.308`; `python --version` at least 3.10; Git Bash found. Any FAIL fails the install with the row named. `-KeepFont` and `-KeepScheme` turn their rows into `kept` instead of FAIL.
 
-- [ ] **Step 1:** Restart Claude Code in `C:\dev\claude-setup`; type a prompt, run `/context`, let a Bash and an Edit run. Compare with the engine's rows: same column, same weight; the card time matches the clock. Narrow the terminal to about 100 columns: the cost and reset times leave the status line and appear, in colour, after the permissions text on the hint line; narrower still, they disappear from there too. Fix differences and add a test for each.
-- [ ] **Step 2:** `gh pr create` from branch `session-cards` with the attribution footer; merge; `git checkout main; git pull`.
+- [ ] **Step 7: Run the installer**
+
+Run: `pwsh -NoProfile -File C:\dev\claude-setup\install.ps1 -SkipPlugins 2>&1 | Select-String 'Session cards|Same experience|FAIL|DONE' -Context 0,10`
+Expected: `==> Session cards mod` then `2.1.308 (Claude Code) loads C:/dev/claude-setup/mods/session-cards`; `==> Same experience` with every row `ok`; `DONE: all checks passed`.
+
+- [ ] **Step 8: Tests** — `tests/test_install.py` (Python, no PowerShell needed): `terminal/profile.json` parses, its `font.face` ends with `Nerd Font`, its `font.cellHeight` is `"1.25"` and its `colorScheme` is `Campbell`; the repo `settings.json` has `"theme": "dark"` and `env.CLAUDE_CODE_PLUGIN_DIRS` ending in `mods/session-cards`; `install.ps1` mentions `Same experience`, `-KeepFont` and `-KeepScheme`. Run `python -m unittest discover -s tests` → all pass (the status bar's 59 included).
+
+- [ ] **Step 9: Commit** — `git commit -m "session-cards: install and verify the same experience on every machine"`
+
+### Task 7: Live check and PR
+
+- [ ] **Step 1:** Restart Claude Code in `C:\dev\claude-setup`; type a prompt, run `/context`, let a Bash and an Edit run, and dispatch one background `Explore` agent. Compare with the engine's rows: same column, same weight; the card time matches the clock. The agent row must show the model and effort in colour and the live action; if the engine's background-agent line (the one with `>` and the live figures) is not the `Agent` `ToolUse` row and stays the engine's, record that as a ruling and say so in the PR. Narrow the terminal to about 100 columns: the cost and reset times leave the status line and appear, in colour, after the permissions text on the hint line; narrower still, they disappear from there too. Fix differences and add a test for each.
+Also check live, from the review: a background `Explore` agent's row stays `Running` until it finishes (its ToolUse row is not running from the start); the row's action changes as the agent calls tools; save `mods/session-cards/hooks/register.tsx` mid-session (a whitespace edit) and confirm the hint line still refreshes and the elapsed time still ticks after the reload; whether the overflow line should keep the engine's own hint text (`bypass permissions on`, the pills) or replace it.
+- [ ] **Step 2:** `gh pr create` from branch `session-cards` with the attribution footer; merge; `git checkout main; git pull`; then `.\install.ps1 -SkipPlugins` from `C:\dev\claude-setup` BEFORE the worktree is removed, so the installed `CLAUDE_CODE_PLUGIN_DIRS` points at `C:/dev/claude-setup/mods/session-cards` and not at the worktree (the review's finding 6: otherwise the mod disappears from every session once the worktree goes).
 - [ ] **Step 3:** Laptop: `git pull; .\install.ps1`; the `Session cards mod` step must print the laptop's folder.

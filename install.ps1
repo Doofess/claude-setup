@@ -12,21 +12,33 @@
   5. Turns the claude.ai Adobe connector off in each known project once (see mcp_off.py; /mcp turns it back on)
   6. Removes the retired visual setup (custom theme, status line, readable-session mod, keybinding, Windows Terminal
      Readable scheme) from the machine
-  7. Installs a Nerd Font through winget when the machine has none, and sets it as the Windows Terminal default
-     font when no font is configured there (kept for a later visual rebuild)
-  8. Sets the Windows Terminal start folder, and adds a PowerShell 7 profile block that leaves System32 for C:\dev
-  9. Runs the status bar command from the installed settings.json on sample data and fails when its line is wrong
- 10. Lists MCP health
+  7. Installs a Nerd Font through winget when the machine has none, and sets terminal/profile.json's font (face and
+     cellHeight) as the Windows Terminal default font whenever it differs, and drops a font face or cellHeight set
+     on the default profile itself
+  8. Sets the Windows Terminal default colour scheme to terminal/profile.json's (Campbell) and drops a colorScheme
+     set on the default profile itself, so the default applies
+  9. Sets the Windows Terminal start folder, and adds a PowerShell 7 profile block that leaves System32 for C:\dev
+ 10. Runs the status bar command from the installed settings.json on sample data and fails when its line is wrong
+ 11. Checks the session-cards mod is in CLAUDE_CODE_PLUGIN_DIRS and passes `claude plugin validate`
+ 12. Prints the `Same experience` table (font, colour scheme, Claude Code theme, status line, mod folder, tool
+     versions) and fails when a row is FAIL
+ 13. Lists MCP health
 
 .PARAMETER SkipPlugins
   Skip the plugin install/update step (faster when only config changed).
 
 .PARAMETER SkipFont
-  Do not install a Nerd Font or touch the Windows Terminal font.
+  Do not install a Nerd Font or touch the Windows Terminal font (the font rows of the check read `kept`).
+
+.PARAMETER KeepFont
+  Keep the machine's own Windows Terminal font instead of terminal/profile.json's (its check rows read `kept`).
+
+.PARAMETER KeepScheme
+  Keep the machine's own Windows Terminal colour scheme instead of Campbell (its check row reads `kept`).
 
 #>
 [CmdletBinding()]
-param([switch]$SkipPlugins, [switch]$SkipFont)
+param([switch]$SkipPlugins, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme)
 
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
@@ -108,10 +120,29 @@ function Merge-HookEvents($existing, $incoming) {
   return $existing
 }
 
+# CLAUDE_CODE_PLUGIN_DIRS is ';'-separated. Entries compare ignoring slash style, trailing slash and case. The result is
+# the machine's other entries, then ours (once): an existing entry ending in /mods/session-cards (an older clone or
+# worktree path) is replaced by ours, every other entry stays.
+function Format-DirKey([string]$d) { ($d.Trim() -replace '\\', '/').TrimEnd('/').ToLowerInvariant() }
+function Merge-PluginDirs([string]$current, [string]$ours) {
+  $mine = @($ours.Split(';') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  $mineKeys = @($mine | ForEach-Object { Format-DirKey $_ })
+  $keep = @()
+  foreach ($d in $current.Split(';')) {
+    $d = $d.Trim()
+    if (-not $d) { continue }
+    $k = Format-DirKey $d
+    if ($k.EndsWith('/mods/session-cards') -or $mineKeys -contains $k) { continue }
+    $keep += $d
+  }
+  return (($keep + $mine) -join ';')
+}
+
 # Merges the repo's settings.json (template) into the machine's (current). Keys:
 #   enabledPlugins  per plugin (repo wins)          env          per variable (repo wins)
 #   permissions     arrays unioned, scalars repo     hooks        per event, per command (see Merge-HookEvents)
 #   everything else replaced wholesale by the repo's value
+# CLAUDE_CODE_PLUGIN_DIRS inside env is a union (see Merge-PluginDirs), so a machine's own mod folders survive.
 # "<repo>" in a template string value stands for this clone's path (forward slashes).
 function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
   $repoFwd = $repoDir -replace '\\', '/'
@@ -133,7 +164,10 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
         $current | Add-Member -NotePropertyName 'env' -NotePropertyValue $ours -Force
       } else {
         foreach ($v in $ours.PSObject.Properties) {
-          $existing.Value | Add-Member -NotePropertyName $v.Name -NotePropertyValue $v.Value -Force
+          $val = $v.Value
+          $cur = $existing.Value.PSObject.Properties[$v.Name]
+          if ($v.Name -eq 'CLAUDE_CODE_PLUGIN_DIRS' -and $cur) { $val = Merge-PluginDirs ([string]$cur.Value) ([string]$val) }
+          $existing.Value | Add-Member -NotePropertyName $v.Name -NotePropertyValue $val -Force
         }
       }
     } elseif ($prop.Name -eq 'permissions' -and $hasObj) {
@@ -151,24 +185,240 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
 
 # ---- Nerd Font (kept for a later visual rebuild) ----
 $nerdFontId = 'DEVCOM.JetBrainsMonoNerdFont'
-$nerdFontFace = 'JetBrainsMono Nerd Font'
+$terminalLook = Get-Content (Join-Path $repo 'terminal\profile.json') -Raw | ConvertFrom-Json   # this PC's measured look
+$nerdFontFace = $terminalLook.font.face
 function Get-NerdFontFiles {
   foreach ($d in "$env:LOCALAPPDATA\Microsoft\Windows\Fonts", "$env:WINDIR\Fonts") {
     Get-ChildItem $d -Filter '*Nerd*Font*' -ErrorAction SilentlyContinue
   }
 }
 
-# Windows Terminal settings.json is JSON with comments, so edit it as text. Insert a font face into profiles.defaults
-# only when the file names no font at all; an existing choice (even a non-Nerd one) is left for the user.
-# Returns 'set', 'kept' (a font is already configured) or 'none' (no settings file / no defaults block).
-function Set-TerminalFont([string]$path, [string]$face) {
-  $text = [IO.File]::ReadAllText($path)
-  if ($text -match '"font"\s*:' -or $text -match '"face"\s*:') { return 'kept' }
-  $m = [regex]::Match($text, '"defaults"\s*:\s*\{')
-  if (-not $m.Success) { return 'none' }
-  $edited = $text.Insert($m.Index + $m.Length, ' "font": { "face": "' + $face + '" },')
-  Write-Utf8NoBom $path $edited
-  return 'set'
+# ---- Windows Terminal settings.json ----
+# It is JSON with comments, so it is read and edited as text: these helpers scan past strings and comments, find a
+# key at the top level of an object, and replace, insert or remove just that key, so comments and layout survive.
+# Positions are indexes into the text; a key is { KeyStart; ValueStart; ValueEnd } (ValueEnd is exclusive).
+function Skip-JsoncComment([string]$t, [int]$i) {
+  if ($t[$i] -ne '/' -or $i + 1 -ge $t.Length) { return $i }
+  if ($t[$i + 1] -eq '/') { while ($i -lt $t.Length -and $t[$i] -ne "`n") { $i++ }; return $i }
+  if ($t[$i + 1] -eq '*') { $e = $t.IndexOf('*/', $i + 2); if ($e -lt 0) { return $t.Length }; return $e + 2 }
+  return $i
+}
+function Skip-JsoncString([string]$t, [int]$i) {   # $i is at the opening quote; returns the index after the closing one
+  $i++
+  while ($i -lt $t.Length -and $t[$i] -ne '"') { if ($t[$i] -eq '\') { $i++ }; $i++ }
+  return $i + 1
+}
+function Get-JsoncEnd([string]$t, [int]$open) {   # the bracket that closes the one at $open, or -1
+  $depth = 0; $i = $open
+  while ($i -lt $t.Length) {
+    $c = $t[$i]
+    if ($c -eq '"') { $i = Skip-JsoncString $t $i; continue }
+    if ($c -eq '/') { $n = Skip-JsoncComment $t $i; if ($n -ne $i) { $i = $n; continue } }
+    if ($c -eq '{' -or $c -eq '[') { $depth++ }
+    elseif ($c -eq '}' -or $c -eq ']') { $depth--; if ($depth -eq 0) { return $i } }
+    $i++
+  }
+  return -1
+}
+function Get-JsoncRoot([string]$t) {
+  $i = 0
+  while ($i -lt $t.Length) {
+    if ($t[$i] -eq '{') { return $i }
+    if ($t[$i] -eq '/') { $n = Skip-JsoncComment $t $i; if ($n -ne $i) { $i = $n; continue } }
+    $i++
+  }
+  return -1
+}
+function Find-JsoncKey([string]$t, [int]$open, [string]$key) {   # $key at the top level of the object at $open
+  $end = Get-JsoncEnd $t $open
+  $i = $open + 1
+  while ($i -lt $end) {
+    $c = $t[$i]
+    if ($c -eq '"') {
+      $s = $i
+      $i = Skip-JsoncString $t $i
+      $name = $t.Substring($s + 1, $i - $s - 2)
+      $j = $i
+      while ($j -lt $end -and [char]::IsWhiteSpace($t[$j])) { $j++ }
+      if ($j -lt $end -and $t[$j] -eq ':') {
+        $v = $j + 1
+        while ($v -lt $end -and [char]::IsWhiteSpace($t[$v])) { $v++ }
+        if ($name -eq $key) {
+          if ($t[$v] -eq '"') { $e = Skip-JsoncString $t $v }
+          elseif ($t[$v] -eq '{' -or $t[$v] -eq '[') { $e = (Get-JsoncEnd $t $v) + 1 }
+          else { $e = $v; while ($e -lt $end -and ',}]/'.IndexOf($t[$e]) -lt 0 -and -not [char]::IsWhiteSpace($t[$e])) { $e++ } }
+          return [pscustomobject]@{ KeyStart = $s; ValueStart = $v; ValueEnd = $e }
+        }
+        $i = $v
+      }
+      continue
+    }
+    if ($c -eq '/') { $n = Skip-JsoncComment $t $i; if ($n -ne $i) { $i = $n; continue } }
+    if ($c -eq '{' -or $c -eq '[') { $i = (Get-JsoncEnd $t $i) + 1; continue }
+    $i++
+  }
+  return $null
+}
+function Get-JsoncString([string]$t, $kv) { $t.Substring($kv.ValueStart, $kv.ValueEnd - $kv.ValueStart).Trim('"') }
+function Get-JsoncObjects([string]$t, [int]$arrOpen) {   # the start index of each object element of the array at $arrOpen
+  $end = Get-JsoncEnd $t $arrOpen
+  $i = $arrOpen + 1; $out = @()
+  while ($i -lt $end) {
+    if ($t[$i] -eq '{') { $out += $i; $i = (Get-JsoncEnd $t $i) + 1; continue }
+    if ($t[$i] -eq '/') { $n = Skip-JsoncComment $t $i; if ($n -ne $i) { $i = $n; continue } }
+    $i++
+  }
+  return $out
+}
+function Add-JsoncRaw([string]$t, [int]$obj, [string]$key, [string]$raw) {   # new first key of the object at $obj
+  $end = Get-JsoncEnd $t $obj
+  $empty = $t.Substring($obj + 1, $end - $obj - 1).Trim() -eq ''
+  return $t.Insert($obj + 1, ' "' + $key + '": ' + $raw + $(if ($empty) { ' ' } else { ',' }))
+}
+function Set-JsoncString([string]$t, [int]$obj, [string]$key, [string]$value) {
+  $kv = Find-JsoncKey $t $obj $key
+  $lit = '"' + $value + '"'
+  if ($kv) { return $t.Substring(0, $kv.ValueStart) + $lit + $t.Substring($kv.ValueEnd) }
+  return Add-JsoncRaw $t $obj $key $lit
+}
+function Test-JsoncEmpty([string]$t, [int]$obj) {   # true when the object at $obj has no key left (comments aside)
+  $end = Get-JsoncEnd $t $obj
+  $i = $obj + 1
+  while ($i -lt $end) {
+    if ($t[$i] -eq '"') { return $false }
+    if ($t[$i] -eq '/') { $n = Skip-JsoncComment $t $i; if ($n -ne $i) { $i = $n; continue } }
+    $i++
+  }
+  return $true
+}
+function Remove-JsoncKey([string]$t, [int]$obj, [string]$key) {
+  $kv = Find-JsoncKey $t $obj $key
+  if (-not $kv) { return $t }
+  $a = $kv.KeyStart; $b = $kv.ValueEnd
+  $j = $b
+  while ($j -lt $t.Length -and [char]::IsWhiteSpace($t[$j])) { $j++ }
+  if ($j -lt $t.Length -and $t[$j] -eq ',') {
+    $j++
+    while ($j -lt $t.Length -and [char]::IsWhiteSpace($t[$j])) { $j++ }
+    return $t.Substring(0, $a) + $t.Substring($j)
+  }
+  $k = $a
+  while ($k -gt 0 -and [char]::IsWhiteSpace($t[$k - 1])) { $k-- }
+  if ($k -gt 0 -and $t[$k - 1] -eq ',') { $a = $k - 1 }   # last key: the comma before it goes with it
+  return $t.Substring(0, $a) + $t.Substring($b)
+}
+
+# Where profiles.defaults and the default profile (the one whose guid is defaultProfile) start; -1 when absent.
+function Get-WtLayout([string]$t) {
+  $l = [pscustomobject]@{ Defaults = -1; Profile = -1 }
+  $root = Get-JsoncRoot $t
+  if ($root -lt 0) { return $l }
+  $profiles = Find-JsoncKey $t $root 'profiles'
+  if (-not $profiles -or $t[$profiles.ValueStart] -ne '{') { return $l }
+  $d = Find-JsoncKey $t $profiles.ValueStart 'defaults'
+  if ($d -and $t[$d.ValueStart] -eq '{') { $l.Defaults = $d.ValueStart }
+  $dp = Find-JsoncKey $t $root 'defaultProfile'
+  $list = Find-JsoncKey $t $profiles.ValueStart 'list'
+  if ($dp -and $list -and $t[$list.ValueStart] -eq '[') {
+    $guid = Get-JsoncString $t $dp
+    foreach ($o in (Get-JsoncObjects $t $list.ValueStart)) {
+      $g = Find-JsoncKey $t $o 'guid'
+      if ($g -and (Get-JsoncString $t $g) -eq $guid) { $l.Profile = $o; break }
+    }
+  }
+  return $l
+}
+
+# What the file says today: profiles.defaults font face, cellHeight and colorScheme, and the font face, cellHeight and
+# colorScheme set on the default profile itself (each $null when not set).
+function Read-TerminalLook([string]$path) {
+  $t = [IO.File]::ReadAllText($path)
+  $l = Get-WtLayout $t
+  $r = [pscustomobject]@{ HasDefaults = ($l.Defaults -ge 0); Face = $null; CellHeight = $null; Scheme = $null; ProfileFace = $null; ProfileCellHeight = $null; ProfileScheme = $null }
+  if ($l.Defaults -ge 0) {
+    $f = Find-JsoncKey $t $l.Defaults 'font'
+    if ($f -and $t[$f.ValueStart] -eq '{') {
+      $x = Find-JsoncKey $t $f.ValueStart 'face'; if ($x) { $r.Face = Get-JsoncString $t $x }
+      $x = Find-JsoncKey $t $f.ValueStart 'cellHeight'; if ($x) { $r.CellHeight = Get-JsoncString $t $x }
+    }
+    $x = Find-JsoncKey $t $l.Defaults 'colorScheme'; if ($x) { $r.Scheme = Get-JsoncString $t $x }
+  }
+  if ($l.Profile -ge 0) {
+    $f = Find-JsoncKey $t $l.Profile 'font'
+    if ($f -and $t[$f.ValueStart] -eq '{') {
+      $x = Find-JsoncKey $t $f.ValueStart 'face'; if ($x) { $r.ProfileFace = Get-JsoncString $t $x }
+      $x = Find-JsoncKey $t $f.ValueStart 'cellHeight'; if ($x) { $r.ProfileCellHeight = Get-JsoncString $t $x }
+    }
+    $x = Find-JsoncKey $t $l.Profile 'colorScheme'; if ($x) { $r.ProfileScheme = Get-JsoncString $t $x }
+  }
+  return $r
+}
+
+# Sets profiles.defaults.font to the repo's face and cellHeight (other font keys, such as size, stay) and drops face and
+# cellHeight from the default profile's own font (it would outrank the default; the whole font goes when nothing else is
+# left in it). Returns the result ('set', 'already set' or 'none': no defaults block) and what changed.
+function Set-TerminalFont([string]$path, [string]$face, [string]$cellHeight) {
+  $t = [IO.File]::ReadAllText($path)
+  $l = Get-WtLayout $t
+  if ($l.Defaults -lt 0) { return [pscustomobject]@{ Result = 'none'; Changed = @() } }
+  $changed = @()
+  $f = Find-JsoncKey $t $l.Defaults 'font'
+  if (-not $f -or $t[$f.ValueStart] -ne '{') {
+    $raw = '{ "face": "' + $face + '", "cellHeight": "' + $cellHeight + '" }'
+    if ($f) { $t = $t.Substring(0, $f.ValueStart) + $raw + $t.Substring($f.ValueEnd) } else { $t = Add-JsoncRaw $t $l.Defaults 'font' $raw }
+    $changed = @("face -> $face", "cellHeight -> $cellHeight")
+  } else {
+    foreach ($pair in @(@('face', $face), @('cellHeight', $cellHeight))) {
+      $kv = Find-JsoncKey $t $f.ValueStart $pair[0]
+      $old = if ($kv) { Get-JsoncString $t $kv } else { 'unset' }
+      if ($old -ne $pair[1]) {
+        $t = Set-JsoncString $t $f.ValueStart $pair[0] $pair[1]
+        $changed += "$($pair[0]) $old -> $($pair[1])"
+      }
+    }
+  }
+  $l = Get-WtLayout $t   # an insert moved everything after it
+  if ($l.Profile -ge 0) {
+    $pf = Find-JsoncKey $t $l.Profile 'font'
+    if ($pf -and $t[$pf.ValueStart] -eq '{') {
+      foreach ($k in 'face', 'cellHeight') {
+        $kv = Find-JsoncKey $t $pf.ValueStart $k
+        if ($kv) {
+          $changed += "removed font $k $(Get-JsoncString $t $kv) from the default profile"
+          $t = Remove-JsoncKey $t $pf.ValueStart $k
+          $pf = Find-JsoncKey $t (Get-WtLayout $t).Profile 'font'
+        }
+      }
+      if ($pf -and (Test-JsoncEmpty $t $pf.ValueStart)) { $t = Remove-JsoncKey $t (Get-WtLayout $t).Profile 'font' }
+    }
+  }
+  if ($changed.Count -gt 0) { Write-Utf8NoBom $path $t }
+  return [pscustomobject]@{ Result = $(if ($changed.Count -gt 0) { 'set' } else { 'already set' }); Changed = $changed }
+}
+
+# Sets profiles.defaults.colorScheme and drops a colorScheme set on the default profile itself (it would outrank the
+# default). Returns the result ('set', 'already set' or 'none') and what changed.
+function Set-TerminalScheme([string]$path, [string]$scheme) {
+  $t = [IO.File]::ReadAllText($path)
+  $l = Get-WtLayout $t
+  if ($l.Defaults -lt 0) { return [pscustomobject]@{ Result = 'none'; Changed = @() } }
+  $changed = @()
+  $x = Find-JsoncKey $t $l.Defaults 'colorScheme'
+  $old = if ($x) { Get-JsoncString $t $x } else { 'unset' }
+  if ($old -ne $scheme) {
+    $t = Set-JsoncString $t $l.Defaults 'colorScheme' $scheme
+    $changed += "colorScheme $old -> $scheme"
+    $l = Get-WtLayout $t   # an insert moved everything after it
+  }
+  if ($l.Profile -ge 0) {
+    $x = Find-JsoncKey $t $l.Profile 'colorScheme'
+    if ($x) {
+      $changed += "removed colorScheme $(Get-JsoncString $t $x) from the default profile"
+      $t = Remove-JsoncKey $t $l.Profile 'colorScheme'
+    }
+  }
+  if ($changed.Count -gt 0) { Write-Utf8NoBom $path $t }
+  return [pscustomobject]@{ Result = $(if ($changed.Count -gt 0) { 'set' } else { 'already set' }); Changed = $changed }
 }
 
 # Windows Terminal opens in System32 unless the defaults profile names a folder, and sessions started there load
@@ -514,17 +764,36 @@ if (-not $SkipFont) {
   } else {
     Write-Color '    winget not found; install a Nerd Font by hand (https://www.nerdfonts.com)' 228
   }
-  # Point Windows Terminal at the font only when this run installed it, or the machine has JetBrainsMono.
+  # Point Windows Terminal's default font at terminal/profile.json's (face and cellHeight) whenever it differs, but only
+  # when this run installed the face or the machine has JetBrainsMono; -KeepFont keeps the machine's own.
   $haveFace = $weInstalled -or (@(Get-NerdFontFiles | Where-Object { $_.Name -like 'JetBrainsMono*' }).Count -gt 0)
-  if ($haveFace) {
+  if ($KeepFont) {
+    Write-Color '    -KeepFont: the Windows Terminal font stays as it is' 244
+  } elseif ($haveFace) {
     foreach ($wt in $wtSettings) {
       Backup-TerminalSettings $wt
-      $r = Set-TerminalFont $wt $nerdFontFace
-      $msg = switch ($r) { 'set' { "font set to $nerdFontFace in $wt" } 'kept' { "a font is already set in $wt; left as is" } default { "no defaults block in $wt; set the font by hand" } }
+      $r = Set-TerminalFont $wt $nerdFontFace ([string]$terminalLook.font.cellHeight)
+      $msg = switch ($r.Result) { 'set' { "font set in $wt ($($r.Changed -join ', '))" } 'already set' { "font already set in $wt" } default { "no defaults block in $wt; set the font by hand" } }
       Write-Host "    $msg"
     }
     if (@($wtSettings).Count -eq 0) { Write-Color '    Windows Terminal not found; set the terminal font to a Nerd Font by hand' 228 }
   }
+}
+
+# 4d2. Colour scheme. The status bar's and the session-cards mod's colours are the terminal's own 16, so every machine
+# runs the scheme in terminal/profile.json (Campbell). A colorScheme set on the default profile itself would outrank
+# the default, so it is removed. -KeepScheme keeps the machine's own.
+Write-Step 'Terminal scheme'
+if ($KeepScheme) {
+  Write-Color '    -KeepScheme: the Windows Terminal colour scheme stays as it is' 244
+} else {
+  foreach ($wt in $wtSettings) {
+    Backup-TerminalSettings $wt
+    $r = Set-TerminalScheme $wt ([string]$terminalLook.colorScheme)
+    $msg = switch ($r.Result) { 'set' { "scheme changed in $wt ($($r.Changed -join ', '))" } 'already set' { "scheme already set in $wt" } default { "no defaults block in $wt; set the scheme by hand" } }
+    Write-Host "    $msg"
+  }
+  if (@($wtSettings).Count -eq 0) { Write-Color '    Windows Terminal not found; set the colour scheme to Campbell by hand' 228 }
 }
 
 # 4e. Start folder (independent of the font): Windows Terminal's default, and the PowerShell 7 profile block.
@@ -574,6 +843,67 @@ if (("$py").Trim() -ne 'True') {
     }
   }
 }
+# The session-cards mod loads through CLAUDE_CODE_PLUGIN_DIRS in the installed settings.json (the settings merge put
+# <repo>/mods/session-cards there). Prove the variable names this clone's folder and that Claude Code accepts the folder.
+Write-Step 'Session cards mod'
+$modDir = ($repo -replace '\\', '/') + '/mods/session-cards'
+$installed = Get-Content $settingsPath -Raw | ConvertFrom-Json
+$pdEnv = if ($installed.PSObject.Properties['env'] -and $installed.env) { $installed.env.PSObject.Properties['CLAUDE_CODE_PLUGIN_DIRS'] } else { $null }
+$modListed = $pdEnv -and (@(([string]$pdEnv.Value).Split(';') | ForEach-Object { Format-DirKey $_ }) -contains (Format-DirKey $modDir))
+$claudeVersionText = (& claude --version 2>&1 | Out-String).Trim()
+if (-not $modListed) {
+  $failures += "session cards mod: ~/.claude/settings.json env.CLAUDE_CODE_PLUGIN_DIRS does not contain $modDir"
+} else {
+  $out = & claude plugin validate $modDir 2>&1
+  if ($LASTEXITCODE -ne 0) { $failures += "session cards mod: claude plugin validate $modDir failed: $(($out | Out-String).Trim())" }
+  else { Write-Host "    $claudeVersionText loads $modDir" }
+}
+
+# What shapes the screen, checked against what the repo asks for (terminal/profile.json, settings.json) and the
+# minimum tool versions. A FAIL fails the install with the row named; -KeepFont / -KeepScheme (and -SkipFont for the
+# font rows) turn the rows they cover into `kept`.
+Write-Step 'Same experience'
+$sameRows = @()
+function Add-SameRow([string]$name, [string]$expected, [string]$actual, [bool]$ok, [bool]$kept = $false) {
+  $status = if ($kept) { 'kept' } elseif ($ok) { 'ok' } else { 'FAIL' }
+  $script:sameRows += [pscustomobject]@{ Name = $name; Expected = $expected; Actual = $actual; Status = $status }
+}
+$fontKept = [bool]($KeepFont -or $SkipFont)
+$nerdFile = @(Get-NerdFontFiles | Where-Object { $_.Name -like 'JetBrainsMono*' } | Select-Object -First 1)
+Add-SameRow 'Nerd Font file' 'JetBrainsMono*Nerd*Font*' $(if ($nerdFile.Count) { $nerdFile[0].Name } else { 'none' }) ($nerdFile.Count -gt 0) ([bool]$SkipFont)
+$wtLook = if (@($wtSettings).Count -gt 0) { Read-TerminalLook @($wtSettings)[0] } else { $null }
+$wantHeight = [string]$terminalLook.font.cellHeight
+$wantScheme = [string]$terminalLook.colorScheme
+$faceActual = if (-not $wtLook) { 'no Windows Terminal settings' } elseif ($wtLook.ProfileFace) { "$($wtLook.Face); default profile sets $($wtLook.ProfileFace)" } else { "$($wtLook.Face)" }
+$heightActual = if (-not $wtLook) { 'no Windows Terminal settings' } elseif ($wtLook.ProfileCellHeight) { "$($wtLook.CellHeight); default profile sets $($wtLook.ProfileCellHeight)" } else { "$($wtLook.CellHeight)" }
+Add-SameRow 'Terminal font face' "$nerdFontFace, none on the default profile" $faceActual ([bool]($wtLook -and $wtLook.Face -eq $nerdFontFace -and -not $wtLook.ProfileFace)) $fontKept
+Add-SameRow 'Terminal cellHeight' "$wantHeight, none on the default profile" $heightActual ([bool]($wtLook -and $wtLook.CellHeight -eq $wantHeight -and -not $wtLook.ProfileCellHeight)) $fontKept
+$schemeActual = if (-not $wtLook) { 'no Windows Terminal settings' } elseif ($wtLook.ProfileScheme) { "$($wtLook.Scheme); default profile sets $($wtLook.ProfileScheme)" } else { "$($wtLook.Scheme)" }
+Add-SameRow 'Terminal colour scheme' "$wantScheme, none on the default profile" $schemeActual ([bool]($wtLook -and $wtLook.Scheme -eq $wantScheme -and -not $wtLook.ProfileScheme)) ([bool]$KeepScheme)
+$themeProp = $installed.PSObject.Properties['theme']
+$wantTheme = [string]$template.theme
+Add-SameRow 'Claude Code theme' $wantTheme $(if ($themeProp) { [string]$themeProp.Value } else { 'unset' }) ([bool]($themeProp -and $themeProp.Value -eq $wantTheme))
+$slInst = $installed.PSObject.Properties['statusLine']
+$slCmd = if ($slInst -and $slInst.Value) { [string]$slInst.Value.command } else { '' }
+Add-SameRow 'Status line command' 'ends with statusbar.py [--labels]' $(if ($slCmd) { $slCmd } else { 'unset' }) ($slCmd -match 'statusbar\.py( --labels)?$')
+Add-SameRow 'Session cards mod' $modDir $(if ($modListed) { 'in CLAUDE_CODE_PLUGIN_DIRS' } else { 'not in CLAUDE_CODE_PLUGIN_DIRS' }) ([bool]$modListed)
+$minClaude = [version]'2.1.308'
+$haveClaude = [regex]::Match($claudeVersionText, '\d+\.\d+\.\d+').Value
+Add-SameRow 'Claude Code version' ">= $minClaude" $(if ($haveClaude) { $haveClaude } else { 'unknown' }) ([bool]($haveClaude -and [version]$haveClaude -ge $minClaude))
+$havePy = [regex]::Match((& python --version 2>&1 | Out-String), '\d+\.\d+(\.\d+)?').Value
+Add-SameRow 'Python version' '>= 3.10' $(if ($havePy) { $havePy } else { 'unknown' }) ([bool]($havePy -and [version]$havePy -ge [version]'3.10'))
+$gitBash = Get-GitBash
+Add-SameRow 'Git Bash' 'bash.exe found' $(if (Test-Path $gitBash) { $gitBash } else { 'not found' }) (Test-Path $gitBash)
+$wName = ($sameRows | ForEach-Object { $_.Name.Length } | Measure-Object -Maximum).Maximum
+$wExp = ($sameRows | ForEach-Object { $_.Expected.Length } | Measure-Object -Maximum).Maximum
+$wAct = ($sameRows | ForEach-Object { $_.Actual.Length } | Measure-Object -Maximum).Maximum
+Write-Color ("    {0}  {1}  {2}  {3}" -f 'name'.PadRight($wName), 'expected'.PadRight($wExp), 'actual'.PadRight($wAct), 'ok') 244
+foreach ($row in $sameRows) {
+  $color = switch ($row.Status) { 'ok' { 223 } 'kept' { 228 } default { 203 } }
+  Write-Color ("    {0}  {1}  {2}  {3}" -f $row.Name.PadRight($wName), $row.Expected.PadRight($wExp), $row.Actual.PadRight($wAct), $row.Status) $color
+  if ($row.Status -eq 'FAIL') { $failures += "same experience: $($row.Name): expected $($row.Expected), got $($row.Actual)" }
+}
+
 Write-Step 'MCP health'
 & claude mcp list 2>&1 | Where-Object { $_ -match 'Needs authentication|Failed|error' } | ForEach-Object { Write-Color "    $_" 228 }
 

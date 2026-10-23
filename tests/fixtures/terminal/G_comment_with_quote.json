@@ -1,0 +1,9 @@
+{
+    // the user's "favourite" setup, don't touch
+    "defaultProfile": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
+    /* block "comment" with { brace */
+    "profiles": {
+        "defaults": { "font": { "face": "Consolas" } },
+        "list": [ { "guid": "{574e775e-4f2a-5b96-ac1e-a2962a402336}", "name": "P" } ]
+    }
+}

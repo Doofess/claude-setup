@@ -1,0 +1,6 @@
+{
+  "name": "session-cards",
+  "version": "0.1.0",
+  "description": "Draws your prompts as an accent card headed with the time you handed them over.",
+  "types": "./types/index.d.ts"
+}
