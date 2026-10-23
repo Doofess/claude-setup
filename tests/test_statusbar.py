@@ -202,6 +202,12 @@ class RowTest(unittest.TestCase):
         self.assertIn("\x1b[35mOpus", raw)
         self.assertIn("\x1b[31mhigh", raw)
 
+    def test_model_icon_takes_the_model_colour(self):
+        raw = statusbar.fit(self.demo_row(), 200)
+        self.assertIn(statusbar.sgr(35, statusbar.ICONS["model"] + " "), raw)
+        raw = statusbar.fit(self.demo_row(model={"id": "x", "display_name": "Other"}), 200)
+        self.assertIn(statusbar.sgr(statusbar.WHITE, statusbar.ICONS["model"] + " "), raw)  # unknown model: white
+
     def test_model_colours(self):
         for name, code in [("Opus", 35), ("claude-sonnet-5-5", 34), ("Haiku", 36), ("Fable 5.1", 95), ("Mythos", 95), ("Other", None)]:
             self.assertEqual(statusbar.model_colour(name), code, name)

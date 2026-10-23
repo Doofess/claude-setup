@@ -250,7 +250,7 @@ def _num(value, default: float = 0) -> float:
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else default
 
 
-def _mark(markers: dict, key: str, text: str, colour: str | None = None) -> str:
+def _mark(markers: dict, key: str, text: str, colour: int | str | None = None) -> str:
     """text with its marker (icon or label) in front, or bare when this marker set has none for key.
     The marker (and its space) is drawn in colour, white by default."""
     marker = markers.get(key)
@@ -302,7 +302,8 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     if number:
         out.append((_mark(marks, "pr", sgr(WHITE, f"#{number}")), P_PR, G_PLACE))
     if name:
-        out.append((_mark(marks, "model", sgr(BOLD, _coloured(str(name), model_colour(str(name))))), 0, G_MODEL))
+        colour = model_colour(str(name))
+        out.append((_mark(marks, "model", sgr(BOLD, _coloured(str(name), colour)), colour), 0, G_MODEL))
         if effort:
             out.append((_coloured(str(effort), effort_colour(str(effort))), P_EFFORT, G_MODEL))
 
