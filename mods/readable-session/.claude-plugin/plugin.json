@@ -1,6 +1,0 @@
-{
-  "name": "readable-session",
-  "version": "0.1.0",
-  "description": "Accent cards for your prompts and commands, one stable row per tool call with a done mark, a live band that lingers, and the model each subagent runs on",
-  "types": "./types/index.d.ts"
-}
