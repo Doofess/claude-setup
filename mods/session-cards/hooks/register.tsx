@@ -17,6 +17,100 @@ export function clock(ms: number): string {
   return `${two(at.getHours())}:${two(at.getMinutes())}`
 }
 
+type Described = { icon: string; verb: [string, string]; detail: string }
+type RowState = 'running' | 'done' | 'failed' | 'stopped'
+
+const asString = (value: unknown): string => (typeof value === 'string' ? value : '')
+
+const field = (input: unknown, key: string): unknown =>
+  typeof input === 'object' && input !== null ? (input as Record<string, unknown>)[key] : undefined
+
+/** Forward slashes, relative to `cwd` when under it, else as given. */
+function relative(path: string, cwd: string): string {
+  const slashed = path.replace(/\\/g, '/')
+  const root = cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+  const drive = /^[a-z]:/i.test(slashed)
+  const same = (a: string, b: string) => (drive ? a.toLowerCase() === b.toLowerCase() : a === b)
+
+  if (root !== '' && slashed.length > root.length && slashed[root.length] === '/' && same(slashed.slice(0, root.length), root)) {
+    return slashed.slice(root.length + 1)
+  }
+
+  return slashed
+}
+
+/** The cut to `width` cells: the end becomes `…` when anything was dropped. */
+function cut(text: string, width: number): string {
+  if (text.length <= width) {
+    return text
+  }
+
+  return width <= 0 ? '' : `${text.slice(0, width - 1)}…`
+}
+
+const firstLine = (text: string): string => text.split(/\r?\n/)[0].trim()
+
+/** An icon, a verb pair (present, past) and a detail for one tool call, in plain words. */
+export function describeTool(tool: string, input: unknown, cwd: string): Described {
+  const path = (value: unknown) => relative(asString(value), cwd)
+
+  switch (tool) {
+    case 'Bash':
+    case 'PowerShell': {
+      const description = firstLine(asString(field(input, 'description')))
+
+      return { icon: '', verb: ['Running', 'Ran'], detail: description !== '' ? description : firstLine(asString(field(input, 'command'))) }
+    }
+    case 'Edit':
+    case 'MultiEdit':
+      return { icon: '', verb: ['Editing', 'Edited'], detail: path(field(input, 'file_path')) }
+    case 'Write':
+      return { icon: '', verb: ['Writing', 'Wrote'], detail: path(field(input, 'file_path')) }
+    case 'NotebookEdit':
+      return { icon: '', verb: ['Editing', 'Edited'], detail: path(field(input, 'notebook_path')) }
+    case 'Read':
+      return { icon: '', verb: ['Reading', 'Read'], detail: path(field(input, 'file_path')) }
+    case 'Glob':
+    case 'Grep': {
+      const where = path(field(input, 'path'))
+
+      return { icon: '', verb: ['Searching', 'Searched'], detail: `${asString(field(input, 'pattern'))}${where === '' ? '' : ` in ${where}`}` }
+    }
+    case 'Skill':
+      return { icon: '', verb: ['Using skill', 'Used skill'], detail: asString(field(input, 'skill')) }
+    case 'AskUserQuestion': {
+      const questions = field(input, 'questions')
+
+      return { icon: '', verb: ['Asking you', 'Asked you'], detail: Array.isArray(questions) ? asString(field(questions[0], 'question')) : '' }
+    }
+    case 'WebFetch':
+      return { icon: '', verb: ['Fetching', 'Fetched'], detail: asString(field(input, 'url')) }
+    case 'WebSearch':
+      return { icon: '', verb: ['Searching', 'Searched'], detail: asString(field(input, 'query')) }
+  }
+
+  if (tool.startsWith('mcp__')) {
+    const split = tool.indexOf('__', 5)
+    const detail = split < 0 ? tool.slice(5) : `${tool.slice(5, split)} ${tool.slice(split + 2)}`
+
+    return { icon: '', verb: ['Calling', 'Called'], detail }
+  }
+
+  const values = typeof input === 'object' && input !== null ? Object.values(input) : []
+  const first = values.find((value): value is string => typeof value === 'string' && value !== '' && value.length < 60)
+
+  return { icon: '', verb: ['Using', 'Used'], detail: first === undefined ? tool : `${tool} ${first}` }
+}
+
+const MARK = { running: '', done: '', failed: ' ✗', stopped: ' (stopped)' } as const
+
+/** The row as plain text: `<icon> <Verb> <detail>` plus the mark, cut to `width`. */
+export function rowText(d: Described, state: RowState, width: number): string {
+  const verb = state === 'running' ? d.verb[0] : d.verb[1]
+
+  return cut(`${d.icon} ${verb} ${d.detail}${MARK[state]}`, width)
+}
+
 export const register: Register = on => {
   // A row's time is settled at its first draw and kept for every redraw. A
   // ui.render hook may not write $.state, so the claims live here, in the
@@ -90,6 +184,34 @@ export const register: Register = on => {
           {`  /${command}${args === '' ? '' : ` ${args}`}`}
         </Text>
         {inner}
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    const { tool, input, isRunning, isErrored, isInterrupted, isExpanded } = e.props
+
+    // Expanded rows (ctrl+o, --verbose, an unfolded group) and agents are the engine's.
+    if (e.surface !== 'terminal' || isExpanded === true || tool === 'Agent' || tool === 'Task') {
+      return next(e)
+    }
+
+    const { Box, Text } = $.ui.resolve(e)
+    const d = describeTool(tool, input, await $.session.cwd())
+    const state: RowState = isInterrupted ? 'stopped' : isErrored ? 'failed' : isRunning ? 'running' : 'done'
+    const verb = state === 'running' ? d.verb[0] : d.verb[1]
+    const mark = MARK[state]
+    const room = (e.viewport?.columns ?? 120) - `${d.icon} ${verb} `.length - mark.length
+
+    return (
+      <Box flexDirection="row">
+        <Text color="text">{`${d.icon} `}</Text>
+        <Text color="text" bold>
+          {verb}
+        </Text>
+        <Text color="text">{` ${cut(d.detail, room)}`}</Text>
+        {state === 'failed' && <Text color="error">{mark}</Text>}
+        {state === 'stopped' && <Text color="text">{mark}</Text>}
       </Box>
     )
   })
