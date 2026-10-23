@@ -18,16 +18,10 @@
   },
   "model": "opus",
   "env": {
-    "CLAUDE_CODE_PLUGIN_DIRS": "<repo>/mods/readable-session",
     "CLAUDE_CODE_NATIVE_CURSOR": "1",
     "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
     "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false",
     "CLAUDE_CODE_DISABLE_FAST_MODE": "1"
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "python -I -S -c \"import os,sys;sys.path.insert(0,os.path.expanduser('~/.claude'));import statusline;statusline.main()\" --icons nerd",
-    "refreshInterval": 1
   },
   "deniedMcpServers": [
     { "serverUrl": "https://mcp.slack.com/*" },
@@ -80,7 +74,6 @@
   },
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
-  "theme": "custom:readable",
   "switchModelsOnFlag": false,
   "agentPushNotifEnabled": true
 }

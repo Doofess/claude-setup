@@ -1,5 +1,4 @@
 backups/
-mods/**/*.js
 .superpowers/
 __pycache__/
 .claude/worktrees/

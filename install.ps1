@@ -5,18 +5,17 @@
 
 .DESCRIPTION
   1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusline.py,keybindings.json} to ~/.claude/backups/claude-setup-<stamp>/
-  2. Copies CLAUDE.md, statusline.py, skills/ and agents/ into ~/.claude
-  3. Merges settings.json keys into the existing file (machine-local keys survive), and keybindings.json
-     bindings into ~/.claude/keybindings.json per context and key (null unbinds a default; other keys survive)
+  2. Copies CLAUDE.md, skills/ and agents/ into ~/.claude
+  3. Merges settings.json keys into the existing file (machine-local keys survive)
   4. Adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in enabledPlugins,
      updates them, then disables every plugin marked false
   5. Turns the claude.ai Adobe connector off in each known project once (see mcp_off.py; /mcp turns it back on)
-  6. Installs a Nerd Font through winget when the machine has none, and sets it as the Windows Terminal default
-     font when no font is configured there (the status line's icons need one)
-  7. Sets the Windows Terminal start folder, and adds a PowerShell 7 profile block that leaves System32 for C:\dev.
-     Adds the Readable colour scheme (terminal/readable-scheme.json) and makes it the default when no scheme is set:
-     the readable theme's dark-ansi base draws syntax, diff markers and inline code in the terminal's 16 colours
-  8. Smoke-tests the status line and lists MCP health
+  6. Removes the retired visual setup (custom theme, status line, readable-session mod, keybinding, Windows Terminal
+     Readable scheme) from the machine
+  7. Installs a Nerd Font through winget when the machine has none, and sets it as the Windows Terminal default
+     font when no font is configured there (kept for a later visual rebuild)
+  8. Sets the Windows Terminal start folder, and adds a PowerShell 7 profile block that leaves System32 for C:\dev
+  9. Lists MCP health
 
 .PARAMETER SkipPlugins
   Skip the plugin install/update step (faster when only config changed).
@@ -36,7 +35,7 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $backup = Join-Path $claudeDir "backups\claude-setup-$stamp"
 $failures = @()
 
-# Output colours come from the repo's two palettes, orange and grey (xterm-256 indices, as in statusline.py):
+# Output colours come from the repo's two palettes, orange and grey (xterm-256 indices):
 # 208 orange for steps, 223 peach for success, 228 yellow for warnings, 203 red for failures, 244 grey.
 # The 16 Write-Host console colours have no orange, so these are ANSI escapes ([char]27: `e needs PS 6+).
 function Write-Color($msg, [int]$color) { Write-Host "$([char]27)[38;5;${color}m$msg$([char]27)[0m" }
@@ -108,28 +107,13 @@ function Merge-HookEvents($existing, $incoming) {
   return $existing
 }
 
-function Format-DirKey([string]$d) { ($d.Trim() -replace '\\', '/').TrimEnd('/').ToLowerInvariant() }
-
-# CLAUDE_CODE_PLUGIN_DIRS is split on the OS path delimiter (';' on Windows). Keep the machine's other dirs
-# and add ours once (compared ignoring slash style, trailing slash and case).
-function Merge-PluginDirs([string]$existing, [string]$ours) {
-  $sep = [string][IO.Path]::PathSeparator
-  $dirs = [System.Collections.ArrayList]::new()
-  if ($existing) { foreach ($d in $existing.Split($sep)) { if ($d.Trim()) { [void]$dirs.Add($d.Trim()) } } }
-  $has = $false
-  foreach ($d in $dirs) { if ((Format-DirKey $d) -eq (Format-DirKey $ours)) { $has = $true } }
-  if (-not $has) { [void]$dirs.Add($ours) }
-  return ($dirs.ToArray() -join $sep)
-}
-
 # Merges the repo's settings.json (template) into the machine's (current). Keys:
-#   enabledPlugins  per plugin (repo wins)          env          per variable (repo wins; PLUGIN_DIRS is unioned)
+#   enabledPlugins  per plugin (repo wins)          env          per variable (repo wins)
 #   permissions     arrays unioned, scalars repo     hooks        per event, per command (see Merge-HookEvents)
 #   everything else replaced wholesale by the repo's value
 # "<repo>" in a template string value stands for this clone's path (forward slashes).
 function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
   $repoFwd = $repoDir -replace '\\', '/'
-  if ($repoFwd.Contains(';')) { throw "Repo path '$repoDir' contains ';', which CLAUDE_CODE_PLUGIN_DIRS cannot hold." }
   foreach ($prop in $template.PSObject.Properties) {
     $existing = $current.PSObject.Properties[$prop.Name]
     $hasObj = $existing -and (Test-IsObject $existing.Value)
@@ -148,10 +132,7 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
         $current | Add-Member -NotePropertyName 'env' -NotePropertyValue $ours -Force
       } else {
         foreach ($v in $ours.PSObject.Properties) {
-          $val = $v.Value
-          $old = $existing.Value.PSObject.Properties[$v.Name]
-          if ($v.Name -eq 'CLAUDE_CODE_PLUGIN_DIRS' -and $old) { $val = Merge-PluginDirs ([string]$old.Value) ([string]$v.Value) }
-          $existing.Value | Add-Member -NotePropertyName $v.Name -NotePropertyValue $val -Force
+          $existing.Value | Add-Member -NotePropertyName $v.Name -NotePropertyValue $v.Value -Force
         }
       }
     } elseif ($prop.Name -eq 'permissions' -and $hasObj) {
@@ -167,7 +148,7 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
   return $current
 }
 
-# ---- Nerd Font (the status line's --icons nerd glyphs need one) ----
+# ---- Nerd Font (kept for a later visual rebuild) ----
 $nerdFontId = 'DEVCOM.JetBrainsMonoNerdFont'
 $nerdFontFace = 'JetBrainsMono Nerd Font'
 function Get-NerdFontFiles {
@@ -206,39 +187,57 @@ function Set-TerminalStartDir([string]$path, [string]$dir) {
   return 'set'
 }
 
-# Windows Terminal colour scheme, as text like the two above. The scheme named $name is replaced (it is ours) or added
-# to "schemes", and made the only colorScheme: profiles.defaults names it and no profile names another. Returns 'set',
-# or 'none' (no defaults block: the scheme is added, nothing else changes).
-function Set-TerminalScheme([string]$path, [string]$schemeJson, [string]$name) {
+# Retired: the Readable colour scheme this repo used to add. Edits Windows Terminal settings as text (JSON with
+# comments, so no round-trip through ConvertFrom-Json): the scheme object named $name is dropped from "schemes", and
+# every "colorScheme": "<name>" key (that value only; other schemes stay) from the defaults and the profiles, with
+# the commas around them. Writes only when something changed. Returns what was removed.
+function Remove-TerminalScheme([string]$path, [string]$name) {
   $text = [IO.File]::ReadAllText($path)
   $old = $text
-  $obj = $schemeJson | ConvertFrom-Json | ConvertTo-Json -Compress
-  $m = [regex]::Match($text, '\{[^{}]*"name"\s*:\s*"' + [regex]::Escape($name) + '"[^{}]*\}')
-  if ($m.Success) {
-    $text = $text.Remove($m.Index, $m.Length).Insert($m.Index, $obj)
-  } else {
-    $s = [regex]::Match($text, '"schemes"\s*:\s*\[')
-    if ($s.Success) {
-      $sep = if ($text.Substring($s.Index + $s.Length).TrimStart().StartsWith(']')) { '' } else { ',' }
-      $text = $text.Insert($s.Index + $s.Length, " $obj$sep")
-    } else {
-      $top = [regex]::Match($text, '(?m)^\{')
-      if (-not $top.Success) { return 'none' }
-      $text = $text.Insert($top.Index + 1, ' "schemes": [' + $obj + '],')
+  $schemeRemoved = $false
+  $s = [regex]::Match($text, '"schemes"\s*:\s*\[')
+  if ($s.Success) {
+    # The array ends at its matching ']', found skipping strings and comments.
+    $start = $s.Index + $s.Length; $i = $start; $depth = 1
+    while ($i -lt $text.Length) {
+      $c = $text[$i]
+      if ($c -eq '"') {
+        $i++
+        while ($i -lt $text.Length -and $text[$i] -ne '"') { if ($text[$i] -eq '\') { $i++ }; $i++ }
+      } elseif ($c -eq '/' -and $i + 1 -lt $text.Length -and $text[$i + 1] -eq '/') {
+        while ($i -lt $text.Length -and $text[$i] -ne "`n") { $i++ }
+      } elseif ($c -eq '/' -and $i + 1 -lt $text.Length -and $text[$i + 1] -eq '*') {
+        $e = $text.IndexOf('*/', $i + 2); $i = if ($e -lt 0) { $text.Length } else { $e + 1 }
+      } elseif ($c -eq '[') { $depth++ }
+      elseif ($c -eq ']') { $depth--; if ($depth -eq 0) { break } }
+      $i++
     }
+    $region = $text.Substring($start, $i - $start)
+    $obj = '\{[^{}]*"name"\s*:\s*"' + [regex]::Escape($name) + '"[^{}]*\}'
+    while (($m = [regex]::Match($region, $obj)).Success) {
+      $before = $region.Substring(0, $m.Index)
+      $after = $region.Substring($m.Index + $m.Length)
+      if ($after.Trim(" `t`r`n,") -eq '') {
+        # last element: its separator is the comma before it
+        $before = [regex]::Replace($before, ',\s*$', '')
+        $after = [regex]::Replace($after, '^\s*,', '')
+      } else {
+        $after = [regex]::Replace($after, '^\s*,\s*', '')
+      }
+      $region = $before + $after
+      $schemeRemoved = $true
+    }
+    $text = $text.Substring(0, $start) + $region + $text.Substring($i)
   }
-  if (-not [regex]::IsMatch($text, '"defaults"\s*:\s*\{')) { if ($text -ne $old) { Write-Utf8NoBom $path $text }; return 'none' }
-  # Every machine shows the same colours: each colorScheme (a name, or a light/dark pair) is dropped, from the
-  # defaults and from every profile, and the defaults name ours.
-  $key = '"colorScheme"\s*:\s*(?:"[^"]*"|\{[^{}]*\})'
-  $text = [regex]::Replace($text, "$key\s*,\s*", '')
-  $text = [regex]::Replace($text, ",\s*$key", '')
-  $text = [regex]::Replace($text, $key, '')
-  $d = [regex]::Match($text, '"defaults"\s*:\s*\{\s*')
-  $sep = if ($text[$d.Index + $d.Length] -eq '}') { '' } else { ', ' }
-  $text = $text.Insert($d.Index + $d.Length, '"colorScheme": "' + $name + '"' + $sep)
+  $key = '"colorScheme"\s*:\s*"' + [regex]::Escape($name) + '"'
+  $keys = [regex]::Matches($text, $key).Count
+  if ($keys -gt 0) {
+    $text = [regex]::Replace($text, "$key\s*,\s*", '')
+    $text = [regex]::Replace($text, ",\s*$key", '')
+    $text = [regex]::Replace($text, $key, '')
+  }
   if ($text -ne $old) { Write-Utf8NoBom $path $text }
-  return 'set'
+  [pscustomobject]@{ Scheme = $schemeRemoved; Keys = $keys }
 }
 
 # Windows Terminal keeps settings.json per install (Store, Preview, unpackaged). Each is backed up once per run under
@@ -286,46 +285,51 @@ function Remove-RetiredHooks($current, [string[]]$retired) {
   return $current
 }
 
-# keybindings: { bindings: [ { context, bindings: { "chord": "action" | null } } ] }. Per context, per key: the repo's
-# value wins, including null (null unbinds a default, so it must be written, not skipped). The machine's other
-# contexts, keys and top-level properties stay.
-function Merge-Keybindings($current, $template) {
-  $blocks = [System.Collections.ArrayList]::new()
-  foreach ($b in @($current.bindings)) { if ($b) { [void]$blocks.Add($b) } }
-  foreach ($tb in @($template.bindings)) {
-    $cb = $blocks | Where-Object { $_.context -eq $tb.context } | Select-Object -First 1
-    if (-not $cb) { [void]$blocks.Add($tb); continue }
-    if (-not $cb.PSObject.Properties['bindings'] -or $null -eq $cb.bindings) {
-      $cb | Add-Member -NotePropertyName 'bindings' -NotePropertyValue ([pscustomobject]@{}) -Force
+# Retired visual setup, as it sits on a machine that installed it. Each function changes the object it is given and
+# returns the lines to print (none when there was nothing to remove).
+# settings.json: theme only when it is ours, statusLine only when it launches statusline, and the readable-session
+# mod's folder from CLAUDE_CODE_PLUGIN_DIRS (';'-separated; compared ignoring slash style, trailing slash and case).
+# Other entries stay, and the variable goes when nothing is left.
+function Remove-VisualSettings($current) {
+  $done = @()
+  $t = $current.PSObject.Properties['theme']
+  if ($t -and $t.Value -eq 'custom:readable') { $current.PSObject.Properties.Remove('theme'); $done += 'theme custom:readable' }
+  $sl = $current.PSObject.Properties['statusLine']
+  if ($sl -and ([string]$sl.Value.command) -like '*statusline*') { $current.PSObject.Properties.Remove('statusLine'); $done += 'statusLine' }
+  $envProp = $current.PSObject.Properties['env']
+  $pd = if ($envProp -and (Test-IsObject $envProp.Value)) { $envProp.Value.PSObject.Properties['CLAUDE_CODE_PLUGIN_DIRS'] } else { $null }
+  if ($pd) {
+    $keep = @(); $dropped = 0
+    foreach ($d in ([string]$pd.Value).Split(';')) {
+      if (-not $d.Trim()) { continue }
+      if ((($d.Trim() -replace '\\', '/').TrimEnd('/').ToLowerInvariant()).EndsWith('/mods/readable-session')) { $dropped++ } else { $keep += $d.Trim() }
     }
-    foreach ($kb in $tb.bindings.PSObject.Properties) {
-      $cb.bindings | Add-Member -NotePropertyName $kb.Name -NotePropertyValue $kb.Value -Force
+    if ($dropped -gt 0) {
+      if ($keep.Count -gt 0) { $envProp.Value | Add-Member -NotePropertyName CLAUDE_CODE_PLUGIN_DIRS -NotePropertyValue ($keep -join ';') -Force }
+      else { $envProp.Value.PSObject.Properties.Remove('CLAUDE_CODE_PLUGIN_DIRS') }
+      $done += 'readable-session in CLAUDE_CODE_PLUGIN_DIRS'
     }
   }
-  $merged = [ordered]@{ '$schema' = $template.'$schema'; '$docs' = $template.'$docs'; bindings = $blocks.ToArray() }
-  foreach ($prop in $current.PSObject.Properties) {
-    if (-not $merged.Contains($prop.Name)) { $merged[$prop.Name] = $prop.Value }
-  }
-  return [pscustomobject]$merged
+  return $done
 }
 
-# The status line's launch form from settings.json: import the module with its directory on sys.path, so
-# Python reuses __pycache__/statusline.*.pyc instead of recompiling the script on every one-second
-# render (the first run writes that cache). Ok is $false when Python failed or printed nothing.
-function Test-StatusLine([string]$dir, [string]$sample) {
-  $ErrorActionPreference = 'Continue'   # Windows PowerShell 5.1 would turn Python's stderr into a terminating error
-  $code = "import os,sys;sys.path.insert(0,'" + ($dir -replace '\\', '/') + "');import statusline;statusline.main()"
-  # Windows PowerShell 5.1 pipes to a native command in [Console]::InputEncoding, and on a UTF-8 console (code page
-  # 65001) that encoding carries a BOM; json.loads rejects it and the script prints its fallback. Pipe BOM-free.
-  $prevIn = [Console]::InputEncoding
-  try {
-    try { [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}
-    $out = @($sample | & python -S -c $code 2>&1 | ForEach-Object { "$_" })
-    $exit = $LASTEXITCODE
-  } finally { try { [Console]::InputEncoding = $prevIn } catch {} }
-  $text = $out -join "`n"
-  # "Claude | --" is what main() prints when rendering raised, so it counts as a failure too.
-  [pscustomobject]@{ Ok = ($exit -eq 0 -and $out.Count -gt 0 -and $text -notmatch 'Claude \| --'); Output = $text }
+# keybindings.json: the Chat context's "ctrl+x ctrl+a": null (it unbound the panel's collapse shortcut). The context
+# block goes when that leaves it empty; other bindings stay.
+function Remove-VisualKeybinding($kb) {
+  $done = @()
+  if (-not $kb.PSObject.Properties['bindings']) { return $done }
+  $blocks = @()
+  foreach ($b in @($kb.bindings)) {
+    $p = if ($b -and $b.context -eq 'Chat' -and $b.PSObject.Properties['bindings'] -and $b.bindings) { $b.bindings.PSObject.Properties['ctrl+x ctrl+a'] } else { $null }
+    if ($p -and $null -eq $p.Value) {
+      $b.bindings.PSObject.Properties.Remove('ctrl+x ctrl+a')
+      $done += 'ctrl+x ctrl+a'
+      if (@($b.bindings.PSObject.Properties).Count -eq 0) { continue }
+    }
+    $blocks += $b
+  }
+  if ($done.Count -gt 0) { $kb | Add-Member -NotePropertyName bindings -NotePropertyValue $blocks -Force }
+  return $done
 }
 
 foreach ($tool in 'claude', 'git', 'python') {
@@ -342,12 +346,8 @@ foreach ($f in 'CLAUDE.md', 'settings.json', 'statusline.py', 'keybindings.json'
 }
 
 # 2. Copy files
-Write-Step 'Copying CLAUDE.md, statusline.py, skills/, agents/, themes/'
+Write-Step 'Copying CLAUDE.md, skills/, agents/'
 Copy-Item (Join-Path $repo 'CLAUDE.md') $claudeDir -Force
-Copy-Item (Join-Path $repo 'statusline.py') $claudeDir -Force
-# Python trusts __pycache__/statusline.*.pyc while the source's size and mtime match what the cache recorded, and
-# Copy-Item keeps the source's mtime, so a same-size edit could leave a stale cache. Drop it; the smoke test rebuilds it.
-Get-ChildItem (Join-Path $claudeDir '__pycache__') -Filter 'statusline*.pyc' -ErrorAction SilentlyContinue | Remove-Item -Force
 # Skills: each folder under skills/ becomes ~/.claude/skills/<name>. Copy keeps a skill's local .venv.
 foreach ($skill in Get-ChildItem (Join-Path $repo 'skills') -Directory -ErrorAction SilentlyContinue) {
   $dest = Join-Path $claudeDir "skills\$($skill.Name)"
@@ -359,12 +359,6 @@ if (Test-Path (Join-Path $repo 'agents')) {
   New-Item -ItemType Directory -Force (Join-Path $claudeDir 'agents') | Out-Null
   Copy-Item (Join-Path $repo 'agents\*.md') (Join-Path $claudeDir 'agents') -Force
 }
-# Themes: each file under themes/ becomes ~/.claude/themes/<name>.json, picked by "theme": "custom:<name>".
-if (Test-Path (Join-Path $repo 'themes')) {
-  New-Item -ItemType Directory -Force (Join-Path $claudeDir 'themes') | Out-Null
-  Copy-Item (Join-Path $repo 'themes\*.json') (Join-Path $claudeDir 'themes') -Force
-}
-
 # 3. Merge settings.json
 Write-Step 'Merging settings.json'
 $template = Get-Content (Join-Path $repo 'settings.json') -Raw | ConvertFrom-Json
@@ -375,14 +369,6 @@ $current = Merge-ClaudeSettings $current $template $repo
 $current = Remove-RetiredHooks $current $retiredHooks
 foreach ($r in $retiredHooks) { Remove-Item (Join-Path $claudeDir "hooks\$r") -Force -ErrorAction SilentlyContinue }
 Write-Utf8NoBom $settingsPath (($current | ConvertTo-Json -Depth 20) + "`n")
-
-# 3b. Merge keybindings.json (the backup above already holds the previous file).
-# Ctrl+X Ctrl+A is unbound so the readable-session band above the prompt cannot be collapsed.
-Write-Step 'Merging keybindings.json'
-$kbPath = Join-Path $claudeDir 'keybindings.json'
-$kbTemplate = Get-Content (Join-Path $repo 'keybindings.json') -Raw | ConvertFrom-Json
-$kbCurrent = if (Test-Path $kbPath) { Get-Content $kbPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
-Write-Utf8NoBom $kbPath ((Merge-Keybindings $kbCurrent $kbTemplate | ConvertTo-Json -Depth 10) + "`n")
 
 # 4. Plugins
 # Windows PowerShell 5.1 turns a native command's stderr into a terminating error under
@@ -421,6 +407,45 @@ Write-Step 'Removing BigQuery MCP server'
 $ErrorActionPreference = 'Continue'
 & claude mcp remove bigquery -s user 2>&1 | Out-Null
 $ErrorActionPreference = $savedEap
+
+# 4b2. The visual setup (theme, status line, readable-session mod, Windows Terminal Readable scheme) is retired. The
+# settings merge keeps machine keys the repo no longer has, so an earlier install is undone here, after the merge.
+# Step 1 backed up settings.json, statusline.py and keybindings.json; Windows Terminal settings are backed up below.
+Write-Step 'Removing the retired visual setup'
+$removed = 0
+$cur = Get-Content $settingsPath -Raw | ConvertFrom-Json
+$done = Remove-VisualSettings $cur
+if ($done.Count -gt 0) {
+  Write-Utf8NoBom $settingsPath (($cur | ConvertTo-Json -Depth 20) + "`n")
+  Write-Host "    removed from settings.json: $($done -join ', ')"; $removed++
+}
+$gone = @()
+foreach ($f in 'statusline.py', 'themes\readable.json') {
+  $p = Join-Path $claudeDir $f
+  if (Test-Path $p) { Remove-Item $p -Force; $gone += "~/.claude/$($f -replace '\\', '/')" }
+}
+foreach ($f in Get-ChildItem (Join-Path $claudeDir '__pycache__') -Filter 'statusline*.pyc' -ErrorAction SilentlyContinue) {
+  Remove-Item $f.FullName -Force; $gone += "~/.claude/__pycache__/$($f.Name)"
+}
+if ($gone.Count -gt 0) { Write-Host "    deleted: $($gone -join ', ')"; $removed++ }
+$kbPath = Join-Path $claudeDir 'keybindings.json'
+if (Test-Path $kbPath) {
+  $kb = Get-Content $kbPath -Raw | ConvertFrom-Json
+  $done = Remove-VisualKeybinding $kb
+  if ($done.Count -gt 0) {
+    Write-Utf8NoBom $kbPath (($kb | ConvertTo-Json -Depth 10) + "`n")
+    Write-Host "    removed from keybindings.json: $($done -join ', ')"; $removed++
+  }
+}
+foreach ($wt in $wtSettings) {
+  Backup-TerminalSettings $wt
+  $r = Remove-TerminalScheme $wt 'Readable'
+  if ($r.Scheme -or $r.Keys -gt 0) {
+    $what = @(); if ($r.Scheme) { $what += 'the Readable scheme' }; if ($r.Keys -gt 0) { $what += "$($r.Keys) colorScheme setting(s)" }
+    Write-Host "    removed $($what -join ' and ') from $wt"; $removed++
+  }
+}
+if ($removed -eq 0) { Write-Color '    nothing to remove' 244 }
 
 # 4c. Adobe connector off by default: 5k tokens a turn that only design work needs. Back up ~/.claude.json first.
 Write-Step 'Adobe connector off in each known project (/mcp turns it back on)'
@@ -465,14 +490,6 @@ foreach ($wt in $wtSettings) {
   $msg = switch ($r) { 'set' { "start folder set to C:\dev in $wt" } 'kept' { "a start folder is already set in $wt; left as is" } default { "no defaults block in $wt; set the start folder by hand" } }
   Write-Host "    $msg"
 }
-Write-Step 'Terminal colours'
-$schemeJson = [IO.File]::ReadAllText((Join-Path $repo 'terminal/readable-scheme.json'))
-foreach ($wt in $wtSettings) {
-  Backup-TerminalSettings $wt
-  $r = Set-TerminalScheme $wt $schemeJson 'Readable'
-  $msg = switch ($r) { 'set' { "Readable colour scheme is the default in $wt (per-profile schemes cleared)" } default { "no defaults block in $wt; pick the Readable scheme by hand" } }
-  Write-Host "    $msg"
-}
 $ps7Profile = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Microsoft.PowerShell_profile.ps1'
 $old = if (Test-Path $ps7Profile) { [IO.File]::ReadAllText($ps7Profile) } else { '' }
 if ($old) { Copy-Item $ps7Profile (Join-Path $backup 'Microsoft.PowerShell_profile.ps1') }
@@ -485,20 +502,6 @@ Write-Host "    PowerShell 7 profile: $ps7Profile"
 
 # 5. Verify
 $ErrorActionPreference = 'Continue'
-Write-Step 'Status line smoke test'
-$sample = '{"model":{"display_name":"Test"},"workspace":{"current_dir":"' + ($HOME -replace '\\', '/') + '"},"cwd":"' + ($HOME -replace '\\', '/') + '","context_window":{"used_percentage":1}}'
-$sl = Test-StatusLine $claudeDir $sample
-if (-not $sl.Ok) { $failures += "statusline.py failed: $($sl.Output)" }
-
-# The tool rows and diffs are the readable-session mod's: Claude Code loads it from the folder settings name.
-Write-Step 'readable-session mod'
-$modDir = (Join-Path $repo 'mods/readable-session') -replace '\\', '/'
-$dirs = [string](Get-Content (Join-Path $claudeDir 'settings.json') -Raw | ConvertFrom-Json).env.CLAUDE_CODE_PLUGIN_DIRS
-$check = & claude plugin validate $modDir 2>&1
-if ($dirs -notmatch [regex]::Escape($modDir)) { $failures += "CLAUDE_CODE_PLUGIN_DIRS ('$dirs') does not name $modDir" }
-elseif ($LASTEXITCODE -ne 0) { $failures += "readable-session does not validate: $(($check | Select-Object -Last 3) -join ' ')" }
-else { Write-Host "    $(& claude --version) loads $modDir" }
-
 Write-Step 'MCP health'
 & claude mcp list 2>&1 | Where-Object { $_ -match 'Needs authentication|Failed|error' } | ForEach-Object { Write-Color "    $_" 228 }
 
