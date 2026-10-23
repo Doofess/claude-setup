@@ -209,8 +209,8 @@ class RowTest(unittest.TestCase):
     def test_cost_model_and_effort_are_coloured(self):
         raw = statusbar.fit(self.demo_row(), 200)
         self.assertIn("\x1b[32m$1.23", raw)
-        self.assertIn("\x1b[35mOpus", raw)
-        self.assertIn("\x1b[31mhigh", raw)
+        self.assertIn("\x1b[95mOpus", raw)
+        self.assertIn("\x1b[91mhigh", raw)
 
     def test_repo_icon_is_violet_like_the_repo(self):
         raw = statusbar.fit(self.demo_row(), 200)
@@ -218,12 +218,12 @@ class RowTest(unittest.TestCase):
 
     def test_model_icon_takes_the_model_colour(self):
         raw = statusbar.fit(self.demo_row(), 200)
-        self.assertIn(statusbar.sgr(35, statusbar.ICONS["model"] + " "), raw)
+        self.assertIn(statusbar.sgr(95, statusbar.ICONS["model"] + " "), raw)
         raw = statusbar.fit(self.demo_row(model={"id": "x", "display_name": "Other"}), 200)
         self.assertIn(statusbar.sgr(statusbar.WHITE, statusbar.ICONS["model"] + " "), raw)  # unknown model: white
 
     def test_model_colours(self):
-        for name, code in [("Opus", 35), ("claude-sonnet-5-5", 34), ("Haiku", 36), ("Fable 5.1", 93), ("Mythos", 92), ("Other", None)]:
+        for name, code in [("Opus", 95), ("claude-sonnet-5-5", 94), ("Haiku", 36), ("Fable 5.1", 93), ("Mythos", 92), ("Other", None)]:
             self.assertEqual(statusbar.model_colour(name), code, name)
         # every model its own colour, and no two of them the same hue (35 and 95 look alike in most schemes)
         codes = list(statusbar.MODEL_COLOURS.values())
@@ -231,7 +231,7 @@ class RowTest(unittest.TestCase):
         self.assertEqual(len({c % 60 for c in codes}), len(codes))
 
     def test_effort_colours(self):
-        for level, code in [("low", 32), ("medium", 33), ("high", 31), ("xhigh", 95), ("max", 97), ("odd", None)]:
+        for level, code in [("low", 32), ("medium", 33), ("high", 91), ("xhigh", 95), ("max", 97), ("odd", None)]:
             self.assertEqual(statusbar.effort_colour(level), code, level)
         # every level its own colour, no two of them the same hue (31 and 91 look alike in most schemes)
         codes = list(statusbar.EFFORT_COLOURS.values())
