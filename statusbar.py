@@ -296,7 +296,7 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     name = model.get("display_name") or model.get("id")
     effort = _dict(data.get("effort")).get("level")
     if repo:
-        out.append((_mark(marks, "repo", sgr(VIOLET, repo)), P_REPO, G_PLACE))
+        out.append((_mark(marks, "repo", sgr(VIOLET, repo), VIOLET), P_REPO, G_PLACE))
     if branch_name:
         out.append((_mark(marks, "branch", sgr(WHITE, branch_name)), 0, G_PLACE))
     if number:
