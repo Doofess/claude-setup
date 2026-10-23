@@ -1,18 +1,19 @@
-"""A two-row status line for Claude Code.
+"""A one-line status bar for Claude Code (Claude Code's own mode line below it makes two).
 
 Usage: Claude Code runs `python statusbar.py` and pipes its session JSON to stdin; `--demo` prints
 sample data instead and `--demo-json` prints that sample as the JSON Claude Code would send. Column width comes from the COLUMNS environment variable (default 120).
 
-Row 1 says where you are: repo (owner/name), git branch, PR number, then the model and its effort.
-Row 2 says how much room is left: a context meter with tokens used out of the auto-compact point,
-the 5-hour and 7-day plan usage meters with the time until each resets, then cost and lines changed.
-Icons are Nerd Font glyphs, one cell wide. Colours are the terminal's own 16-colour palette
-(green, yellow, red, bright black, bold), so the bar follows whatever scheme the terminal uses.
+The line reads left to right: repo (owner/name), git branch, PR number │ model · effort │ a context
+meter with tokens used out of the auto-compact point │ the 5-hour and 7-day plan usage meters with the
+time until each resets │ cost. Labels are short dim words (ctx, 5h, 7d) rather than icon glyphs, and the
+only non-ASCII characters are █ ░ │ → ·, which every monospace font has, so the bar reads the same in
+any font. Colours are the terminal's own 16-colour palette, so the bar follows the terminal's scheme:
+meters green/yellow/red by use, cost green, each model and each effort level its own colour.
 
-Width fitting: a row may use COLUMNS minus a small margin that Claude Code keeps for itself. Each
-piece of a row (a segment) has a priority. While the row is too wide, the piece with the highest
-priority number is dropped, so cost, lines and reset times go first, then the usage meters; the
-branch, the model and the context meter always stay.
+Width fitting: the line may use COLUMNS minus a small margin that Claude Code keeps for itself. Each
+piece (a segment) has a priority. While the line is too wide, the piece with the highest priority
+number is dropped: cost first, then the 7-day and 5-hour reset times, the PR number, the repo, the
+effort, then the 7-day and 5-hour meters; the branch, the model and the context meter always stay.
 
 The 33k headroom: the context meter does not run to the full context window but to the point where
 Claude Code auto-compacts. That point is the auto-compact window (from the environment or the
@@ -31,8 +32,11 @@ import time
 GREEN = 32
 YELLOW = 33
 RED = 31
-DIM = 90  # bright black: icons and separators
+DIM = 90  # bright black: labels and separators
 BOLD = 1
+# One colour per model family and per effort level, from the terminal's 16.
+MODEL_COLOURS = {"opus": 35, "sonnet": 34, "haiku": 36, "fable": 95, "mythos": 95}
+EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": RED, "xhigh": 91, "max": 91}
 FILLED = "█"
 EMPTY = "░"
 
@@ -187,17 +191,15 @@ def branch(start_dir: str, stop_dir: str | None = None) -> str | None:
 
 MARGIN = 4  # cells Claude Code keeps for its own spacing around the status line
 DEFAULT_COLUMNS = 120
-SEPARATOR = sgr(DIM, "  │  ")
-
-# Nerd Font glyphs. Each is followed by a space: the non-Mono Nerd Font variants (the Windows Terminal default
-# here is "JetBrainsMono Nerd Font") draw them wider than one cell, and without the space they overlap the text.
-ICON_REPO, ICON_BRANCH, ICON_PR, ICON_MODEL = "", "", "", ""
-ICON_CONTEXT, ICON_5H, ICON_7D = "", "", ""
-ICONS_RE = re.compile("[]")
+SEPARATOR = sgr(DIM, " │ ")
 
 # (text with colours, priority, group): priority 0 never drops, a higher number drops sooner;
 # segments of one group sit together and groups are joined by a separator.
 Segment = tuple[str, int, int]
+# Drop order, least important first (the user's call: cost, then reset times, then the rest).
+P_COST, P_7D_RESET, P_5H_RESET, P_PR, P_REPO, P_EFFORT, P_7D, P_5H = 8, 7, 6, 5, 4, 3, 2, 1
+G_PLACE, G_MODEL, G_CONTEXT, G_5H, G_7D, G_COST = range(6)
+GROUP_JOIN = {G_MODEL: sgr(DIM, " · ")}  # "Opus · high"; every other group joins its pieces with two spaces
 
 
 def _dict(value) -> dict:
@@ -208,8 +210,22 @@ def _num(value, default: float = 0) -> float:
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else default
 
 
-def _icon(glyph: str, text: str) -> str:
-    return sgr(DIM, glyph) + " " + text
+def _label(label: str, text: str) -> str:
+    return sgr(DIM, label) + " " + text
+
+
+def model_colour(name: str) -> int | None:
+    """SGR colour for a model display name or id (Opus, claude-sonnet-5-5, Fable 5.1); None when unknown."""
+    lowered = name.lower()
+    return next((code for family, code in MODEL_COLOURS.items() if family in lowered), None)
+
+
+def effort_colour(level: str) -> int | None:
+    return EFFORT_COLOURS.get(level.lower())
+
+
+def _coloured(text: str, colour: int | None) -> str:
+    return sgr(colour, text) if colour else text
 
 
 def _repo_name(repo) -> str | None:
@@ -218,69 +234,59 @@ def _repo_name(repo) -> str | None:
     return repo if isinstance(repo, str) and repo else None
 
 
-def _first_row(data: dict, branch_name: str | None) -> list[Segment]:
+def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: str | None) -> list[Segment]:
+    """The whole line as segments, in display order."""
+    out: list[Segment] = []
     repo = _repo_name(_dict(data.get("workspace")).get("repo"))
     number = _dict(data.get("pr")).get("number")
     model = _dict(data.get("model"))
     name = model.get("display_name") or model.get("id")
     effort = _dict(data.get("effort")).get("level")
-    segments: list[Segment] = []
     if repo:
-        segments.append((_icon(ICON_REPO, repo), 2, 0))
+        out.append((repo, P_REPO, G_PLACE))
     if branch_name:
-        segments.append((_icon(ICON_BRANCH, branch_name), 0, 0))
+        out.append((branch_name, 0, G_PLACE))
     if number:
-        segments.append((_icon(ICON_PR, f"#{number}"), 3, 0))
+        out.append((f"#{number}", P_PR, G_PLACE))
     if name:
-        segments.append((_icon(ICON_MODEL, sgr(BOLD, str(name))), 0, 1))
+        out.append((sgr(BOLD, _coloured(str(name), model_colour(str(name)))), 0, G_MODEL))
         if effort:
-            segments.append((f"· {effort}", 1, 1))
-    return segments
+            out.append((_coloured(str(effort), effort_colour(str(effort))), P_EFFORT, G_MODEL))
 
-
-def _second_row(data: dict, env: dict, now: float, files: list[dict]) -> list[Segment]:
     window = _dict(data.get("context_window"))
     used = int(_num(window.get("total_input_tokens")))
     size = int(_num(window.get("context_window_size"))) or 200_000
-    limit = ceiling(compact_window(str(_dict(data.get("model")).get("id") or ""), size, env, files))
+    limit = ceiling(compact_window(str(model.get("id") or ""), size, env, files))
     pct = used / limit * 100 if used > 0 and limit > 0 else 0
-    segments: list[Segment] = [
-        (_icon(ICON_CONTEXT, f"{meter(pct, 8)} {_round_half_up(pct)}%  {fmt_tokens(used)}/{fmt_tokens(max(limit, 0))}"), 0, 0)
-    ]
-    # (key, icon, group, meter priority, reset priority)
-    for key, glyph, group, meter_priority, reset_priority in (
-        ("five_hour", ICON_5H, 1, 1, 3),
-        ("seven_day", ICON_7D, 2, 2, 4),
+    out.append((_label("ctx", f"{meter(pct, 8)} {_round_half_up(pct)}%  {fmt_tokens(used)}/{fmt_tokens(max(limit, 0))}"), 0, G_CONTEXT))
+
+    for key, label, group, meter_priority, reset_priority in (
+        ("five_hour", "5h", G_5H, P_5H, P_5H_RESET),
+        ("seven_day", "7d", G_7D, P_7D, P_7D_RESET),
     ):
         usage = _dict(_dict(data.get("rate_limits")).get(key))
         if not isinstance(usage.get("used_percentage"), (int, float)):
             continue  # no such window for this plan: leave the segment out
         used_pct = usage["used_percentage"]
-        segments.append((_icon(glyph, f"{meter(used_pct, 5)} {_round_half_up(used_pct)}%"), meter_priority, group))
+        out.append((_label(label, f"{meter(used_pct, 5)} {_round_half_up(used_pct)}%"), meter_priority, group))
         if isinstance(usage.get("resets_at"), (int, float)):
-            segments.append((fmt_reset(usage["resets_at"], now), reset_priority, group))
+            out.append((fmt_reset(usage["resets_at"], now), reset_priority, group))
+
     cost = _dict(data.get("cost"))
     if isinstance(cost.get("total_cost_usd"), (int, float)):
-        added = int(_num(cost.get("total_lines_added")))
-        removed = int(_num(cost.get("total_lines_removed")))
-        segments.append((f"${cost['total_cost_usd']:.2f}", 5, 3))
-        segments.append((f"+{added} −{removed}", 6, 3))
-    return segments
-
-
-def rows(data: dict, env: dict, now: float, files: list[dict], branch_name: str | None) -> list[list[Segment]]:
-    return [_first_row(data, branch_name), _second_row(data, env, now, files)]
+        out.append((sgr(GREEN, f"${cost['total_cost_usd']:.2f}"), P_COST, G_COST))
+    return out
 
 
 def fit(segments: list[Segment], width: int) -> str:
-    """Joins the segments, dropping the highest-priority-number one until the row fits width cells.
-    A row whose never-dropped segments are still too wide is returned as it is."""
+    """Joins the segments, dropping the highest-priority-number one until the line fits width cells.
+    A line whose never-dropped segments are still too wide is returned as it is."""
     kept = list(segments)
     while True:
         groups: dict[int, list[str]] = {}
         for text, _, group in kept:
             groups.setdefault(group, []).append(text)
-        line = SEPARATOR.join(" ".join(texts) for texts in groups.values())
+        line = SEPARATOR.join(GROUP_JOIN.get(group, "  ").join(texts) for group, texts in groups.items())
         droppable = [s for s in kept if s[1] > 0]
         if cells(line) <= width or not droppable:
             return line
@@ -288,8 +294,8 @@ def fit(segments: list[Segment], width: int) -> str:
 
 
 def plain(text: str) -> str:
-    """Text without colour codes and with each icon as one space, to read or test without the font."""
-    return ICONS_RE.sub(" ", SGR_RE.sub("", text))
+    """Text without colour codes, to read or test."""
+    return SGR_RE.sub("", text)
 
 
 def _read_json(path: str) -> dict:
@@ -314,7 +320,7 @@ def render(data: dict, env: dict, now: float) -> str:
     except ValueError:
         columns = DEFAULT_COLUMNS
     width = max(columns - MARGIN, 1)
-    return "\n".join(fit(row, width) for row in rows(data, env, now, files, branch_name))
+    return fit(segments(data, env, now, files, branch_name), width)
 
 
 # The demo is rendered at this fixed time so its reset countdowns read 2h10m and 3d4h whenever it runs.
@@ -329,7 +335,7 @@ DEMO = {
         "five_hour": {"used_percentage": 23, "resets_at": DEMO_NOW + 2 * 3600 + 10 * 60},
         "seven_day": {"used_percentage": 41, "resets_at": DEMO_NOW + 3 * 86400 + 4 * 3600},
     },
-    "cost": {"total_cost_usd": 1.23, "total_lines_added": 156, "total_lines_removed": 23},
+    "cost": {"total_cost_usd": 1.23},
 }
 
 

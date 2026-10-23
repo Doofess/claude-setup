@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.10+ standard library (`json`, `os`, `re`, `sys`, `time`), `unittest`; PowerShell 7 for the installer.
 
+> **Revised after the live check (2026-10-23, PR #13):** the bar is one line, not two, so the footer with Claude Code's own mode line is two lines in total. Lines changed are gone, cost is green, each model and effort level has its own colour, and pieces drop in this order on a narrow terminal: cost, 7-day reset, 5-hour reset, PR, repo, effort, 7-day meter, 5-hour meter. No Nerd Font icons: dim text labels (`ctx`, `5h`, `7d`) and only `█ ░ │ → ·`, so the bar reads the same in any monospace font. The tasks below describe the first, two-row build.
+
 **Spec:** The design agreed in chat on 2026-10-23, recorded in the Spec section below. The old status line (tag `visual-v1`) is not a reference: this is a fresh design.
 
 ## Spec

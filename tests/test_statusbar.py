@@ -101,42 +101,71 @@ class BranchTest(unittest.TestCase):
         self.assertIsNone(statusbar.branch(os.path.join(self.tmp, "repo/src"), stop_dir=os.path.join(self.tmp, "repo/src")))
 
 
-class RowsTest(unittest.TestCase):
+class RowTest(unittest.TestCase):
     NOW = 1_700_000_000
+    MARKERS = {  # what to look for in the plain row, in the order the pieces should disappear when the terminal narrows
+        "cost": "$1.23", "7d reset": "→3d4h", "5h reset": "→2h10m", "PR": "#12", "repo": "Doofess",
+        "effort": "high", "7d meter": "41%", "5h meter": "23%",
+    }
 
-    def demo_rows(self, **changes):
+    def demo_row(self, **changes):
         data = json.loads(json.dumps(statusbar.DEMO))
         for k, v in changes.items():
             data[k] = v
-        return statusbar.rows(data, {}, self.NOW, [{"autoCompactWindow": 300_000}], "main")
+        return statusbar.segments(data, {}, self.NOW, [{"autoCompactWindow": 300_000}], "main")
 
-    def test_row_one_places_and_colours(self):
-        r1 = statusbar.plain(statusbar.fit(self.demo_rows()[0], 120))
-        # Each icon takes a cell and a space: the non-Mono Nerd Font variants draw glyphs wider than one cell.
-        self.assertEqual(r1, "  Doofess/claude-setup   main   #12  │    Opus · high")
+    def test_one_row_places_everything(self):
+        row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
+        # Dim text labels, no icon glyphs: every monospace font has █ ░ │ → and ·, so the bar reads the same in any font.
+        self.assertEqual(row, "Doofess/claude-setup  main  #12 │ Opus · high │ ctx ███░░░░░ 42%  112k/267k │ 5h █░░░░ 23%  →2h10m │ 7d ██░░░ 41%  →3d4h │ $1.23")
 
-    def test_row_two_meters(self):
-        r2 = statusbar.plain(statusbar.fit(self.demo_rows()[1], 120))
-        self.assertEqual(r2, "  ███░░░░░ 42%  112k/267k  │    █░░░░ 23% →2h10m  │    ██░░░ 41% →3d4h  │  $1.23 +156 −23")
+    def test_lines_changed_are_not_shown(self):
+        self.assertNotIn("+156", statusbar.plain(statusbar.fit(self.demo_row(), 200)))
 
-    def test_narrow_window_keeps_context_and_model(self):
-        r1, r2 = (statusbar.plain(statusbar.fit(r, 44)) for r in self.demo_rows())
-        self.assertLessEqual(len(r1), 44)
-        self.assertLessEqual(len(r2), 44)
-        self.assertIn("Opus", r1)
-        self.assertIn("main", r1)
-        self.assertNotIn("#12", r1)
-        self.assertIn("42%", r2)
-        self.assertNotIn("+156", r2)
+    def test_pieces_drop_by_importance(self):
+        gone_at = {}
+        for width in range(200, 10, -1):
+            row = statusbar.plain(statusbar.fit(self.demo_row(), width))
+            for name, marker in self.MARKERS.items():
+                if marker not in row:
+                    gone_at.setdefault(name, width)
+            for marker in ("main", "Opus", "42%", "112k/267k"):
+                self.assertIn(marker, row, f"{marker} dropped at width {width}")
+        self.assertEqual(list(gone_at), list(self.MARKERS))
+        self.assertGreater(len(set(gone_at.values())), 1)
+
+    def test_fits_a_120_column_terminal_with_repo(self):
+        row = statusbar.plain(statusbar.fit(self.demo_row(), 116))
+        self.assertLessEqual(len(row), 116)
+        self.assertIn("Doofess/claude-setup", row)
 
     def test_absent_data(self):
-        r1, r2 = self.demo_rows(rate_limits={}, pr=None, effort=None, cost=None, context_window={"total_input_tokens": 0, "context_window_size": 300_000})
-        self.assertEqual(statusbar.plain(statusbar.fit(r1, 120)), "  Doofess/claude-setup   main  │    Opus")
-        self.assertEqual(statusbar.plain(statusbar.fit(r2, 120)), "  ░░░░░░░░ 0%  0/267k")
+        row = self.demo_row(rate_limits={}, pr=None, effort=None, cost=None, context_window={"total_input_tokens": 0, "context_window_size": 300_000})
+        self.assertEqual(statusbar.plain(statusbar.fit(row, 200)), "Doofess/claude-setup  main │ Opus │ ctx ░░░░░░░░ 0%  0/267k")
+
+    def test_cost_model_and_effort_are_coloured(self):
+        raw = statusbar.fit(self.demo_row(), 200)
+        self.assertIn("[32m$1.23", raw)
+        self.assertIn("[35mOpus", raw)
+        self.assertIn("[31mhigh", raw)
+
+    def test_model_colours(self):
+        for name, code in [("Opus", 35), ("claude-sonnet-5-5", 34), ("Haiku", 36), ("Fable 5.1", 95), ("Mythos", 95), ("Other", None)]:
+            self.assertEqual(statusbar.model_colour(name), code, name)
+
+    def test_effort_colours(self):
+        for level, code in [("low", 32), ("medium", 33), ("high", 31), ("xhigh", 91), ("max", 91), ("odd", None)]:
+            self.assertEqual(statusbar.effort_colour(level), code, level)
+
+    def test_only_common_characters(self):
+        # No private-use (Nerd Font) code points: the bar must read the same in Consolas or Cascadia Mono.
+        row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
+        self.assertEqual([c for c in row if ord(c) > 0x2FFF], [])
 
     def test_colours_come_from_the_sixteen(self):
-        text = "\n".join(statusbar.fit(r, 120) for r in self.demo_rows())
-        self.assertEqual(set(re.findall(r"\x1b\[(\d+)m", text)) - {"0", "1", "31", "32", "33", "90"}, set())
+        text = statusbar.fit(self.demo_row(), 200)
+        allowed = {"0", "1"} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
+        self.assertEqual(set(re.findall(r"\[(\d+)m", text)) - allowed, set())
 
 
 class ProgramTest(unittest.TestCase):
@@ -146,10 +175,10 @@ class ProgramTest(unittest.TestCase):
         p = subprocess.run([sys.executable, "-I", "-S", os.path.join(ROOT, "statusbar.py")], input=stdin, capture_output=True, text=True, encoding="utf-8", env=env)
         return p.returncode, p.stdout
 
-    def test_demo_prints_two_rows(self):
+    def test_demo_prints_one_row(self):
         code, out = self.run_bar(json.dumps(statusbar.DEMO))
         self.assertEqual(code, 0)
-        self.assertEqual(len(out.rstrip("\n").split("\n")), 2)
+        self.assertEqual(len(out.rstrip("\n").split("\n")), 1)
         self.assertIn("42%", out)
         self.assertIn("267k", out)
 
@@ -157,12 +186,12 @@ class ProgramTest(unittest.TestCase):
         # Review Focus 3: the real program, COLUMNS parsing and MARGIN included, at a 60-column terminal.
         code, out = self.run_bar(json.dumps(statusbar.DEMO), columns="60")
         self.assertEqual(code, 0)
-        r1, r2 = (statusbar.plain(r) for r in out.rstrip("\n").split("\n"))
-        self.assertLessEqual(len(r1), 56)
-        self.assertLessEqual(len(r2), 56)
-        self.assertIn("Opus", r1)
-        self.assertIn("main", r1)
-        self.assertIn("42%", r2)
+        row = statusbar.plain(out.rstrip("\n"))
+        self.assertNotIn("\n", row)
+        self.assertLessEqual(len(row), 56)
+        self.assertIn("Opus", row)
+        self.assertIn("main", row)
+        self.assertIn("42%", row)
 
     def test_bad_stdin_prints_an_error_row(self):
         code, out = self.run_bar("not json")

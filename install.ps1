@@ -15,7 +15,7 @@
   7. Installs a Nerd Font through winget when the machine has none, and sets it as the Windows Terminal default
      font when no font is configured there (kept for a later visual rebuild)
   8. Sets the Windows Terminal start folder, and adds a PowerShell 7 profile block that leaves System32 for C:\dev
-  9. Runs the status bar command from the installed settings.json on sample data and fails when its two rows are wrong
+  9. Runs the status bar command from the installed settings.json on sample data and fails when its line is wrong
  10. Lists MCP health
 
 .PARAMETER SkipPlugins
@@ -349,7 +349,7 @@ function Get-GitBash {
 
 # Runs $command (statusLine.command from the installed settings) the way Claude Code does on Windows: Git Bash
 # `-c` (a non-login shell: Claude Code spawns hooks with execa's shell option, which never reads the bash profile,
-# so python must be on the Windows PATH itself), the session JSON on stdin, COLUMNS=120. CLAUDE_CODE_AUTO_COMPACT_WINDOW is pinned to 300000
+# so python must be on the Windows PATH itself), the session JSON on stdin, COLUMNS=160. CLAUDE_CODE_AUTO_COMPACT_WINDOW is pinned to 300000
 # (the environment outranks every settings file) so the context meter reads the same on every machine. The
 # environment and the console encoding (the bar prints UTF-8) are put back afterwards.
 function Test-StatusBar([string]$command, [string]$sample) {
@@ -357,7 +357,7 @@ function Test-StatusBar([string]$command, [string]$sample) {
   foreach ($n in 'COLUMNS', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW') { $savedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
   $savedEnc = [Console]::OutputEncoding
   try {
-    $env:COLUMNS = '120'
+    $env:COLUMNS = '160'  # wide enough for every piece of the sample, cost included
     $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '300000'
     [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
     $out = $sample | & (Get-GitBash) -c $command 2>&1
@@ -542,13 +542,10 @@ Write-Host "    PowerShell 7 profile: $ps7Profile"
 $ErrorActionPreference = 'Continue'
 # The status bar fails silently inside Claude Code (an empty bar), so prove it here: take the command from the
 # installed settings.json (what this machine will run), feed it the sample from statusbar.py --demo-json, and
-# require two rows with the sample's model, branch, context percentage and cost, plus the meter glyph (so the
-# UTF-8 round trip through Git Bash is proven, not assumed) and a Nerd Font on the machine (without one the
-# icons draw as empty boxes while every text check still passes).
+# require one row with the sample's model, branch, context percentage and cost, plus the meter glyph (so the
+# UTF-8 round trip through Git Bash is proven, not assumed). The bar uses no icon font: its only non-ASCII
+# characters are ones every monospace font has.
 Write-Step 'Status bar check'
-if (@(Get-NerdFontFiles).Count -eq 0) {
-  $failures += 'status bar: no Nerd Font is installed, so the icons would draw as empty boxes (https://www.nerdfonts.com)'
-}
 $py = & python -c "import sys;print(sys.version_info[:2]>=(3,10))" 2>&1
 if (("$py").Trim() -ne 'True') {
   $failures += "status bar: python is not Python 3.10+ (the Windows Store alias?): $py"
@@ -563,7 +560,7 @@ if (("$py").Trim() -ne 'True') {
     $bar = Test-StatusBar $barCommand $sample
     $rows = @($bar.Output -split "\r?\n" | Where-Object { $_ -ne '' })
     $missing = @('Opus', 'main', '42%', '$1.23', [string][char]0x2588 | Where-Object { -not $bar.Output.Contains($_) })
-    if ($bar.Ok -and $rows.Count -eq 2 -and $missing.Count -eq 0) {
+    if ($bar.Ok -and $rows.Count -eq 1 -and $missing.Count -eq 0) {
       foreach ($row in $rows) { Write-Host "    $row" }
     } else {
       $failures += "status bar: '$barCommand' gave $($rows.Count) row(s) (exit ok: $($bar.Ok), missing: $($missing -join ' ')): $($rows -join ' / ')"
