@@ -149,3 +149,12 @@ class ProgramTest(unittest.TestCase):
     def test_demo_flag(self):
         p = subprocess.run([sys.executable, os.path.join(ROOT, "statusbar.py"), "--demo"], capture_output=True, text=True, encoding="utf-8")
         self.assertIn("267k", p.stdout)
+
+    def test_demo_ignores_the_machines_window(self):
+        env = dict(os.environ, CLAUDE_CODE_AUTO_COMPACT_WINDOW="200000")
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "statusbar.py"), "--demo"], capture_output=True, text=True, encoding="utf-8", env=env)
+        self.assertIn("267k", p.stdout)
+
+    def test_demo_json_round_trips(self):
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "statusbar.py"), "--demo-json"], capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(json.loads(p.stdout), statusbar.DEMO)

@@ -1,7 +1,7 @@
 """A two-row status line for Claude Code.
 
 Usage: Claude Code runs `python statusbar.py` and pipes its session JSON to stdin; `--demo` prints
-sample data instead. Column width comes from the COLUMNS environment variable (default 120).
+sample data instead and `--demo-json` prints that sample as the JSON Claude Code would send. Column width comes from the COLUMNS environment variable (default 120).
 
 Row 1 says where you are: repo (owner/name), git branch, PR number, then the model and its effort.
 Row 2 says how much room is left: a context meter with tokens used out of the auto-compact point,
@@ -337,7 +337,11 @@ def main(argv: list[str]) -> int:
         pass
     try:
         if "--demo" in argv:
-            print(render(DEMO, os.environ, DEMO_NOW))
+            # The environment outranks every settings file, so pinning the window here makes the demo
+            # read the same on every machine (300k window, 267k auto-compact point).
+            print(render(DEMO, {**os.environ, "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000"}, DEMO_NOW))
+        elif "--demo-json" in argv:
+            print(json.dumps(DEMO))
         else:
             print(render(_dict(json.loads(sys.stdin.read())), os.environ, time.time()))
     except Exception as error:  # the bar must never crash Claude Code's UI

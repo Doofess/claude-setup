@@ -8,6 +8,7 @@ My Claude Code configuration, versioned so every machine runs the same setup.
 | `settings.json` | merged into `~/.claude/settings.json` (plugins, model and effort, skill overrides) |
 | `agents/*.md` | `~/.claude/agents/` (`Explore` on Haiku without CLAUDE.md, replacing the built-in; `worker` on Sonnet at medium effort for implementation briefs) |
 | `mcp_off.py` | not installed; the installer runs it to turn the claude.ai Adobe connector off once per project in `~/.claude.json` |
+| `statusbar.py` | `~/.claude/statusbar.py`, run by the `statusLine` in `settings.json` (refreshed every 60 s so the reset countdowns move). Row 1: repo, branch, PR, model and effort. Row 2: a context meter that runs to the auto-compact point (the auto-compact window minus 33k: 13k Claude Code keeps free plus 20k reserved for the reply), the 5-hour and 7-day plan meters with their reset times, then cost and lines changed. The installer runs the installed command on sample data (`--demo` shows the same rows) and prints the two rows; it fails the install when they are wrong |
 | `skills/<name>/` | `~/.claude/skills/<name>/` (personal skills; `underwater-photoshop` drives local Photoshop) |
 | `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see its README) |
 
@@ -24,6 +25,7 @@ Synced plugins and claude.ai connectors follow the account, so they need no setu
 ## Daily habits
 
 - `/clear` before `/context` shows usage near the auto-compact point (about 267k with the 300k `autoCompactWindow`).
+- `/clear` when the context meter in the status bar nears 100%: that is the auto-compact point, 33k below the window.
 - `/usage` weekly; `/context` when a session feels heavy; `/skill-doctor` monthly to spot skills that load but never run.
 - Start sessions from the repo folder, not `C:\Windows\System32`. The installer sets Windows Terminal to open in `C:\dev`, and adds a block to the PowerShell 7 profile that moves a shell started in System32 (Start menu, taskbar) to `C:\dev`.
 
