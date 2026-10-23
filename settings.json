@@ -23,6 +23,11 @@
     "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false",
     "CLAUDE_CODE_DISABLE_FAST_MODE": "1"
   },
+  "statusLine": {
+    "type": "command",
+    "command": "python -I -S ~/.claude/statusbar.py",
+    "refreshInterval": 60
+  },
   "deniedMcpServers": [
     { "serverUrl": "https://mcp.slack.com/*" },
     { "serverUrl": "https://mcp.linear.app/*" },

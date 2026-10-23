@@ -4,8 +4,8 @@
   Applies this repo's Claude Code config to the current machine. Safe to re-run.
 
 .DESCRIPTION
-  1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusline.py,keybindings.json} to ~/.claude/backups/claude-setup-<stamp>/
-  2. Copies CLAUDE.md, skills/ and agents/ into ~/.claude
+  1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusbar.py,statusline.py,keybindings.json} to ~/.claude/backups/claude-setup-<stamp>/
+  2. Copies CLAUDE.md, statusbar.py, skills/ and agents/ into ~/.claude
   3. Merges settings.json keys into the existing file (machine-local keys survive)
   4. Adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in enabledPlugins,
      updates them, then disables every plugin marked false
@@ -15,7 +15,8 @@
   7. Installs a Nerd Font through winget when the machine has none, and sets it as the Windows Terminal default
      font when no font is configured there (kept for a later visual rebuild)
   8. Sets the Windows Terminal start folder, and adds a PowerShell 7 profile block that leaves System32 for C:\dev
-  9. Lists MCP health
+  9. Runs the status bar command from the installed settings.json on sample data and fails when its line is wrong
+ 10. Lists MCP health
 
 .PARAMETER SkipPlugins
   Skip the plugin install/update step (faster when only config changed).
@@ -332,6 +333,42 @@ function Remove-VisualKeybinding($kb) {
   return $done
 }
 
+# Git Bash, the shell Claude Code runs status lines in: CLAUDE_CODE_GIT_BASH_PATH when set, else bin\bash.exe next to the
+# git on PATH. A plain `bash` on PATH is often the WSL launcher in WindowsApps, which has no Windows python.
+function Get-GitBash {
+  if ($env:CLAUDE_CODE_GIT_BASH_PATH -and (Test-Path $env:CLAUDE_CODE_GIT_BASH_PATH)) { return $env:CLAUDE_CODE_GIT_BASH_PATH }
+  $git = (Get-Command git -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+  if ($git) {
+    $dir = Split-Path $git
+    foreach ($root in $dir, (Split-Path $dir), (Split-Path (Split-Path $dir))) {
+      if ($root -and (Test-Path (Join-Path $root 'bin\bash.exe'))) { return (Join-Path $root 'bin\bash.exe') }
+    }
+  }
+  return 'bash'
+}
+
+# Runs $command (statusLine.command from the installed settings) the way Claude Code does on Windows: Git Bash
+# `-c` (a non-login shell: Claude Code spawns hooks with execa's shell option, which never reads the bash profile,
+# so python must be on the Windows PATH itself), the session JSON on stdin, COLUMNS=160. CLAUDE_CODE_AUTO_COMPACT_WINDOW is pinned to 300000
+# (the environment outranks every settings file) so the context meter reads the same on every machine. The
+# environment and the console encoding (the bar prints UTF-8) are put back afterwards.
+function Test-StatusBar([string]$command, [string]$sample) {
+  $savedEnv = @{}
+  foreach ($n in 'COLUMNS', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW') { $savedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+  $savedEnc = [Console]::OutputEncoding
+  try {
+    $env:COLUMNS = '160'  # wide enough for every piece of the sample, cost included
+    $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '300000'
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+    $out = $sample | & (Get-GitBash) -c $command 2>&1
+    $ok = ($LASTEXITCODE -eq 0)
+  } finally {
+    foreach ($n in $savedEnv.Keys) { [Environment]::SetEnvironmentVariable($n, $savedEnv[$n]) }
+    [Console]::OutputEncoding = $savedEnc
+  }
+  [pscustomobject]@{ Ok = $ok; Output = (@($out | ForEach-Object { "$_" }) -join "`n") }
+}
+
 foreach ($tool in 'claude', 'git', 'python') {
   if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
     throw "'$tool' not found on PATH. See README.md for the desktop bootstrap list."
@@ -340,14 +377,15 @@ foreach ($tool in 'claude', 'git', 'python') {
 # 1. Backup
 Write-Step "Backing up current config to $backup"
 New-Item -ItemType Directory -Force $backup | Out-Null
-foreach ($f in 'CLAUDE.md', 'settings.json', 'statusline.py', 'keybindings.json') {
+foreach ($f in 'CLAUDE.md', 'settings.json', 'statusbar.py', 'statusline.py', 'keybindings.json') {
   $p = Join-Path $claudeDir $f
   if (Test-Path $p) { Copy-Item $p $backup }
 }
 
 # 2. Copy files
-Write-Step 'Copying CLAUDE.md, skills/, agents/'
+Write-Step 'Copying CLAUDE.md, statusbar.py, skills/, agents/'
 Copy-Item (Join-Path $repo 'CLAUDE.md') $claudeDir -Force
+Copy-Item (Join-Path $repo 'statusbar.py') $claudeDir -Force
 # Skills: each folder under skills/ becomes ~/.claude/skills/<name>. Copy keeps a skill's local .venv.
 foreach ($skill in Get-ChildItem (Join-Path $repo 'skills') -Directory -ErrorAction SilentlyContinue) {
   $dest = Join-Path $claudeDir "skills\$($skill.Name)"
@@ -368,6 +406,13 @@ $current = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | Conve
 $current = Merge-ClaudeSettings $current $template $repo
 $current = Remove-RetiredHooks $current $retiredHooks
 foreach ($r in $retiredHooks) { Remove-Item (Join-Path $claudeDir "hooks\$r") -Force -ErrorAction SilentlyContinue }
+# The status bar draws Nerd Font icons; on a machine without a Nerd Font the installed command gets --labels
+# (short words instead of glyphs), so the bar reads in whatever font the terminal uses.
+$slProp = $current.PSObject.Properties['statusLine']
+if ($slProp -and $slProp.Value -and $slProp.Value.PSObject.Properties['command'] -and @(Get-NerdFontFiles).Count -eq 0) {
+  $cmd = [string]$slProp.Value.command
+  if ($cmd -notmatch '--labels') { $slProp.Value | Add-Member -NotePropertyName command -NotePropertyValue "$cmd --labels" -Force }
+}
 Write-Utf8NoBom $settingsPath (($current | ConvertTo-Json -Depth 20) + "`n")
 
 # 4. Plugins
@@ -502,6 +547,33 @@ Write-Host "    PowerShell 7 profile: $ps7Profile"
 
 # 5. Verify
 $ErrorActionPreference = 'Continue'
+# The status bar fails silently inside Claude Code (an empty bar), so prove it here: take the command from the
+# installed settings.json (what this machine will run), feed it the sample from statusbar.py --demo-json, and
+# require one row with the sample's model, branch, context percentage and cost, plus the meter glyph (so the
+# UTF-8 round trip through Git Bash is proven, not assumed). The bar uses no icon font: its only non-ASCII
+# characters are ones every monospace font has.
+Write-Step 'Status bar check'
+$py = & python -c "import sys;print(sys.version_info[:2]>=(3,10))" 2>&1
+if (("$py").Trim() -ne 'True') {
+  $failures += "status bar: python is not Python 3.10+ (the Windows Store alias?): $py"
+} else {
+  $installed = Get-Content $settingsPath -Raw | ConvertFrom-Json
+  $slProp = $installed.PSObject.Properties['statusLine']
+  $barCommand = if ($slProp -and $slProp.Value) { [string]$slProp.Value.command } else { '' }
+  if (-not $barCommand) {
+    $failures += 'status bar: ~/.claude/settings.json has no statusLine.command'
+  } else {
+    $sample = (& python -I -S (Join-Path $repo 'statusbar.py') --demo-json) -join "`n"
+    $bar = Test-StatusBar $barCommand $sample
+    $rows = @($bar.Output -split "\r?\n" | Where-Object { $_ -ne '' })
+    $missing = @('Opus', 'main', '42%', '$1.23', [string][char]0x2588 | Where-Object { -not $bar.Output.Contains($_) })
+    if ($bar.Ok -and $rows.Count -eq 1 -and $missing.Count -eq 0) {
+      foreach ($row in $rows) { Write-Host "    $row" }
+    } else {
+      $failures += "status bar: '$barCommand' gave $($rows.Count) row(s) (exit ok: $($bar.Ok), missing: $($missing -join ' ')): $($rows -join ' / ')"
+    }
+  }
+}
 Write-Step 'MCP health'
 & claude mcp list 2>&1 | Where-Object { $_ -match 'Needs authentication|Failed|error' } | ForEach-Object { Write-Color "    $_" 228 }
 
