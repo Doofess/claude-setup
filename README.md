@@ -1,81 +1,193 @@
 # claude-setup
 
-My Claude Code configuration, versioned so every machine runs the same setup.
+My Claude Code setup, kept in git so every PC I use looks and behaves the same. One script, `install.ps1`, sets up a fresh
+Windows machine: global rules, agents, plugins, a custom status bar, a mod that tidies the conversation view, and the
+terminal's font and colours.
 
-| File | Lands at |
-| --- | --- |
-| `CLAUDE.md` | `~/.claude/CLAUDE.md` (global rules: plugin split, defaults) |
-| `settings.json` | merged into `~/.claude/settings.json` (plugins, model and effort, skill overrides) |
-| `agents/*.md` | `~/.claude/agents/` (`Explore` on Haiku without CLAUDE.md, replacing the built-in; `worker` on Sonnet at medium effort for implementation briefs) |
-| `mcp_off.py` | not installed; the installer runs it to turn the claude.ai Adobe connector off once per project in `~/.claude.json` |
-| `statusbar.py` | `~/.claude/statusbar.py`, run by the `statusLine` in `settings.json` (refreshed every 60 s so the reset countdowns move). One line, so with Claude Code's own mode line the footer is two: repo (in Claude Code's own violet), branch, PR │ model · effort (each model and effort level its own colour) │ an 8-cell context meter that runs to the auto-compact point (the auto-compact window minus 33k: 13k Claude Code keeps free plus 20k reserved for the reply) │ the 5-hour and 7-day plan meters, 8 cells each, with their reset times │ cost in green. Each meter is solid blocks in one of four level colours (green below 50%, yellow from 50, orange from 70, red from 90): the filled part bright, the unfilled part a dark shade of the same hue, and the meter's icon and figures in the same colour. Separators, the other icons, branch, PR and reset times are sent as exact white, never the terminal's default foreground (a light grey in most schemes), so nothing on the line is grey. On a narrow terminal pieces drop by importance: cost, the reset times, PR, repo, effort, the plan meters; branch, model and context always stay. The dropped pieces are written to `~/.claude/statusbar-overflow/<session_id>.json` (as text spans with their colours; files a day old are removed) for the `session-cards` mod, which draws them on Claude Code's own hint line to the right of the permissions text, so a piece only disappears when both lines are full. Each piece has a dim Nerd Font icon; on a machine with no Nerd Font the installer adds `--labels` to the installed command, which swaps the icons for short words (`ctx`, `5H`, `7D`) so the bar reads in any monospace font; the 5-hour and 7-day meters carry their `5H` and `7D` word beside the icon too. The installer runs the installed command through Git Bash `-c` (no profile, as Claude Code does) on sample data (`--demo` shows the same line) and prints it; it fails the install when the line is wrong or the meter glyph does not survive the UTF-8 round trip |
-| `skills/<name>/` | `~/.claude/skills/<name>/` (personal skills; `underwater-photoshop` drives local Photoshop) |
-| `mods/session-cards/` | a Claude Code mod, loaded by `claude` through `CLAUDE_CODE_PLUGIN_DIRS`, which `install.ps1` sets in `~/.claude/settings.json` (the merge unions the variable: our `<repo>/mods/session-cards` is added once, an older entry ending in `/mods/session-cards` from another clone or worktree is replaced, every other entry stays) and checks with `claude plugin validate`. Its hooks draw: your prompts as an accent card headed with the time you handed them over; slash-command output as a violet card; tool calls as white one-line icon-and-words rows; agent calls as a row of their own (the type, the subagent's model and effort each in its colour, its live action, elapsed time and tokens); and the status bar's overflow (the pieces `statusbar.py` dropped) after the hint text on the prompt hint line. While the hint line shows that overflow, the engine's shortcut pills on it are plain text; when there is nothing to show, the engine's own line stays |
-| `terminal/profile.json` | not copied; `install.ps1` writes its font (face and cellHeight) and `colorScheme` (`Campbell`) into Windows Terminal's `profiles.defaults` and removes a `colorScheme` set on the default profile itself. This PC's measured look; the bar's and the mod's colours are the scheme's own 16 (see `terminal/README.md`) |
-| `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see its README) |
+![The status bar: repo, branch, PR, model and effort, context meter, 5-hour and 7-day plan meters, cost](docs/images/statusbar.png)
 
-Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers), `.credentials.json`, `history.jsonl`, `~/.remember/`.
-Synced plugins and claude.ai connectors follow the account, so they need no setup here.
+## What you see
 
-## Plugin and MCP policy
+### The status bar
 
-- Always-on (user scope): superpowers, frontend-design, context7, playwright, and the typescript, pyright and rust-analyzer LSPs. claude-md-management is pinned off (never used). The synced docs/docx/pdf/pptx/xlsx skills and the browser and computer-use skills load by name only (`skillOverrides`). `good-css` is declared in `extraKnownMarketplaces` (`vojtaholik/good-css`) and its enabling is left to the machine.
-- Everything tied to one project (databases, deploy target, observability, Kubernetes) is project scope: `mcp-presets/`.
-- The GitHub MCP server stays off; `gh` covers it with far less context.
-- `deniedMcpServers` blocks every claude.ai connector except Adobe, Supabase and Cloudflare (Slack, Linear, Atlassian, Notion, Figma, Intercom, Claude Docs, Vercel, Canva, Spotify, Google Docs/Sheets/Calendar/Drive, Gmail, and desktop-commander). BigQuery is retired; the installer removes the user-scope server and its hook. Adobe: the "Adobe for creativity" claude.ai connector is the only route to Adobe tools from the CLI (the plugin copies 403). It costs about 5k tokens a turn, so the installer turns it off in each project it knows (`mcp_off.py`); `/mcp` turns it back on for one project, and that choice survives re-runs. A deny-list entry would not work here: deny lists union across settings sources, so `--settings` cannot lift one for a session. A project first opened after the last install starts with Adobe on. Photo edits themselves run in local Photoshop via the `underwater-photoshop` skill.
+The line along the bottom of Claude Code, read left to right:
 
-## Daily habits
+- **Where you are**: the GitHub repo, the branch, and the open PR, if there is one.
+- **Who is working**: the model and the effort level. Each model and each effort level has its own colour, so you can
+  tell at a glance whether you're on Opus or Sonnet, at high or medium.
+- **How full the context is**: a meter that reaches 100% at the auto-compact point (about 267k of the 300k window), not
+  at the end of the window. When it's full, it's time to `/clear`.
+- **How much plan is left**: the 5-hour and 7-day usage meters, each with the time until it resets.
+- **What the session has cost**, in green.
 
-- `/clear` before `/context` shows usage near the auto-compact point (about 267k with the 300k `autoCompactWindow`).
-- `/clear` when the context meter in the status bar nears 100%: that is the auto-compact point, 33k below the window.
-- `/usage` weekly; `/context` when a session feels heavy; `/skill-doctor` monthly to spot skills that load but never run.
-- Start sessions from the repo folder, not `C:\Windows\System32`. The installer sets Windows Terminal to open in `C:\dev`, and adds a block to the PowerShell 7 profile that moves a shell started in System32 (Start menu, taskbar) to `C:\dev`.
+The meters change colour as they fill: green below 50%, yellow from 50%, orange from 70% and red from 90%. The same
+session late in a busy day:
 
-## New machine (Windows)
+![The same bar with the context meter orange at 75%, the 5-hour meter red at 93% and the 7-day meter yellow at 57%](docs/images/statusbar-busy.png)
 
-1. Install: [Claude Code](https://code.claude.com), [Git for Windows](https://git-scm.com) (provides Git Bash), [GitHub CLI](https://cli.github.com), [Node](https://nodejs.org) 26+, [Python](https://python.org) 3.10+.
-   With winget: `winget install Anthropic.ClaudeCode Git.Git GitHub.cli OpenJS.NodeJS Python.Python.3.14` then `npm i -g pnpm`.
-2. `claude` once and sign in. `gh auth login`.
-3. ```powershell
+When the window is narrow, the least important pieces drop first: cost, then reset times, PR, repo, effort and the plan
+meters. Branch, model and context always stay. Once the line fits, any dropped piece that still fits comes back, so
+no room is wasted:
+
+<img src="docs/images/statusbar-narrow.png" width="364" alt="The bar at 60 columns: only branch, model, effort and context remain">
+
+Dropped pieces aren't lost. The session-cards mod (below) moves them onto Claude Code's hint line, beside the
+permissions text, so a piece only disappears once both lines are full:
+
+![At 104 columns the bar keeps branch, model, context and plan meters; the repo, the 5-hour reset and the cost move onto the hint line](docs/images/hint-overflow.png)
+
+The icons come from a Nerd Font. On a machine without one, the installer switches the bar to short words instead
+(`ctx`, `5H`, `7D`), so it reads fine in any monospace font. To see the bar without starting Claude Code, run
+`python statusbar.py --demo`.
+
+### Session cards
+
+`mods/session-cards` is a Claude Code mod that makes a long session easier to scan:
+
+- **Your prompts** become a coloured card headed with the time you sent them, so you can find your own messages again.
+- **Slash-command output** gets a violet card of its own.
+- **Tool calls** shrink to one short row each: an icon and a few words. Runs of reads, searches and shell commands
+  keep Claude Code's own one-line summary ("Searched for 1 pattern, read 1 file…"), as in the picture below.
+- **Agents** get a row showing the agent type, its model and effort (in the same colours as the status bar), what it's
+  doing right now, how long it has been running and how many tokens it has used.
+
+![A real session: the prompt card with its time, Claude Code's summary of three tool calls, and an Explore agent row showing Haiku, low effort, 4 s and 7k tokens](docs/images/session-cards.png)
+
+### Behind the scenes
+
+Nothing to look at here, but it shapes every session:
+
+- **`CLAUDE.md`**: global rules for how Claude plans, delegates, verifies and uses git.
+- **Two agents**: `Explore` (Haiku, read-only search, replaces the built-in one) and `worker` (Sonnet at medium effort,
+  for implementation briefs).
+- **Plugins and connectors**: a short always-on list, with everything project-specific kept per project (see
+  [Plugin and MCP policy](#plugin-and-mcp-policy)).
+- **`underwater-photoshop`**: a personal skill that edits underwater and macro photos in the local Photoshop.
+
+## Set up a new machine (Windows)
+
+1. Install [Claude Code](https://code.claude.com), [Git for Windows](https://git-scm.com) (it brings Git Bash),
+   [GitHub CLI](https://cli.github.com), [Node](https://nodejs.org) 26+ and [Python](https://python.org) 3.10+. With winget:
+
+   ```powershell
+   winget install Anthropic.ClaudeCode Git.Git GitHub.cli OpenJS.NodeJS Python.Python.3.14
+   npm i -g pnpm
+   ```
+
+2. Run `claude` once and sign in, then `gh auth login`.
+3. Clone and install:
+
+   ```powershell
    git clone https://github.com/Doofess/claude-setup C:\dev\claude-setup
    cd C:\dev\claude-setup
    .\install.ps1
    ```
-   The installer also installs JetBrainsMono Nerd Font through winget when the machine has no Nerd Font, then makes the screen match this PC's (see "Same experience" below): Windows Terminal's default font and colour scheme become `terminal/profile.json`'s, `-KeepFont` and `-KeepScheme` keep the machine's own, `-SkipFont` skips the font install and font change. It removes hooks this repo has retired.
-4. Restart Claude Code and open a new terminal tab. In any repo, run `/setup-matt-pocock-skills` once.
-5. Photo work: `python -m venv ~/.claude/skills/underwater-photoshop/.venv` and `pip install -r skills/underwater-photoshop/requirements.txt` into it. Needs Photoshop 2026 installed (COM `Photoshop.Application`).
 
-## Settings merge rules
+4. Restart Claude Code and open a new terminal tab.
+5. Only for photo work: `python -m venv ~/.claude/skills/underwater-photoshop/.venv`, then
+   `pip install -r skills/underwater-photoshop/requirements.txt` into it. Needs Photoshop 2026 (COM `Photoshop.Application`).
 
-`settings.json` is merged into the machine's `~/.claude/settings.json`: `enabledPlugins` and `env` per entry (the
-repo wins on conflict, other machine entries stay), `permissions` with arrays unioned, `hooks` per event and per
-command, and every other key replaced by the repo's value. A key removed from the repo stays on the machine, so
-retiring one needs an explicit step in `install.ps1` (see "Removing the retired visual setup").
+The installer installs JetBrainsMono Nerd Font through winget if the machine has no Nerd Font, sets Windows Terminal's
+font and colour scheme, and removes hooks this repo has retired. Options:
 
-`env.CLAUDE_CODE_PLUGIN_DIRS` (';'-separated) is the one `env` entry that is unioned, not replaced: the machine's own folders stay,
-ours (`<repo>/mods/session-cards`, `<repo>` being this clone in forward slashes) is added once, and an existing entry ending in
-`/mods/session-cards` (an older clone or worktree) is replaced by it. Entries compare ignoring slash style, trailing slash and case.
+| Flag | Effect |
+| --- | --- |
+| `-KeepFont` | keep the machine's own terminal font |
+| `-KeepScheme` | keep the machine's own colour scheme |
+| `-SkipFont` | skip the font install and the font change |
+| `-SkipPlugins` | skip installing and updating plugins (faster when only config changed) |
 
-## Same experience
+It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` on every run.
 
-`git pull; .\install.ps1` on another PC gives the identical screen. What shapes it is either in this repo or checked by the
-installer's `Same experience` table (`name  expected  actual  ok|FAIL`): the Nerd Font file and Windows Terminal's font face and
-`cellHeight`; the colour scheme (`Campbell`, none on the default profile); Claude Code's `theme` (`dark`); the status line command;
-the session-cards mod in `CLAUDE_CODE_PLUGIN_DIRS`; Claude Code 2.1.308 or newer, Python 3.10 or newer, and Git Bash. Any `FAIL`
-fails the install with the row named. `-KeepFont` and `-KeepScheme` (and `-SkipFont` for the font rows) turn their rows into `kept`.
+### Same screen on every PC
 
-## Visual setup
+After installing, the installer prints a `Same experience` table (`name  expected  actual  ok|FAIL`) and fails if any
+row is wrong. It checks everything that decides what the screen looks like: the Nerd Font and Windows Terminal's font
+face and `cellHeight`, the `Campbell` colour scheme, Claude Code's `dark` theme, the status line command, the
+session-cards mod being loaded, and Claude Code 2.1.308+, Python 3.10+ and Git Bash. It also runs the status bar on
+sample data and prints it, so a broken bar or a mangled meter glyph stops the install. Rows covered by `-KeepFont`,
+`-KeepScheme` or `-SkipFont` show `kept`.
 
-The visual setup (theme, readable-session mod, Windows Terminal scheme, status line) was removed on 2026-10-23 to be rebuilt from scratch; tag `visual-v1` holds it. The installer undoes it on machines that had it.
+## Changing something
 
-## Changing config
+Edit the files here, run `.\install.ps1`, commit and push. On the other machine: `git pull`, then `.\install.ps1`.
 
-Edit the files here, run `.\install.ps1` (add `-SkipPlugins` when only config changed), commit, push. On the other machine: `git pull` then `.\install.ps1`.
-
-From Claude Code's `!` prompt (which is Git Bash, so backslashes don't work):
+From Claude Code's `!` prompt (Git Bash, so use forward slashes):
 
 ```bash
 git -C C:/dev/claude-setup pull && powershell -ExecutionPolicy Bypass -File C:/dev/claude-setup/install.ps1
 ```
 
-The installer backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` every run.
+## Daily habits
+
+- `/clear` when the context meter nears 100% (the auto-compact point), or when `/context` shows usage near 267k.
+- `/usage` weekly; `/context` when a session feels heavy; `/skill-doctor` monthly to spot skills that load but never run.
+- Start sessions from the repo folder, not `C:\Windows\System32`. Windows Terminal opens in `C:\dev`, and the
+  PowerShell 7 profile moves a shell started in System32 (Start menu, taskbar) to `C:\dev`.
+
+## Reference
+
+### What goes where
+
+| In this repo | On the machine |
+| --- | --- |
+| `CLAUDE.md` | `~/.claude/CLAUDE.md` |
+| `settings.json` | merged into `~/.claude/settings.json` (plugins, model and effort, skill overrides; see the merge rules below) |
+| `agents/*.md` | `~/.claude/agents/` |
+| `statusbar.py` | `~/.claude/statusbar.py`, run by `statusLine` in `settings.json` every 60 s so the reset countdowns move |
+| `skills/<name>/` | `~/.claude/skills/<name>/` |
+| `mods/session-cards/` | stays in the repo; `install.ps1` adds its folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` and checks it with `claude plugin validate` |
+| `terminal/profile.json` | not copied; its font and `colorScheme` are written into Windows Terminal's `profiles.defaults`, and a `colorScheme` on the default profile itself is removed (see [`terminal/README.md`](terminal/README.md)) |
+| `mcp_off.py` | not copied; the installer runs it to turn the claude.ai Adobe connector off in each known project in `~/.claude.json` |
+| `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see [its README](mcp-presets/README.md)) |
+
+Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers), `.credentials.json`, `history.jsonl`,
+`~/.remember/`. Synced plugins and claude.ai connectors follow the account, so they need no setup here.
+
+### Status bar details
+
+- The context meter's end is the auto-compact window minus 33k: 13k that Claude Code keeps free plus 20k reserved for the reply.
+- Each meter has 8 cells: the filled part in the bright level colour, the rest in a dark shade of the same colour; its
+  icon and numbers take that colour too.
+- Separators, the other icons, branch, PR and reset times are sent as exact white rather than the terminal's default
+  foreground (light grey in most schemes), so nothing on the line is grey.
+- The pieces dropped on a narrow terminal are written to `~/.claude/statusbar-overflow/<session_id>.json`, as text with
+  their colours; files older than a day are removed. The session-cards mod reads them for the hint line. While the hint
+  line shows that overflow, its shortcut pills are plain text; with nothing to show, Claude Code's own line stays.
+- The bar's and the mod's colours are the colour scheme's own 16, and the icons depend on the Nerd Font's glyph widths,
+  so a different scheme or font gives a different screen.
+
+### Settings merge rules
+
+`settings.json` is merged into the machine's `~/.claude/settings.json`: `enabledPlugins` and `env` entry by entry (the
+repo wins a conflict, the machine's other entries stay), `permissions` with arrays unioned, `hooks` per event and per
+command, and every other key replaced by the repo's value. A key removed from the repo stays on the machine, so retiring
+one needs an explicit step in `install.ps1`.
+
+`env.CLAUDE_CODE_PLUGIN_DIRS` (`;`-separated) is the one `env` entry that is unioned rather than replaced: the
+machine's own folders stay, ours (`<repo>/mods/session-cards`, with `<repo>` being this clone in forward slashes) is
+added once, and an existing entry ending in `/mods/session-cards` (from an older clone or worktree) is replaced by it.
+Entries are compared ignoring slash style, trailing slash and case.
+
+### Plugin and MCP policy
+
+- Always on (user scope): superpowers, frontend-design, context7, playwright, and the typescript, pyright and
+  rust-analyzer LSPs. claude-md-management is pinned off. The synced docs/docx/pdf/pptx/xlsx skills and the browser and
+  computer-use skills load by name only (`skillOverrides`). `good-css` is declared in `extraKnownMarketplaces`
+  (`vojtaholik/good-css`); enabling it is left to each machine.
+- Anything tied to one project (databases, deploy target, observability, Kubernetes) is project scope: `mcp-presets/`.
+- The GitHub MCP server stays off; `gh` does the same job with far less context.
+- `deniedMcpServers` blocks every claude.ai connector except Adobe, Supabase and Cloudflare (Slack, Linear, Atlassian,
+  Notion, Figma, Intercom, Claude Docs, Vercel, Canva, Spotify, Google Docs/Sheets/Calendar/Drive, Gmail, and
+  desktop-commander). BigQuery is retired; the installer removes its user-scope server and hook.
+- Adobe: the "Adobe for creativity" claude.ai connector is the only route to Adobe tools from the CLI (the plugin copies
+  return 403). It costs about 5k tokens a turn, so the installer turns it off in each project it knows (`mcp_off.py`);
+  `/mcp` turns it back on for one project, and that choice survives re-runs. A deny-list entry wouldn't work here: deny
+  lists union across settings sources, so `--settings` can't lift one for a session. A project first opened after the
+  last install starts with Adobe on. Photo edits themselves run in local Photoshop via the `underwater-photoshop` skill.
+
+## History
+
+The first visual setup (a custom theme, the readable-session mod, a Windows Terminal "Readable" scheme and an older
+status line) was retired on 2026-10-23 and rebuilt as the status bar and session-cards mod above. Tag `visual-v1` holds
+the old version, and the installer removes it from machines that still have it.
