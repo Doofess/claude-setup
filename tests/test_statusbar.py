@@ -213,8 +213,12 @@ class RowTest(unittest.TestCase):
         self.assertIn(statusbar.sgr(statusbar.WHITE, statusbar.ICONS["model"] + " "), raw)  # unknown model: white
 
     def test_model_colours(self):
-        for name, code in [("Opus", 35), ("claude-sonnet-5-5", 34), ("Haiku", 36), ("Fable 5.1", 95), ("Mythos", 95), ("Other", None)]:
+        for name, code in [("Opus", 35), ("claude-sonnet-5-5", 34), ("Haiku", 36), ("Fable 5.1", 93), ("Mythos", 92), ("Other", None)]:
             self.assertEqual(statusbar.model_colour(name), code, name)
+        # every model its own colour, and no two of them the same hue (35 and 95 look alike in most schemes)
+        codes = list(statusbar.MODEL_COLOURS.values())
+        self.assertEqual(len(codes), len(set(codes)))
+        self.assertEqual(len({c % 60 for c in codes}), len(codes))
 
     def test_effort_colours(self):
         for level, code in [("low", 32), ("medium", 33), ("high", 31), ("xhigh", 91), ("max", 91), ("odd", None)]:
