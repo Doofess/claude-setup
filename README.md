@@ -26,14 +26,15 @@ session late in a busy day:
 ![The same bar with the context meter orange at 75%, the 5-hour meter red at 93% and the 7-day meter yellow at 57%](docs/images/statusbar-busy.png)
 
 When the window is narrow, the least important pieces drop first: cost, then reset times, PR, repo, effort and the plan
-meters. Branch, model and context always stay:
+meters. Branch, model and context always stay. Once the line fits, any dropped piece that still fits comes back, so
+no room is wasted:
 
 <img src="docs/images/statusbar-narrow.png" width="364" alt="The bar at 60 columns: only branch, model, effort and context remain">
 
 Dropped pieces aren't lost. The session-cards mod (below) moves them onto Claude Code's hint line, beside the
 permissions text, so a piece only disappears once both lines are full:
 
-![At 104 columns the bar keeps branch, model, context and plan meters; the repo, the 7-day reset and the cost move onto the hint line](docs/images/hint-overflow.png)
+![At 104 columns the bar keeps branch, model, context and plan meters; the repo, the 5-hour reset and the cost move onto the hint line](docs/images/hint-overflow.png)
 
 The icons come from a Nerd Font. On a machine without one, the installer switches the bar to short words instead
 (`ctx`, `5H`, `7D`), so it reads fine in any monospace font. To see the bar without starting Claude Code, run
@@ -45,11 +46,12 @@ The icons come from a Nerd Font. On a machine without one, the installer switche
 
 - **Your prompts** become a coloured card headed with the time you sent them, so you can find your own messages again.
 - **Slash-command output** gets a violet card of its own.
-- **Tool calls** shrink to one short row each: an icon and a few words.
+- **Tool calls** shrink to one short row each: an icon and a few words. Runs of reads, searches and shell commands
+  keep Claude Code's own one-line summary ("Searched for 1 pattern, read 1 file…"), as in the picture below.
 - **Agents** get a row showing the agent type, its model and effort (in the same colours as the status bar), what it's
   doing right now, how long it has been running and how many tokens it has used.
 
-![A real session: the prompt card with its time, the tool calls, and an Explore agent row showing Haiku, low effort, 4 s and 7k tokens](docs/images/session-cards.png)
+![A real session: the prompt card with its time, Claude Code's summary of three tool calls, and an Explore agent row showing Haiku, low effort, 4 s and 7k tokens](docs/images/session-cards.png)
 
 ### Behind the scenes
 
