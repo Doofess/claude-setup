@@ -4,6 +4,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -155,6 +156,16 @@ class ProgramTest(unittest.TestCase):
         p = subprocess.run([sys.executable, os.path.join(ROOT, "statusbar.py"), "--demo"], capture_output=True, text=True, encoding="utf-8", env=env)
         self.assertIn("267k", p.stdout)
 
-    def test_demo_json_round_trips(self):
+    def test_demo_json_resets_count_from_now(self):
+        # The installer feeds this JSON to the real command at the real time, so the resets must lie ahead of now.
+        before = time.time()
         p = subprocess.run([sys.executable, os.path.join(ROOT, "statusbar.py"), "--demo-json"], capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(json.loads(p.stdout), statusbar.DEMO)
+        sample = json.loads(p.stdout)
+        limits = sample.pop("rate_limits")
+        expected = dict(statusbar.DEMO)
+        expected.pop("rate_limits")
+        self.assertEqual(sample, expected)
+        self.assertAlmostEqual(limits["five_hour"]["resets_at"] - before, 2 * 3600 + 10 * 60, delta=30)
+        self.assertAlmostEqual(limits["seven_day"]["resets_at"] - before, 3 * 86400 + 4 * 3600, delta=30)
+        self.assertEqual(limits["five_hour"]["used_percentage"], 23)
+        self.assertEqual(limits["seven_day"]["used_percentage"], 41)

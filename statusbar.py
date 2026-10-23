@@ -329,6 +329,18 @@ DEMO = {
 }
 
 
+def demo_sample(now: float) -> dict:
+    """DEMO with its reset times moved so they lie the same distance ahead of `now` as they do of DEMO_NOW.
+
+    The installer feeds this to the real command, which reads the clock, so fixed resets would show →now."""
+    shift = now - DEMO_NOW
+    limits = {
+        name: {**usage, "resets_at": usage["resets_at"] + shift}
+        for name, usage in DEMO["rate_limits"].items()
+    }
+    return {**DEMO, "rate_limits": limits}
+
+
 def main(argv: list[str]) -> int:
     try:
         for stream in (sys.stdin, sys.stdout):  # Windows would otherwise use the legacy code page
@@ -341,7 +353,7 @@ def main(argv: list[str]) -> int:
             # read the same on every machine (300k window, 267k auto-compact point).
             print(render(DEMO, {**os.environ, "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000"}, DEMO_NOW))
         elif "--demo-json" in argv:
-            print(json.dumps(DEMO))
+            print(json.dumps(demo_sample(time.time())))
         else:
             print(render(_dict(json.loads(sys.stdin.read())), os.environ, time.time()))
     except Exception as error:  # the bar must never crash Claude Code's UI
