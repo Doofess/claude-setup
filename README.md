@@ -10,7 +10,8 @@ My Claude Code configuration, versioned so every machine runs the same setup.
 | `mcp_off.py` | not installed; the installer runs it to turn the claude.ai Adobe connector off once per project in `~/.claude.json` |
 | `statusbar.py` | `~/.claude/statusbar.py`, run by the `statusLine` in `settings.json` (refreshed every 60 s so the reset countdowns move). One line, so with Claude Code's own mode line the footer is two: repo (in Claude Code's own violet), branch, PR │ model · effort (each model and effort level its own colour) │ an 8-cell context meter that runs to the auto-compact point (the auto-compact window minus 33k: 13k Claude Code keeps free plus 20k reserved for the reply) │ the 5-hour and 7-day plan meters, 8 cells each, with their reset times │ cost in green. Each meter is solid blocks in one of four level colours (green below 50%, yellow from 50, orange from 70, red from 90): the filled part bright, the unfilled part a dark shade of the same hue, and the meter's icon and figures in the same colour. Separators, the other icons, branch, PR and reset times are sent as exact white, never the terminal's default foreground (a light grey in most schemes), so nothing on the line is grey. On a narrow terminal pieces drop by importance: cost, the reset times, PR, repo, effort, the plan meters; branch, model and context always stay. The dropped pieces are written to `~/.claude/statusbar-overflow/<session_id>.json` (as text spans with their colours; files a day old are removed) for the `session-cards` mod, which draws them on Claude Code's own hint line to the right of the permissions text, so a piece only disappears when both lines are full. Each piece has a dim Nerd Font icon; on a machine with no Nerd Font the installer adds `--labels` to the installed command, which swaps the icons for short words (`ctx`, `5h`, `7d`) so the bar reads in any monospace font. The installer runs the installed command through Git Bash `-c` (no profile, as Claude Code does) on sample data (`--demo` shows the same line) and prints it; it fails the install when the line is wrong or the meter glyph does not survive the UTF-8 round trip |
 | `skills/<name>/` | `~/.claude/skills/<name>/` (personal skills; `underwater-photoshop` drives local Photoshop) |
-| `mods/session-cards/` | a Claude Code mod, loaded with `claude --plugin-dir mods/session-cards`; the installer does not copy it. Four hooks: your prompts as an accent card headed with the time you handed them over, slash-command output as a violet card, tool calls as white one-line icon-and-words rows, and the status bar's overflow (the pieces `statusbar.py` dropped) drawn after the hint text on the prompt hint line. While the hint line shows that overflow, the engine's shortcut pills on it are plain text; when there is nothing to show, the engine's own line stays. Agent calls get a row of their own: the type, model and effort in colour, the subagent's live action, elapsed time and tokens |
+| `mods/session-cards/` | a Claude Code mod, loaded by `claude` through `CLAUDE_CODE_PLUGIN_DIRS`, which `install.ps1` sets in `~/.claude/settings.json` (the merge unions the variable: our `<repo>/mods/session-cards` is added once, an older entry ending in `/mods/session-cards` from another clone or worktree is replaced, every other entry stays) and checks with `claude plugin validate`. Its hooks draw: your prompts as an accent card headed with the time you handed them over; slash-command output as a violet card; tool calls as white one-line icon-and-words rows; agent calls as a row of their own (the type, the subagent's model and effort each in its colour, its live action, elapsed time and tokens); and the status bar's overflow (the pieces `statusbar.py` dropped) after the hint text on the prompt hint line. While the hint line shows that overflow, the engine's shortcut pills on it are plain text; when there is nothing to show, the engine's own line stays |
+| `terminal/profile.json` | not copied; `install.ps1` writes its font (face and cellHeight) and `colorScheme` (`Campbell`) into Windows Terminal's `profiles.defaults` and removes a `colorScheme` set on the default profile itself. This PC's measured look; the bar's and the mod's colours are the scheme's own 16 (see `terminal/README.md`) |
 | `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see its README) |
 
 Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers), `.credentials.json`, `history.jsonl`, `~/.remember/`.
@@ -40,7 +41,7 @@ Synced plugins and claude.ai connectors follow the account, so they need no setu
    cd C:\dev\claude-setup
    .\install.ps1
    ```
-   The installer also installs JetBrainsMono Nerd Font through winget when the machine has no Nerd Font, and sets it as the Windows Terminal default only when that file names no font yet (kept for a later visual rebuild; `-SkipFont` turns this off). It never overwrites a font you chose, and removes hooks this repo has retired.
+   The installer also installs JetBrainsMono Nerd Font through winget when the machine has no Nerd Font, then makes the screen match this PC's (see "Same experience" below): Windows Terminal's default font and colour scheme become `terminal/profile.json`'s, `-KeepFont` and `-KeepScheme` keep the machine's own, `-SkipFont` skips the font install and font change. It removes hooks this repo has retired.
 4. Restart Claude Code and open a new terminal tab. In any repo, run `/setup-matt-pocock-skills` once.
 5. Photo work: `python -m venv ~/.claude/skills/underwater-photoshop/.venv` and `pip install -r skills/underwater-photoshop/requirements.txt` into it. Needs Photoshop 2026 installed (COM `Photoshop.Application`).
 
@@ -50,6 +51,18 @@ Synced plugins and claude.ai connectors follow the account, so they need no setu
 repo wins on conflict, other machine entries stay), `permissions` with arrays unioned, `hooks` per event and per
 command, and every other key replaced by the repo's value. A key removed from the repo stays on the machine, so
 retiring one needs an explicit step in `install.ps1` (see "Removing the retired visual setup").
+
+`env.CLAUDE_CODE_PLUGIN_DIRS` (';'-separated) is the one `env` entry that is unioned, not replaced: the machine's own folders stay,
+ours (`<repo>/mods/session-cards`, `<repo>` being this clone in forward slashes) is added once, and an existing entry ending in
+`/mods/session-cards` (an older clone or worktree) is replaced by it. Entries compare ignoring slash style, trailing slash and case.
+
+## Same experience
+
+`git pull; .\install.ps1` on another PC gives the identical screen. What shapes it is either in this repo or checked by the
+installer's `Same experience` table (`name  expected  actual  ok|FAIL`): the Nerd Font file and Windows Terminal's font face and
+`cellHeight`; the colour scheme (`Campbell`, none on the default profile); Claude Code's `theme` (`dark`); the status line command;
+the session-cards mod in `CLAUDE_CODE_PLUGIN_DIRS`; Claude Code 2.1.308 or newer, Python 3.10 or newer, and Git Bash. Any `FAIL`
+fails the install with the row named. `-KeepFont` and `-KeepScheme` (and `-SkipFont` for the font rows) turn their rows into `kept`.
 
 ## Visual setup
 
