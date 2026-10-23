@@ -22,8 +22,11 @@ Code keeps free plus the 20,000 it reserves for the reply. A meter at 100% means
 Standard library only. The branch is read straight from .git/HEAD, with no git subprocess, and
 nothing is written to disk. On any error the bar prints one plain `statusbar: <error>` row.
 """
+import json
 import os
 import re
+import sys
+import time
 
 GREEN = 32
 YELLOW = 33
@@ -177,3 +180,170 @@ def branch(start_dir: str) -> str | None:
     if head.startswith("ref:"):
         return head[len("ref:"):].strip().removeprefix("refs/heads/") or None
     return head[:7]
+
+
+MARGIN = 4  # cells Claude Code keeps for its own spacing around the status line
+DEFAULT_COLUMNS = 120
+SEPARATOR = sgr(DIM, "  │  ")
+
+# Nerd Font glyphs, one cell wide each.
+ICON_REPO, ICON_BRANCH, ICON_PR, ICON_MODEL = "", "", "", ""
+ICON_CONTEXT, ICON_5H, ICON_7D = "", "", ""
+ICONS_RE = re.compile("[]")
+
+# (text with colours, priority, group): priority 0 never drops, a higher number drops sooner;
+# segments of one group sit together and groups are joined by a separator.
+Segment = tuple[str, int, int]
+
+
+def _dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _num(value, default: float = 0) -> float:
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else default
+
+
+def _icon(glyph: str, text: str) -> str:
+    return sgr(DIM, glyph) + text
+
+
+def _repo_name(repo) -> str | None:
+    if isinstance(repo, dict):
+        repo = f"{repo.get('owner')}/{repo.get('name')}" if repo.get("owner") and repo.get("name") else None
+    return repo if isinstance(repo, str) and repo else None
+
+
+def _first_row(data: dict, branch_name: str | None) -> list[Segment]:
+    repo = _repo_name(_dict(data.get("workspace")).get("repo"))
+    number = _dict(data.get("pr")).get("number")
+    model = _dict(data.get("model"))
+    name = model.get("display_name") or model.get("id")
+    effort = _dict(data.get("effort")).get("level")
+    segments: list[Segment] = []
+    if repo:
+        segments.append((_icon(ICON_REPO, repo), 2, 0))
+    if branch_name:
+        segments.append((_icon(ICON_BRANCH, branch_name), 0, 0))
+    if number:
+        segments.append((_icon(ICON_PR, f"#{number}"), 3, 0))
+    if name:
+        segments.append((_icon(ICON_MODEL, sgr(BOLD, str(name))), 0, 1))
+        if effort:
+            segments.append((f"· {effort}", 1, 1))
+    return segments
+
+
+def _second_row(data: dict, env: dict, now: float, files: list[dict]) -> list[Segment]:
+    window = _dict(data.get("context_window"))
+    used = int(_num(window.get("total_input_tokens")))
+    size = int(_num(window.get("context_window_size"))) or 200_000
+    limit = ceiling(compact_window(str(_dict(data.get("model")).get("id") or ""), size, env, files))
+    pct = used / limit * 100 if used > 0 and limit > 0 else 0
+    segments: list[Segment] = [
+        (_icon(ICON_CONTEXT, f"{meter(pct, 8)} {_round_half_up(pct)}%  {fmt_tokens(used)}/{fmt_tokens(max(limit, 0))}"), 0, 0)
+    ]
+    # (key, icon, group, meter priority, reset priority)
+    for key, glyph, group, meter_priority, reset_priority in (
+        ("five_hour", ICON_5H, 1, 1, 3),
+        ("seven_day", ICON_7D, 2, 2, 4),
+    ):
+        usage = _dict(_dict(data.get("rate_limits")).get(key))
+        if not isinstance(usage.get("used_percentage"), (int, float)):
+            continue  # no such window for this plan: leave the segment out
+        used_pct = usage["used_percentage"]
+        segments.append((_icon(glyph, f"{meter(used_pct, 5)} {_round_half_up(used_pct)}%"), meter_priority, group))
+        if isinstance(usage.get("resets_at"), (int, float)):
+            segments.append((fmt_reset(usage["resets_at"], now), reset_priority, group))
+    cost = _dict(data.get("cost"))
+    if isinstance(cost.get("total_cost_usd"), (int, float)):
+        added = int(_num(cost.get("total_lines_added")))
+        removed = int(_num(cost.get("total_lines_removed")))
+        segments.append((f"${cost['total_cost_usd']:.2f}", 5, 3))
+        segments.append((f"+{added} −{removed}", 6, 3))
+    return segments
+
+
+def rows(data: dict, env: dict, now: float, files: list[dict], branch_name: str | None) -> list[list[Segment]]:
+    return [_first_row(data, branch_name), _second_row(data, env, now, files)]
+
+
+def fit(segments: list[Segment], width: int) -> str:
+    """Joins the segments, dropping the highest-priority-number one until the row fits width cells.
+    A row whose never-dropped segments are still too wide is returned as it is."""
+    kept = list(segments)
+    while True:
+        groups: dict[int, list[str]] = {}
+        for text, _, group in kept:
+            groups.setdefault(group, []).append(text)
+        line = SEPARATOR.join(" ".join(texts) for texts in groups.values())
+        droppable = [s for s in kept if s[1] > 0]
+        if cells(line) <= width or not droppable:
+            return line
+        kept.remove(max(droppable, key=lambda s: s[1]))
+
+
+def plain(text: str) -> str:
+    """Text without colour codes and with each icon as one space, to read or test without the font."""
+    return ICONS_RE.sub(" ", SGR_RE.sub("", text))
+
+
+def _read_json(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return _dict(json.load(f))
+    except (OSError, ValueError):
+        return {}
+
+
+def render(data: dict, env: dict, now: float) -> str:
+    workspace = _dict(data.get("workspace"))
+    current = workspace.get("current_dir") or os.getcwd()
+    project = workspace.get("project_dir") or current
+    files = [_read_json(p) for p in settings_files(os.path.expanduser("~"), project, sys.platform)]
+    # workspace.branch is not part of Claude Code's JSON; the demo and the installer's check use it to
+    # show a fixed branch instead of whatever the current directory happens to have checked out.
+    pinned = workspace.get("branch")
+    branch_name = pinned if isinstance(pinned, str) and pinned else branch(current)
+    try:
+        columns = int(env.get("COLUMNS") or DEFAULT_COLUMNS)
+    except ValueError:
+        columns = DEFAULT_COLUMNS
+    width = max(columns - MARGIN, 1)
+    return "\n".join(fit(row, width) for row in rows(data, env, now, files, branch_name))
+
+
+# The demo is rendered at this fixed time so its reset countdowns read 2h10m and 3d4h whenever it runs.
+DEMO_NOW = 1_700_000_000
+DEMO = {
+    "workspace": {"current_dir": ".", "repo": "Doofess/claude-setup", "branch": "main"},
+    "model": {"id": "claude-opus-5-5", "display_name": "Opus"},
+    "effort": {"level": "high"},
+    "pr": {"number": 12},
+    "context_window": {"total_input_tokens": 112_000, "context_window_size": 300_000, "used_percentage": 37},
+    "rate_limits": {
+        "five_hour": {"used_percentage": 23, "resets_at": DEMO_NOW + 2 * 3600 + 10 * 60},
+        "seven_day": {"used_percentage": 41, "resets_at": DEMO_NOW + 3 * 86400 + 4 * 3600},
+    },
+    "cost": {"total_cost_usd": 1.23, "total_lines_added": 156, "total_lines_removed": 23},
+}
+
+
+def main(argv: list[str]) -> int:
+    try:
+        for stream in (sys.stdin, sys.stdout):  # Windows would otherwise use the legacy code page
+            stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+    try:
+        if "--demo" in argv:
+            print(render(DEMO, os.environ, DEMO_NOW))
+        else:
+            print(render(_dict(json.loads(sys.stdin.read())), os.environ, time.time()))
+    except Exception as error:  # the bar must never crash Claude Code's UI
+        print("statusbar:", error)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
