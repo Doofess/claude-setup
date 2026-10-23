@@ -112,3 +112,60 @@ test("other origins and other surfaces are the engine's", async ($, on) => {
   expect(await desktop.find({ type: 'Text', text: /You prompted/ })).toBeUndefined()
   await desktop.unmount()
 })
+
+const COMMAND = (props: object = {}) =>
+  ({
+    plugin: 'session-cards',
+    surface: 'terminal',
+    component: 'CommandOutput',
+    requestId: 'c1',
+    props: { command: 'review', args: 'ultra', text: 'done', isErrored: false, ...props },
+  }) as const
+
+test('a slash command is a violet card headed by the command and its arguments', async ($, on) => {
+  engine(on)
+
+  const ui = await $.ui.mount(COMMAND())
+  const box = await ui.find({ type: 'Box' })
+  expect(box?.props.borderColor).toBe('permission')
+  expect(box?.props.borderStyle).toBe('round')
+
+  const head = await ui.find({ type: 'Text', text: /review/ })
+  expect(head?.text).toBe('  /review ultra')
+  expect(head?.props.bold).toBe(true)
+  expect(head?.props.color).toBe('permission')
+
+  // The engine's own output sits inside the card.
+  expect((await ui.find({ type: 'Text', text: /^engine$/ }))?.text).toBe('engine')
+  await ui.unmount()
+})
+
+test('a command with no arguments has no trailing space', async ($, on) => {
+  engine(on)
+
+  const ui = await $.ui.mount(COMMAND({ command: 'compact', args: '' }))
+  expect((await ui.find({ type: 'Text', text: /compact/ }))?.text).toBe('  /compact')
+  await ui.unmount()
+})
+
+test('an errored command is bordered in error', async ($, on) => {
+  engine(on)
+
+  const ui = await $.ui.mount(COMMAND({ isErrored: true }))
+  expect((await ui.find({ type: 'Box' }))?.props.borderColor).toBe('error')
+  expect((await ui.find({ type: 'Text', text: /review/ }))?.props.color).toBe('error')
+  await ui.unmount()
+})
+
+test('a command the engine drew empty stays empty', async ($, on) => {
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+
+    return <Box />
+  })
+
+  const ui = await $.ui.mount(COMMAND())
+  expect((await ui.find({ type: 'Box' }))?.props.borderStyle).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /review/ })).toBeUndefined()
+  await ui.unmount()
+})

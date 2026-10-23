@@ -67,4 +67,30 @@ export const register: Register = on => {
       </Box>
     )
   })
+
+  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    if (e.surface !== 'terminal') {
+      return next(e)
+    }
+
+    const inner = await next(e)
+
+    // A row the engine drew empty (a Box with no children) stays empty.
+    if (inner.type === 'Box' && !inner.children?.length) {
+      return inner
+    }
+
+    const { Box, Text } = $.ui.resolve(e)
+    const { command, args, isErrored } = e.props
+    const colour = isErrored ? 'error' : 'permission'
+
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor={colour} paddingX={1}>
+        <Text color={colour} bold>
+          {`  /${command}${args === '' ? '' : ` ${args}`}`}
+        </Text>
+        {inner}
+      </Box>
+    )
+  })
 }
