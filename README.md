@@ -28,7 +28,7 @@ session late in a busy day:
 When the window is narrow, the least important pieces drop first: cost, then reset times, PR, repo, effort and the plan
 meters. Branch, model and context always stay:
 
-![The bar at 60 columns: only branch, model, effort and context remain](docs/images/statusbar-narrow.png)
+<img src="docs/images/statusbar-narrow.png" width="364" alt="The bar at 60 columns: only branch, model, effort and context remain">
 
 Dropped pieces aren't lost. The session-cards mod (below) moves them onto Claude Code's hint line, beside the
 permissions text, so a piece only disappears once both lines are full:
