@@ -159,6 +159,19 @@ class FormatTest(unittest.TestCase):
         self.assertIn("shell matrix: 1 difference(s)", out)
         self.assertIn(diffs[0], out[-1])
 
+    def test_piped_output_prints_nerd_font_icons(self):
+        # Piped, Windows Python uses the ANSI code page: cp1252 unless the PC turned on system-wide UTF-8.
+        # cp1252 has no Nerd Font icons, and /setup-check pipes it. PYTHONIOENCODING stands in for that PC.
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); import shell_matrix as m; "
+                "m.SHELLS = {'pwsh': 'x'}; m.probe = lambda s: {'rows': [], 'bar_text': '\\ue0b0 model'}; "
+                "sys.exit(m.main([]))")
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
+        env["PYTHONIOENCODING"] = "cp1252"
+        proc = subprocess.run([sys.executable, "-c", code, os.path.dirname(shell_matrix.__file__)],
+                              capture_output=True, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+        self.assertIn(" model", proc.stdout.decode("utf-8"))
+
 
 class LiveTest(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("CLAUDE_SETUP_LIVE") == "1", "set CLAUDE_SETUP_LIVE=1 (after install from main)")

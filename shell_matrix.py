@@ -9,6 +9,7 @@ resolves, and the installed status line fed the demo session. It prints one colu
 exits 1 when any shell is missing or differs. Run it only from main after install.cmd: the installer's
 check is not meant to run from a worktree.
 """
+import io
 import json
 import os
 import re
@@ -341,6 +342,10 @@ def format_table(results, diffs):
 
 
 def main(argv):
+    # Piped, Windows Python writes the ANSI code page (cp1252 on most PCs), which can't hold the status bar's
+    # Nerd Font icons. /setup-check reads the output through a pipe.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
     if "--bar-child" in argv:
         return bar_child()
     if "--print-commands" in argv:
