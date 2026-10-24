@@ -1,0 +1,5 @@
+{
+  "env": { "MACHINE_ONLY_KEY": "Home Office ✔" },
+  "permissions": { "allow": ["Bash(ls:*)"] },
+  "hooks": {}
+}

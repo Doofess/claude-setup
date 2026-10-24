@@ -1,0 +1,24 @@
+{
+  "terminal.integrated.fontFamily": "JetBrainsMono Nerd Font",
+  "terminal.integrated.minimumContrastRatio": 1,
+  "workbench.colorCustomizations": {
+    "terminal.background": "#0C0C0C",
+    "terminal.foreground": "#CCCCCC",
+    "terminal.ansiBlack": "#0C0C0C",
+    "terminal.ansiRed": "#C50F1F",
+    "terminal.ansiGreen": "#13A10E",
+    "terminal.ansiYellow": "#C19C00",
+    "terminal.ansiBlue": "#0037DA",
+    "terminal.ansiMagenta": "#881798",
+    "terminal.ansiCyan": "#3A96DD",
+    "terminal.ansiWhite": "#CCCCCC",
+    "terminal.ansiBrightBlack": "#767676",
+    "terminal.ansiBrightRed": "#E74856",
+    "terminal.ansiBrightGreen": "#16C60C",
+    "terminal.ansiBrightYellow": "#F9F1A5",
+    "terminal.ansiBrightBlue": "#3B78FF",
+    "terminal.ansiBrightMagenta": "#B4009E",
+    "terminal.ansiBrightCyan": "#61D6D6",
+    "terminal.ansiBrightWhite": "#F2F2F2"
+  }
+}

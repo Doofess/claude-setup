@@ -1,0 +1,10 @@
+// VS Code user settings
+{
+    "editor.fontSize": 14, // my size
+    /* my colours */
+    "workbench.colorCustomizations": {
+        "editor.background": "#1E1E1E",
+        "terminal.ansiRed": "#ff0000", // my red, not Campbell's
+    },
+    "terminal.integrated.fontFamily": "Consolas",
+}

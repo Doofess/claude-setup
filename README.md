@@ -97,8 +97,11 @@ Nothing to look at here, but it shapes every session:
    ```powershell
    git clone https://github.com/Doofess/claude-setup C:\dev\claude-setup
    cd C:\dev\claude-setup
-   .\install.ps1
+   .\install.cmd
    ```
+
+   `install.cmd` runs `install.ps1` under PowerShell 7 when it is installed, else Windows PowerShell, past 5.1's
+   blocked-scripts policy. From Git Bash, run `./install.sh`, which calls it.
 
 4. Restart Claude Code and open a new terminal tab.
 5. Only for photo work: `python -m venv ~/.claude/skills/underwater-photoshop/.venv`, then
@@ -116,14 +119,29 @@ font and colour scheme, and removes hooks this repo has retired. Options:
 
 It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` on every run.
 
+### Check a machine
+
+After installing, or on a new PC, run `/setup-check` in Claude Code. It finds the clone through
+`~/.claude/claude-setup-state.json`, checks the clone is up to date, runs `shell_matrix.py` to compare every shell,
+repairs any difference with `install.cmd`, and runs the matrix again. It is done when the matrix exits 0. It asks
+before pulling, and it never edits the repo. What the installer can't do (a group-policy pin, a shell winget couldn't
+install, signing in to `claude` and `gh`) it hands to you with the exact command.
+
 ### Same screen on every PC
 
 After installing, the installer prints a `Same experience` table (`name  expected  actual  ok|FAIL`) and fails if any
 row is wrong. It checks everything that decides what the screen looks like: the Nerd Font and Windows Terminal's font
 face and `cellHeight`, the `Campbell` colour scheme, Claude Code's theme (`custom:clear` with its file), the status line command, the
-session-cards mod being loaded, and Claude Code 2.1.308+, Python 3.10+ and Git Bash. It also runs the status bar on
+session-cards mod being loaded, and Claude Code 2.1.308+, Python 3.10+ and Git Bash. The shell rows cover the rest:
+`Terminal profile overrides` (no profile sets its own font or colour scheme; `-KeepFont` / `-SkipFont` excuse font overrides and `-KeepScheme` colour scheme ones, and the row shows `kept`), `Terminal default profile` (PowerShell 7),
+`Git Bash profile` (present in Windows Terminal), `PowerShell 7` (pwsh found), `Windows PowerShell policy`
+(RemoteSigned or looser; a group-policy pin that is stricter is a FAIL and named), `PowerShell profiles` (the
+claude-setup block in both profile files) and `VS Code terminal` (font, Campbell colours and contrast set; `no VS Code`
+shows `kept`). These rows only read, so they run under `-Check` too. It also runs the status bar on
 sample data and prints it, so a broken bar or a mangled meter glyph stops the install. Rows covered by `-KeepFont`,
 `-KeepScheme` or `-SkipFont` show `kept`.
+The install records the keep flags it ran with in `~/.claude/claude-setup-state.json` (`flags`); `/setup-check` and
+`shell_matrix.py` pass them to the check and the repair, so a font or scheme you kept is never overwritten.
 
 ## Changing something
 
