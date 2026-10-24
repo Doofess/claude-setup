@@ -58,6 +58,8 @@ class FormatTest(unittest.TestCase):
         self.assertEqual(statusbar.level_colours(90), statusbar.LEVELS["red"])
         # the orange level is Opus's Claude orange, its track a third as bright
         self.assertEqual(statusbar.LEVELS["orange"], (statusbar.CLAUDE_ORANGE, "38;2;72;40;29"))
+        # the red level is the red of `bypass permissions on`, its track a third as bright
+        self.assertEqual(statusbar.LEVELS["red"], (statusbar.ERROR_RED, "38;2;85;36;43"))
         self.assertEqual(len({v for v in statusbar.LEVELS.values()}), 4)
 
     def test_cells_ignores_colour_codes(self):
