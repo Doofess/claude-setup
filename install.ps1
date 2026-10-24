@@ -23,11 +23,13 @@
  10. Installs PowerShell 7 through winget when `pwsh` is missing, makes it the Windows Terminal default profile (when
      its profile is there or PowerShell 7 is installed) and adds a Git Bash profile unless one, or Git for Windows'
      own Windows Terminal fragment, already exists
- 11. Runs the status bar command from the installed settings.json on sample data and fails when its line is wrong
- 12. Checks the session-cards mod is in CLAUDE_CODE_PLUGIN_DIRS and passes `claude plugin validate`
- 13. Prints the `Same experience` table (font, colour scheme, Claude Code theme, status line, mod folder, tool
+ 11. Sets VS Code's integrated terminal (and VS Code Insiders' when installed) from terminal/vscode.json in the user
+     settings.json: the Nerd Font, Campbell's colours and a minimum contrast ratio of 1; every other key stays
+ 12. Runs the status bar command from the installed settings.json on sample data and fails when its line is wrong
+ 13. Checks the session-cards mod is in CLAUDE_CODE_PLUGIN_DIRS and passes `claude plugin validate`
+ 14. Prints the `Same experience` table (font, colour scheme, Claude Code theme, status line, mod folder, tool
      versions) and fails when a row is FAIL
- 14. Lists MCP health
+ 15. Lists MCP health
 
 .PARAMETER SkipPlugins
   Skip the plugin install/update step (faster when only config changed).
@@ -36,10 +38,10 @@
   Do not install a Nerd Font or touch the Windows Terminal font (the font rows of the check read `kept`).
 
 .PARAMETER KeepFont
-  Keep the machine's own Windows Terminal font instead of terminal/profile.json's (its check rows read `kept`).
+  Keep the machine's own Windows Terminal and VS Code terminal font instead of terminal/profile.json's (its check rows read `kept`).
 
 .PARAMETER KeepScheme
-  Keep the machine's own Windows Terminal colour scheme instead of Campbell (its check row reads `kept`).
+  Keep the machine's own Windows Terminal colour scheme and VS Code terminal colours instead of Campbell (its check row reads `kept`).
 
 .PARAMETER Check
   Run only the checks (status bar, session cards mod, `Same experience`, MCP health): nothing is backed up, copied,
@@ -306,6 +308,11 @@ function Set-JsoncString([string]$t, [int]$obj, [string]$key, [string]$value) {
   if ($kv) { return $t.Substring(0, $kv.ValueStart) + $lit + $t.Substring($kv.ValueEnd) }
   return Add-JsoncRaw $t $obj $key $lit
 }
+function Set-JsoncRaw([string]$t, [int]$obj, [string]$key, [string]$raw) {   # $raw is JSON text: a number, true, an object ...
+  $kv = Find-JsoncKey $t $obj $key
+  if ($kv) { return $t.Substring(0, $kv.ValueStart) + $raw + $t.Substring($kv.ValueEnd) }
+  return Add-JsoncRaw $t $obj $key $raw
+}
 function Test-JsoncEmpty([string]$t, [int]$obj) {   # true when the object at $obj has no key left (comments aside)
   $end = Get-JsoncEnd $t $obj
   $i = $obj + 1
@@ -565,6 +572,85 @@ function Add-GitBashProfile([string]$path, [string]$bashExe, [string]$gitRoot,
   return 'added'
 }
 
+# $v as JSON text: strings quoted, numbers in invariant culture (1, not "1"; 1.25 with a point on every PC).
+function ConvertTo-JsonValue($v) {
+  if ($v -is [bool]) { return $(if ($v) { 'true' } else { 'false' }) }
+  if ($v -is [string]) { return (ConvertTo-JsonText $v) }
+  return ([IFormattable]$v).ToString($null, [Globalization.CultureInfo]::InvariantCulture)
+}
+
+# True when the value at $kv in $t means the same as $want: a string equal (a hex colour in any case), a number equal
+# whatever its spelling (1 and 1.0), or a boolean.
+function Test-JsoncValueIs([string]$t, $kv, $want) {
+  $raw = $t.Substring($kv.ValueStart, $kv.ValueEnd - $kv.ValueStart).Trim()
+  if ($want -is [string]) {
+    if ($raw.Length -lt 2 -or $raw[0] -ne '"') { return $false }
+    $have = [regex]::Unescape($raw.Substring(1, $raw.Length - 2))
+    if ($want -match '^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$') { return $have -ieq $want }
+    return $have -ceq $want
+  }
+  if ($want -is [bool]) { return $raw -ceq $(if ($want) { 'true' } else { 'false' }) }
+  $d = 0.0
+  if ([double]::TryParse($raw, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$d)) { return $d -eq [double]$want }
+  return $false
+}
+
+# Sets the keys of terminal/vscode.json ($want, parsed) in VS Code's user settings.json, which is JSON with comments, so
+# it is edited as text: the font family, the contrast ratio and, inside workbench.colorCustomizations, only the listed
+# colours (the user's other colours and every other key stay). A value already there counts as set when it means the
+# same. $keepFont skips the font family and $keepScheme the colours. A missing file is created as {} (folder included)
+# when VS Code is $installed, else nothing is written ('no VS Code'). Returns the result ('set', 'already set' or
+# 'no VS Code') and what changed. With -DryRun the same result comes back and nothing is written; 'set' then means
+# "would change".
+function Set-VsCodeTerminal([string]$path, $want, [bool]$installed, [bool]$keepFont, [bool]$keepScheme, [switch]$DryRun) {
+  if (Test-Path -LiteralPath $path) {
+    $t = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)
+    if (-not $t.Trim()) { $t = '{}' }
+  } elseif ($installed) {
+    $t = '{}'
+  } else {
+    return [pscustomobject]@{ Result = 'no VS Code'; Changed = [string[]]@() }
+  }
+  $root = Get-JsoncRoot $t
+  if ($root -lt 0) { throw "$path is not a JSON object" }
+  $changed = @()
+  foreach ($prop in $want.PSObject.Properties) {
+    $key = $prop.Name
+    if ($key -eq 'workbench.colorCustomizations') { continue }
+    if ($keepFont -and $key -eq 'terminal.integrated.fontFamily') { continue }
+    $kv = Find-JsoncKey $t $root $key
+    if ($kv -and (Test-JsoncValueIs $t $kv $prop.Value)) { continue }
+    $t = Set-JsoncRaw $t $root $key (ConvertTo-JsonValue $prop.Value)
+    $changed += $key
+  }
+  $colours = $want.PSObject.Properties['workbench.colorCustomizations']
+  if ($colours -and -not $keepScheme) {
+    $ck = 'workbench.colorCustomizations'
+    $cc = Find-JsoncKey $t $root $ck
+    if ($cc -and $t[$cc.ValueStart] -ne '{') {   # not an object (rare): replaced by one holding the wanted colours
+      $t = $t.Substring(0, $cc.ValueStart) + '{}' + $t.Substring($cc.ValueEnd)
+      $changed += "$ck replaced (it was not an object)"
+    } elseif (-not $cc) {
+      $t = Add-JsoncRaw $t $root $ck '{}'
+    }
+    $cc = Find-JsoncKey $t $root $ck   # the object's opening brace stays put while its keys change
+    $n = 0
+    foreach ($c in $colours.Value.PSObject.Properties) {
+      $kv = Find-JsoncKey $t $cc.ValueStart $c.Name
+      if ($kv -and (Test-JsoncValueIs $t $kv $c.Value)) { continue }
+      $t = Set-JsoncRaw $t $cc.ValueStart $c.Name (ConvertTo-JsonValue $c.Value)
+      $n++
+    }
+    if ($n -gt 0) { $changed += "$ck ($n colours)" }
+  }
+  if ($changed.Count -eq 0) { return [pscustomobject]@{ Result = 'already set'; Changed = [string[]]@() } }
+  if (-not $DryRun) {
+    New-Item -ItemType Directory -Force (Split-Path $path) | Out-Null
+    Write-Utf8NoBom $path $t
+  }
+  return [pscustomobject]@{ Result = 'set'; Changed = [string[]]$changed }
+}
+
 # Windows Terminal opens in System32 unless the defaults profile names a folder, and sessions started there load
 # the wrong project context. Add one only when profiles.defaults has no startingDirectory of its own.
 function Set-TerminalStartDir([string]$path, [string]$dir) {
@@ -805,6 +891,12 @@ function Get-GitRoot([string]$bashExe) {
 # very run are not in this process's PATH yet).
 function Test-Pwsh {
   return [bool]((Get-Command pwsh -ErrorAction SilentlyContinue) -or (Test-Path "$env:ProgramFiles\PowerShell\7\pwsh.exe"))
+}
+
+# A VS Code edition is installed when its exe sits in the per-user folder (the user installer's default) or its command
+# (`code`, `code-insiders`) is on PATH.
+function Test-VsCode([string]$folder, [string]$exe, [string]$command) {
+  return [bool]((Test-Path (Join-Path $env:LOCALAPPDATA "Programs\$folder\$exe")) -or (Get-Command $command -ErrorAction SilentlyContinue))
 }
 
 # Runs $command (statusLine.command from the installed settings) the way Claude Code does on Windows: Git Bash
@@ -1087,6 +1179,29 @@ if (-not $Check) {
   }
   if (@($wtSettings).Count -eq 0) { Write-Color '    Windows Terminal not found; set PowerShell 7 as the default profile and add Git Bash by hand' 228 }
   elseif (-not $haveGitBash) { Write-Color '    Git Bash not found; no Git Bash profile added' 228 }
+
+  # 4g. VS Code's integrated terminal (stable, and Insiders when it is installed): the Nerd Font, Campbell's colours and a
+  # contrast ratio of 1 from terminal/vscode.json, so it looks like Windows Terminal. -KeepFont / -SkipFont keep the font
+  # and -KeepScheme the colours.
+  Write-Step 'VS Code terminal'
+  $vsWant = Read-Utf8 (Join-Path $repo 'terminal\vscode.json') | ConvertFrom-Json
+  foreach ($vs in @(@('Code', 'Microsoft VS Code', 'Code.exe', 'code'), @('Code - Insiders', 'Microsoft VS Code Insiders', 'Code - Insiders.exe', 'code-insiders'))) {
+    $vsInstalled = Test-VsCode $vs[1] $vs[2] $vs[3]
+    if ($vs[0] -ne 'Code' -and -not $vsInstalled) { continue }
+    $vsPath = Join-Path $env:APPDATA "$($vs[0])\User\settings.json"
+    try {
+      if (Test-Path $vsPath) { Copy-Item $vsPath (Join-Path $backup ('vscode-' + ($vs[0] -replace ' ', '') + '-settings.json')) -Force }
+      $r = Set-VsCodeTerminal $vsPath $vsWant $vsInstalled ([bool]($KeepFont -or $SkipFont)) ([bool]$KeepScheme)
+      $msg = switch ($r.Result) {
+        'set' { "terminal settings changed in $vsPath ($($r.Changed -join ', '))" }
+        'already set' { "terminal settings already set in $vsPath" }
+        default { "$($vs[0]) is not installed and has no $vsPath; nothing written" }
+      }
+      Write-Host "    $msg"
+    } catch {
+      Write-Color "    could not update ${vsPath}: $($_.Exception.Message)" 228
+    }
+  }
 }
 
 # 5. Verify

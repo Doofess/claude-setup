@@ -142,6 +142,8 @@ def per_engine(base, module_globals):
         cls = type("%s_%s" % (base.__name__.replace("Base", "Test"), name), (base, unittest.TestCase), {"engine": engine})
         module_globals[cls.__name__] = unittest.skipUnless(path, "%s is not on PATH" % name)(cls)
 FACE, HEIGHT, SCHEME = "JetBrainsMono Nerd Font", "1.25", "Campbell"
+VSCODE_JSON = os.path.join(ROOT, "terminal", "vscode.json")
+VSCODE_FIXTURES = os.path.join(ROOT, "tests", "fixtures", "vscode")
 
 
 def strip_jsonc(text):
@@ -176,6 +178,12 @@ def load_jsonc(path):
         return json.loads(strip_jsonc(f.read()))
 
 
+def load_jsonc_lenient(path):
+    """load_jsonc that also accepts the trailing commas VS Code's settings may carry (comments are dropped first)."""
+    with open(path, encoding="utf-8") as f:
+        return json.loads(re.sub(r",(\s*[}\]])", r"\1", strip_jsonc(f.read())))
+
+
 def installer_helpers():
     """PowerShell source of the Windows Terminal JSONC helpers in install.ps1 (the whole section, from its header up
     to Set-TerminalStartDir, since Find-JsoncKey and friends call the scanners above them) and Write-Utf8NoBom."""
@@ -186,7 +194,7 @@ def installer_helpers():
     while lines[end - 1].startswith("#") or not lines[end - 1].strip():
         end -= 1
     block = "\n".join(lines[start:end])
-    for name in ("Find-JsoncKey", "Set-TerminalFont", "Set-TerminalScheme", "Read-TerminalLook", "Set-TerminalDefaultProfile", "Add-GitBashProfile"):
+    for name in ("Find-JsoncKey", "Set-TerminalFont", "Set-TerminalScheme", "Read-TerminalLook", "Set-TerminalDefaultProfile", "Add-GitBashProfile", "Set-VsCodeTerminal", "Set-JsoncRaw"):
         assert "function %s" % name in block, name
     m = re.search(r"^function Write-Utf8NoBom.*?^}", source, re.DOTALL | re.MULTILINE)
     assert m is not None, "Write-Utf8NoBom"
@@ -236,7 +244,7 @@ class FontCheckBase:
         self.assertIn("$wtLook.Face -eq $nerdFontFace", text)
 
 
-DRIVER = """param([string]$Mode, [string]$Path, [string]$Face, [string]$Height, [string]$Scheme, [string]$Guid, [string]$Bash, [string]$GitRoot, [string]$Frag, [string]$Flags)
+DRIVER = """param([string]$Mode, [string]$Path, [string]$Face, [string]$Height, [string]$Scheme, [string]$Guid, [string]$Bash, [string]$GitRoot, [string]$Frag, [string]$Flags, [string]$WantPath)
 $ErrorActionPreference = 'Stop'
 {HELPERS}
 if ($Mode -eq 'apply') {
@@ -251,6 +259,9 @@ if ($Mode -eq 'apply') {
   Set-TerminalDefaultProfile $Path $Guid ($Flags -match 'ps7') -DryRun:($Flags -match 'dry') | ConvertTo-Json -Compress
 } elseif ($Mode -eq 'gitbash') {
   Add-GitBashProfile $Path $Bash $GitRoot ([string[]]@($Frag)) -DryRun:($Flags -match 'dry') | ConvertTo-Json -Compress
+} elseif ($Mode -eq 'vscode') {
+  $wantDoc = [IO.File]::ReadAllText($WantPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+  Set-VsCodeTerminal $Path $wantDoc ($Flags -match 'inst') ($Flags -match 'keepfont') ($Flags -match 'keepscheme') -DryRun:($Flags -match 'dry') | ConvertTo-Json -Compress
 }
 """
 
@@ -276,7 +287,7 @@ class TerminalHelpersBase:
         return dest
 
     def run_driver(self, mode, path, guid="x", bash="x", root="x", frag="x", flags="x"):
-        r = run_engine(self.engine, self.script, mode, path, FACE, HEIGHT, SCHEME, guid, bash, root, frag, flags)
+        r = run_engine(self.engine, self.script, mode, path, FACE, HEIGHT, SCHEME, guid, bash, root, frag, flags, VSCODE_JSON)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return json.loads(r.stdout)
 
@@ -512,6 +523,113 @@ class TerminalHelpersBase:
         path = self.fixture_copy("I_no_git_bash")
         self.rewrite(path, '{ "profiles": { "defaults": {} } }')
         self.assertEqual(self.add_git_bash(path), "none")
+
+    # ---- VS Code's terminal ----
+    def vscode_copy(self, name):
+        dest = os.path.join(self.tmp, "%s-%s.json" % (self._testMethodName, name))
+        shutil.copyfile(os.path.join(VSCODE_FIXTURES, name + ".json"), dest)
+        return dest
+
+    def vscode_run(self, path, flags="inst"):
+        return self.run_driver("vscode", path, flags=flags)
+
+    def vscode_want(self):
+        return load_jsonc(VSCODE_JSON)
+
+    def test_vscode_keys_set_and_others_kept(self):
+        path = self.vscode_copy("A_has_other_keys")
+        r = self.vscode_run(path)
+        self.assertEqual(r["Result"], "set")
+        doc = load_jsonc_lenient(path)
+        want = self.vscode_want()
+        for key, value in want.items():
+            if key != "workbench.colorCustomizations":
+                self.assertEqual(doc[key], value, key)
+        colours = doc["workbench.colorCustomizations"]
+        for key, value in want["workbench.colorCustomizations"].items():
+            self.assertEqual(colours[key], value, key)
+        self.assertEqual(doc["editor.fontSize"], 14)
+        self.assertEqual(colours["editor.background"], "#1E1E1E")
+        self.assertIn("// VS Code user settings", self.text(path))
+        self.assertIn("// my size", self.text(path))
+        self.assertIn("/* my colours */", self.text(path))
+        before = self.digest(path)
+        self.assertEqual(self.vscode_run(path), {"Result": "already set", "Changed": []})
+        self.assertEqual(self.digest(path), before, "a second run changed the file")
+
+    def test_vscode_file_created(self):
+        path = os.path.join(self.tmp, self._testMethodName, "User", "settings.json")   # neither the file nor its folder exists
+        self.assertEqual(self.vscode_run(path)["Result"], "set")
+        doc = load_jsonc(path)
+        want = self.vscode_want()
+        self.assertEqual(doc["terminal.integrated.fontFamily"], want["terminal.integrated.fontFamily"])
+        self.assertEqual(doc["workbench.colorCustomizations"], want["workbench.colorCustomizations"])
+        stand_in = self.vscode_copy("B_missing")   # a file holding {}: the same text comes out
+        self.vscode_run(stand_in)
+        self.assertEqual(self.text(path).strip(), self.text(stand_in).strip())
+
+    def test_vscode_not_installed_writes_nothing(self):
+        path = os.path.join(self.tmp, self._testMethodName, "User", "settings.json")
+        self.assertEqual(self.vscode_run(path, flags="x"), {"Result": "no VS Code", "Changed": []})
+        self.assertFalse(os.path.exists(os.path.dirname(path)))
+
+    def test_numbers_stay_numbers(self):
+        path = self.vscode_copy("B_missing")
+        self.vscode_run(path)
+        ratio = load_jsonc(path)["terminal.integrated.minimumContrastRatio"]
+        self.assertEqual(ratio, 1)
+        self.assertIs(type(ratio), int)
+        self.assertRegex(self.text(path), r'"terminal\.integrated\.minimumContrastRatio": 1[ ,}]')
+
+    def test_vscode_equal_values_are_already_set(self):
+        path = self.vscode_copy("B_missing")
+        self.vscode_run(path)
+        text = self.text(path)
+        text = re.sub(r'"#[0-9A-F]{6}"', lambda m: m.group(0).lower(), text)   # hex colours differ only by case
+        text = text.replace('"terminal.integrated.minimumContrastRatio": 1', '"terminal.integrated.minimumContrastRatio"  :\n    1.0')
+        self.rewrite(path, text)
+        before = self.digest(path)
+        self.assertEqual(self.vscode_run(path), {"Result": "already set", "Changed": []})
+        self.assertEqual(self.digest(path), before)
+
+    def test_vscode_wrong_type_is_replaced(self):
+        path = self.vscode_copy("B_missing")
+        self.rewrite(path, '{ "terminal.integrated.minimumContrastRatio": "1", "workbench.colorCustomizations": [] }')
+        r = self.vscode_run(path)
+        self.assertEqual(r["Result"], "set")
+        self.assertTrue(any("workbench.colorCustomizations" in c and "not an object" in c for c in r["Changed"]), r["Changed"])
+        doc = load_jsonc(path)
+        self.assertEqual(doc["terminal.integrated.minimumContrastRatio"], 1)
+        self.assertEqual(doc["workbench.colorCustomizations"], self.vscode_want()["workbench.colorCustomizations"])
+
+    def test_vscode_dry_run_writes_nothing(self):
+        path = self.vscode_copy("A_has_other_keys")
+        before = self.digest(path)
+        r = self.vscode_run(path, flags="inst dry")
+        self.assertEqual(r["Result"], "set")
+        self.assertTrue(r["Changed"])
+        self.assertEqual(self.digest(path), before)
+        absent = os.path.join(self.tmp, self._testMethodName, "User", "settings.json")
+        self.assertEqual(self.vscode_run(absent, flags="inst dry")["Result"], "set")
+        self.assertFalse(os.path.exists(os.path.dirname(absent)))
+        self.assertEqual(self.vscode_run(absent, flags="dry")["Result"], "no VS Code")
+
+    def test_vscode_keep_font_skips_the_font(self):
+        path = self.vscode_copy("A_has_other_keys")
+        r = self.vscode_run(path, flags="inst keepfont")
+        doc = load_jsonc_lenient(path)
+        self.assertEqual(doc["terminal.integrated.fontFamily"], "Consolas")
+        self.assertEqual(doc["terminal.integrated.minimumContrastRatio"], 1)
+        self.assertEqual(doc["workbench.colorCustomizations"]["terminal.ansiRed"], "#C50F1F")
+        self.assertFalse(any("fontFamily" in c for c in r["Changed"]), r["Changed"])
+
+    def test_vscode_keep_scheme_skips_the_colours(self):
+        path = self.vscode_copy("A_has_other_keys")
+        self.vscode_run(path, flags="inst keepscheme")
+        doc = load_jsonc_lenient(path)
+        self.assertEqual(doc["terminal.integrated.fontFamily"], FACE)
+        self.assertEqual(doc["terminal.integrated.minimumContrastRatio"], 1)
+        self.assertEqual(doc["workbench.colorCustomizations"], {"editor.background": "#1E1E1E", "terminal.ansiRed": "#ff0000"})
 
 
 if __name__ == "__main__":
