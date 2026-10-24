@@ -4,7 +4,7 @@ My Claude Code setup, kept in git so every PC I use looks and behaves the same. 
 Windows machine: global rules, agents, plugins, a custom status bar, a mod that tidies the conversation view, and the
 terminal's font and colours.
 
-![The status bar: repo, branch, PR, model and effort, context meter, 5-hour and 7-day plan meters, cost, session time](docs/images/statusbar.png)
+![The status bar: repo, branch, model and effort, context meter, 5-hour and 7-day plan meters, cost, session time](docs/images/statusbar.png)
 
 ## What you see
 
@@ -12,7 +12,7 @@ terminal's font and colours.
 
 The line along the bottom of Claude Code, read left to right:
 
-- **Where you are**: the repo (GitHub in violet, GitLab in its orange with its own icon, read from the origin remote), the branch, and the open PR's number, if there is one, yellow and underlined.
+- **Where you are**: the repo (GitHub in violet, GitLab in its orange with its own icon, read from the origin remote) and the branch (Claude Code shows the PR badge itself).
 - **Who is working**: the model and the effort level. Each model and each effort level has its own colour, so you can
   tell at a glance whether you're on Opus (Claude orange) or Sonnet, at high or medium. Fable's name is a gold gradient, and a running Fable subagent's row pulses.
 - **How full the context is**: a meter that reaches 100% at the auto-compact point (about 267k of the 300k window), not
@@ -26,8 +26,8 @@ session late in a busy day:
 
 ![The same bar with the context meter orange at 75%, the 5-hour meter red at 93% and the 7-day meter yellow at 57%](docs/images/statusbar-busy.png)
 
-When the window is narrow, the least important pieces drop first: session time, cost, then reset times, PR, effort and
-the plan meters. Repo, branch, model and context always stay; on a very narrow window the repo loses its owner, then
+When the window is narrow, the least important pieces drop first: session time, cost, then reset times and
+the plan meters. Repo, branch, model with its effort, and context always stay; on a very narrow window the repo loses its owner, then
 letters of its name. Once the line fits, any dropped piece that still fits comes back, so
 no room is wasted:
 
@@ -153,7 +153,7 @@ Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers)
 - The context meter's end is the auto-compact window minus 33k: 13k that Claude Code keeps free plus 20k reserved for the reply.
 - Each meter has 8 cells: the filled part in the bright level colour, the rest in a dark shade of the same colour; its
   icon and numbers take that colour too.
-- Separators, the other icons, branch, PR and reset times are sent as exact white rather than the terminal's default
+- Separators, the other icons, branch and reset times are sent as exact white rather than the terminal's default
   foreground (light grey in most schemes), so nothing on the line is grey.
 - The pieces dropped on a narrow terminal are written to `~/.claude/statusbar-overflow/<session_id>.json`, as text with
   their colours; files older than a day are removed. The session-cards mod reads them for the hint line. While the hint

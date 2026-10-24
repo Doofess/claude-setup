@@ -3,12 +3,12 @@
 Usage: Claude Code runs `python statusbar.py` and pipes its session JSON to stdin; `--demo` prints
 sample data instead and `--demo-json` prints that sample as the JSON Claude Code would send. Column width comes from the COLUMNS environment variable (default 120).
 
-The line reads left to right: repo (owner/name), git branch, PR number │ model, a bolt, effort │ a context
+The line reads left to right: repo (owner/name), git branch │ model, a bolt, effort │ a context
 meter with tokens used out of the auto-compact point │ the 5-hour and 7-day plan usage meters with the
 time until each resets, each named 5H or 7D beside its icon │ cost │ how long the session has run. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
 short words (ctx, 5H, 7D, session) so the bar also reads in a font without the glyphs (the installer adds the flag
 on a machine with no Nerd Font). Colours are the terminal's own 16-colour palette, so the bar follows the
-terminal's scheme: cost green, the PR number yellow and underlined, the session time bright blue, each model (Opus in Claude orange, Fable a gold gradient) and each effort level its own colour. Everything else is sent as
+terminal's scheme: cost green, the session time bright blue, each model (Opus in Claude orange, Fable a gold gradient) and each effort level its own colour. Everything else is sent as
 exact 24-bit colours, never the terminal's default foreground (a light grey in most schemes): the chrome
 (separators, the place and model icons, branch, reset times) in pure white; the repo name in the
 violet Claude Code highlights with (its dark theme's `permission` colour, rgb 177,185,249); and the three
@@ -17,8 +17,8 @@ green below 50%, yellow from 50, orange from 70, red from 90. Nothing is grey.
 
 Width fitting: the line may use COLUMNS minus a small margin that Claude Code keeps for itself. Each
 piece (a segment) has a priority. While the line is too wide, the piece with the highest priority
-number is dropped: the session time first, then cost, then the 7-day and 5-hour reset times, the PR number, the effort, then
-the 7-day and 5-hour meters; the repo, the branch, the model and the context meter always stay. Once
+number is dropped: the session time first, then cost, then the 7-day and 5-hour reset times, then
+the 7-day and 5-hour meters; the repo, the branch, the model with its effort and the context meter always stay. Once
 the line fits, dropped pieces that still fit come back, most important first, so no room is left unused.
 When even the pieces that always stay are too wide, the repo gives up the difference: its owner goes
 first, then its name is cut with an ellipsis.
@@ -308,15 +308,16 @@ SEPARATOR = sgr(WHITE, " │ ")  # separators, icons and labels are explicit whi
 # segments of one group sit together and groups are joined by a separator.
 Segment = tuple[str, int, int]
 # Drop order, least important first (the user's call: session time, cost, then reset times, then the rest). The repo
-# never drops: it always opens the line, like the branch, model and context meter.
-P_TIME, P_COST, P_7D_RESET, P_5H_RESET, P_PR, P_EFFORT, P_7D, P_5H = 8, 7, 6, 5, 4, 3, 2, 1
+# never drops: it always opens the line, like the branch, the model with its effort (they stay together) and the
+# context meter. Claude Code draws the PR badge itself, so the bar has no PR piece.
+P_TIME, P_COST, P_7D_RESET, P_5H_RESET, P_7D, P_5H = 6, 5, 4, 3, 2, 1
 G_PLACE, G_MODEL, G_CONTEXT, G_5H, G_7D, G_COST, G_TIME = range(7)
 GROUP_JOIN = {G_MODEL: " "}  # "Opus <bolt> high", or "Opus · high" under --labels; every other group joins its pieces with two spaces
 
 # Markers before a piece: a Nerd Font glyph (the default) or, with --labels, a short word for fonts without the
-# glyphs (then the repo, branch, PR and model carry no marker: they read on their own). Every glyph is followed
+# glyphs (then the repo, branch and model carry no marker: they read on their own). Every glyph is followed
 # by a space because the non-Mono Nerd Font variants draw it wider than one cell and it would overlap the text.
-ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "pr": "\uf407", "model": "󰚩", "effort": "", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073",
+ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "model": "󰚩", "effort": "", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073",
          "time": "󰅐"}  # time: md-clock-outline, since fa-clock-o is the 5-hour window's
 LABELS = {"effort": "·", "ctx": "ctx", "5h": "5H", "7d": "7D", "time": "session"}
 GITLAB = "38;2;252;109;38"  # #FC6D26, GitLab's orange
@@ -412,7 +413,6 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     remote = origin_remote(str(workspace.get("current_dir") or os.getcwd()))
     repo = repo or (remote[1] if remote else None)
     kind = remote[0] if remote else "github"  # Claude Code fills workspace.repo for GitHub only
-    number = _dict(data.get("pr")).get("number")
     model = _dict(data.get("model"))
     name = model.get("display_name") or model.get("id")
     effort = _dict(data.get("effort")).get("level")
@@ -422,15 +422,13 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
         out.append((_mark({"repo": icon} if marks is ICONS else marks, "repo", sgr(colour, repo), colour), 0, G_PLACE))
     if branch_name:
         out.append((_mark(marks, "branch", sgr(WHITE, branch_name)), 0, G_PLACE))
-    if number:
-        out.append((_mark(marks, "pr", sgr(UNDERLINE, sgr(YELLOW, f"#{number}")), YELLOW), P_PR, G_PLACE))
     if name:
         colour = model_colour(str(name))
         out.append((_mark(marks, "model", model_text(str(name)), colour), 0, G_MODEL))
         if effort:
             level = effort_colour(str(effort))
             # The bolt takes the level's colour; the --labels dot stays white.
-            out.append((_mark(marks, "effort", _coloured(str(effort), level), level if marks is ICONS else None), P_EFFORT, G_MODEL))
+            out.append((_mark(marks, "effort", _coloured(str(effort), level), level if marks is ICONS else None), 0, G_MODEL))
 
     window = _dict(data.get("context_window"))
     used = int(_num(window.get("total_input_tokens")))
@@ -606,7 +604,6 @@ DEMO = {
     "workspace": {"current_dir": ".", "repo": "Doofess/claude-setup", "branch": "main"},
     "model": {"id": "claude-opus-5-5", "display_name": "Opus"},
     "effort": {"level": "high"},
-    "pr": {"number": 12},
     "context_window": {"total_input_tokens": 112_000, "context_window_size": 300_000, "used_percentage": 37},
     "rate_limits": {
         "five_hour": {"used_percentage": 23, "resets_at": DEMO_NOW + 2 * 3600 + 10 * 60},
