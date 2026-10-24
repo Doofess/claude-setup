@@ -7,7 +7,9 @@
     "claude-md-management@anthropic-plugin-directory": false,
     "typescript-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
-    "rust-analyzer-lsp@claude-plugins-official": true
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "design@synced": false,
+    "engineering@synced": false
   },
   "extraKnownMarketplaces": {
     "good-css": { "source": { "source": "github", "repo": "vojtaholik/good-css" } }
@@ -77,7 +79,14 @@
     "docx": "name-only",
     "pdf": "name-only",
     "pptx": "name-only",
-    "xlsx": "name-only"
+    "xlsx": "name-only",
+    "brainstorming": "off",
+    "diagnosing-superpowers": "off",
+    "dispatching-parallel-agents": "off",
+    "receiving-code-review": "off",
+    "requesting-code-review": "off",
+    "verification-before-completion": "off",
+    "writing-skills": "off"
   },
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
