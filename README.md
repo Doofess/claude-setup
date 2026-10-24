@@ -19,7 +19,7 @@ The line along the bottom of Claude Code, read left to right:
   at the end of the window. When it's full, it's time to `/clear`.
 - **How much plan is left**: the 5-hour and 7-day usage meters, each with the time until it resets.
 - **What the session has cost**, in green.
-- **How long the session has run**, beside a clock, in blue.
+- **How long the session has run**, beside a blue clock, in the repo name's violet.
 
 The meters change colour as they fill: green below 50%, yellow from 50%, orange from 70% and red from 90%. The same
 session late in a busy day:
