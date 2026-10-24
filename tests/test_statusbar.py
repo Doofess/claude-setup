@@ -212,7 +212,7 @@ class RowTest(unittest.TestCase):
         row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
         # Each icon takes a cell and a space (plain() shows the icon as a space): the non-Mono Nerd Font
         # variants draw glyphs wider than one cell, and without the space they overlap the text.
-        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus · high │   ████████ 42%  112k/267k │   5H ████████ 23%  → 2h10m │   7D ████████ 41%  → 3d4h │ $1.23 │   1h 33m")
+        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus   high │   ████████ 42%  112k/267k │   5H ████████ 23%  → 2h10m │   7D ████████ 41%  → 3d4h │ $1.23 │   1h 33m")
 
     def test_labels_instead_of_icons(self):
         # --labels: dim words for fonts without the Nerd Font glyphs; the rest of the line is the same.
@@ -311,6 +311,14 @@ class RowTest(unittest.TestCase):
         self.assertIn(statusbar.sgr(statusbar.CLAUDE_ORANGE, statusbar.ICONS["model"] + " "), raw)
         raw = statusbar.fit(self.demo_row(model={"id": "x", "display_name": "Other"}), 200)
         self.assertIn(statusbar.sgr(statusbar.WHITE, statusbar.ICONS["model"] + " "), raw)  # unknown model: white
+
+    def test_effort_has_a_bolt_in_its_colour(self):
+        # A bolt before the effort instead of the dot; --labels keeps the dot.
+        self.assertEqual(statusbar.ICONS["effort"], "")  # fa-flash, not U+26A1, which draws as a colour emoji
+        raw = statusbar.fit(self.demo_row(), 200)
+        self.assertIn(statusbar.sgr(91, statusbar.ICONS["effort"] + " ") + statusbar.sgr(91, "high"), raw)
+        self.assertNotIn(" · ", statusbar.plain(raw))
+        self.assertIn("Opus · high", statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200)))
 
     def test_model_icon_is_an_agent(self):
         self.assertEqual(statusbar.ICONS["model"], "󰚩")  # md-robot

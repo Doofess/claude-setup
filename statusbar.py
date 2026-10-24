@@ -3,7 +3,7 @@
 Usage: Claude Code runs `python statusbar.py` and pipes its session JSON to stdin; `--demo` prints
 sample data instead and `--demo-json` prints that sample as the JSON Claude Code would send. Column width comes from the COLUMNS environment variable (default 120).
 
-The line reads left to right: repo (owner/name), git branch, PR number │ model · effort │ a context
+The line reads left to right: repo (owner/name), git branch, PR number │ model, a bolt, effort │ a context
 meter with tokens used out of the auto-compact point │ the 5-hour and 7-day plan usage meters with the
 time until each resets, each named 5H or 7D beside its icon │ cost │ how long the session has run. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
 short words (ctx, 5H, 7D, session) so the bar also reads in a font without the glyphs (the installer adds the flag
@@ -307,14 +307,14 @@ Segment = tuple[str, int, int]
 # never drops: it always opens the line, like the branch, model and context meter.
 P_TIME, P_COST, P_7D_RESET, P_5H_RESET, P_PR, P_EFFORT, P_7D, P_5H = 8, 7, 6, 5, 4, 3, 2, 1
 G_PLACE, G_MODEL, G_CONTEXT, G_5H, G_7D, G_COST, G_TIME = range(7)
-GROUP_JOIN = {G_MODEL: sgr(WHITE, " · ")}  # "Opus · high"; every other group joins its pieces with two spaces
+GROUP_JOIN = {G_MODEL: " "}  # "Opus <bolt> high", or "Opus · high" under --labels; every other group joins its pieces with two spaces
 
 # Markers before a piece: a Nerd Font glyph (the default) or, with --labels, a short word for fonts without the
 # glyphs (then the repo, branch, PR and model carry no marker: they read on their own). Every glyph is followed
 # by a space because the non-Mono Nerd Font variants draw it wider than one cell and it would overlap the text.
-ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "pr": "\uf407", "model": "󰚩", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073",
+ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "pr": "\uf407", "model": "󰚩", "effort": "", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073",
          "time": "󰅐"}  # time: md-clock-outline, since fa-clock-o is the 5-hour window's
-LABELS = {"ctx": "ctx", "5h": "5H", "7d": "7D", "time": "session"}
+LABELS = {"effort": "·", "ctx": "ctx", "5h": "5H", "7d": "7D", "time": "session"}
 GITLAB = "38;2;252;109;38"  # #FC6D26, GitLab's orange
 # The repo piece's icon and colour by host kind (origin_remote): GitHub, GitLab, and the plain git glyph for the rest.
 REPO_LOOKS = {"github": (ICONS["repo"], VIOLET), "gitlab": ("", GITLAB), "other": ("", VIOLET)}
@@ -424,7 +424,9 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
         colour = model_colour(str(name))
         out.append((_mark(marks, "model", model_text(str(name)), colour), 0, G_MODEL))
         if effort:
-            out.append((_coloured(str(effort), effort_colour(str(effort))), P_EFFORT, G_MODEL))
+            level = effort_colour(str(effort))
+            # The bolt takes the level's colour; the --labels dot stays white.
+            out.append((_mark(marks, "effort", _coloured(str(effort), level), level if marks is ICONS else None), P_EFFORT, G_MODEL))
 
     window = _dict(data.get("context_window"))
     used = int(_num(window.get("total_input_tokens")))
