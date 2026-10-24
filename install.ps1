@@ -192,6 +192,13 @@ function Get-NerdFontFiles {
     Get-ChildItem $d -Filter '*Nerd*Font*' -ErrorAction SilentlyContinue
   }
 }
+# The font face may be a comma list (the later faces are Windows Terminal's glyph fallbacks); only the first is a font
+# to look for or install. Windows Terminal's setting is compared with and written from the whole string.
+function Get-PrimaryFace([string]$face) { ($face -split ',')[0].Trim() }
+function Get-FaceFiles([string]$face) {
+  $stem = (Get-PrimaryFace $face) -replace '\s*Nerd Font.*$', '' -replace '\s+', ''
+  Get-NerdFontFiles | Where-Object { $_.Name -like "$stem*" }
+}
 
 # ---- Windows Terminal settings.json ----
 # It is JSON with comments, so it is read and edited as text: these helpers scan past strings and comments, find a
@@ -769,13 +776,13 @@ if (-not $SkipFont) {
     & winget install --id $nerdFontId -e --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
     $ErrorActionPreference = $savedEap
     $weInstalled = @(Get-NerdFontFiles).Count -gt 0
-    if ($weInstalled) { Write-Host "    installed $nerdFontFace" } else { Write-Color "    winget could not install $nerdFontId; install a Nerd Font by hand (https://www.nerdfonts.com)" 228 }
+    if ($weInstalled) { Write-Host "    installed $(Get-PrimaryFace $nerdFontFace)" } else { Write-Color "    winget could not install $nerdFontId; install a Nerd Font by hand (https://www.nerdfonts.com)" 228 }
   } else {
     Write-Color '    winget not found; install a Nerd Font by hand (https://www.nerdfonts.com)' 228
   }
   # Point Windows Terminal's default font at terminal/profile.json's (face and cellHeight) whenever it differs, but only
   # when this run installed the face or the machine has JetBrainsMono; -KeepFont keeps the machine's own.
-  $haveFace = $weInstalled -or (@(Get-NerdFontFiles | Where-Object { $_.Name -like 'JetBrainsMono*' }).Count -gt 0)
+  $haveFace = $weInstalled -or (@(Get-FaceFiles $nerdFontFace).Count -gt 0)
   if ($KeepFont) {
     Write-Color '    -KeepFont: the Windows Terminal font stays as it is' 244
   } elseif ($haveFace) {
@@ -878,7 +885,7 @@ function Add-SameRow([string]$name, [string]$expected, [string]$actual, [bool]$o
   $script:sameRows += [pscustomobject]@{ Name = $name; Expected = $expected; Actual = $actual; Status = $status }
 }
 $fontKept = [bool]($KeepFont -or $SkipFont)
-$nerdFile = @(Get-NerdFontFiles | Where-Object { $_.Name -like 'JetBrainsMono*' } | Select-Object -First 1)
+$nerdFile = @(Get-FaceFiles $nerdFontFace | Select-Object -First 1)
 Add-SameRow 'Nerd Font file' 'JetBrainsMono*Nerd*Font*' $(if ($nerdFile.Count) { $nerdFile[0].Name } else { 'none' }) ($nerdFile.Count -gt 0) ([bool]$SkipFont)
 $wtLook = if (@($wtSettings).Count -gt 0) { Read-TerminalLook @($wtSettings)[0] } else { $null }
 $wantHeight = [string]$terminalLook.font.cellHeight
