@@ -74,7 +74,7 @@ LEVELS = {
     "green": ("38;2;76;200;110", "38;2;25;67;37"),
     "yellow": ("38;2;235;200;60", "38;2;78;67;20"),
     "orange": (CLAUDE_ORANGE, "38;2;72;40;29"),  # Opus's Claude orange
-    "red": ("38;2;240;80;80", "38;2;80;27;27"),
+    "red": (ERROR_RED, "38;2;85;36;43"),  # the red of `bypass permissions on`
 }
 
 SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
