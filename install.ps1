@@ -36,9 +36,17 @@
 .PARAMETER KeepScheme
   Keep the machine's own Windows Terminal colour scheme instead of Campbell (its check row reads `kept`).
 
+.PARAMETER Check
+  Run only the checks (status bar, session cards mod, `Same experience`, MCP health): nothing is backed up, copied,
+  merged or installed, and no file changes. Exits 1 when a check fails.
+
+.PARAMETER Json
+  With -Check, print one JSON document {rows: [{name, expected, actual, status}], failures: [...]} to stdout and
+  nothing else.
+
 #>
 [CmdletBinding()]
-param([switch]$SkipPlugins, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme)
+param([switch]$SkipPlugins, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme, [switch]$Check, [switch]$Json)
 
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
@@ -47,11 +55,12 @@ $settingsPath = Join-Path $claudeDir 'settings.json'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $backup = Join-Path $claudeDir "backups\claude-setup-$stamp"
 $failures = @()
+$quiet = [bool]$Json   # -Json: stdout carries the JSON document only, so nothing else is written to the host
 
 # Output colours come from the repo's two palettes, orange and grey (xterm-256 indices):
 # 208 orange for steps, 223 peach for success, 228 yellow for warnings, 203 red for failures, 244 grey.
 # The 16 Write-Host console colours have no orange, so these are ANSI escapes ([char]27: `e needs PS 6+).
-function Write-Color($msg, [int]$color) { Write-Host "$([char]27)[38;5;${color}m$msg$([char]27)[0m" }
+function Write-Color($msg, [int]$color) { if ($quiet) { return }; Write-Host "$([char]27)[38;5;${color}m$msg$([char]27)[0m" }
 function Write-Step($msg) { Write-Color "==> $msg" 208 }
 function Write-Utf8NoBom($path, $text) {
   [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
@@ -187,6 +196,7 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
 $nerdFontId = 'DEVCOM.JetBrainsMonoNerdFont'
 $terminalLook = Get-Content (Join-Path $repo 'terminal\profile.json') -Raw | ConvertFrom-Json   # this PC's measured look
 $nerdFontFace = $terminalLook.font.face
+$template = Get-Content (Join-Path $repo 'settings.json') -Raw | ConvertFrom-Json
 function Get-NerdFontFiles {
   foreach ($d in "$env:LOCALAPPDATA\Microsoft\Windows\Fonts", "$env:WINDIR\Fonts") {
     Get-ChildItem $d -Filter '*Nerd*Font*' -ErrorAction SilentlyContinue
@@ -650,201 +660,202 @@ foreach ($tool in 'claude', 'git', 'python') {
     throw "'$tool' not found on PATH. See README.md for the desktop bootstrap list."
   }
 }
-# 1. Backup
-Write-Step "Backing up current config to $backup"
-New-Item -ItemType Directory -Force $backup | Out-Null
-foreach ($f in 'CLAUDE.md', 'settings.json', 'statusbar.py', 'statusline.py', 'keybindings.json') {
-  $p = Join-Path $claudeDir $f
-  if (Test-Path $p) { Copy-Item $p $backup }
-}
-
-# 2. Copy files
-Write-Step 'Copying CLAUDE.md, statusbar.py, themes/, skills/, agents/'
-Copy-Item (Join-Path $repo 'global\CLAUDE.md') $claudeDir -Force
-Copy-Item (Join-Path $repo 'statusbar.py') $claudeDir -Force
-# Themes: settings.json selects custom:clear, which Claude Code reads from ~/.claude/themes/clear.json.
-$themesDir = Join-Path $claudeDir 'themes'
-New-Item -ItemType Directory -Force $themesDir | Out-Null
-Copy-Item (Join-Path $repo 'themes\*.json') $themesDir -Force
-# Skills: each folder under skills/ becomes ~/.claude/skills/<name>. Copy keeps a skill's local .venv.
-foreach ($skill in Get-ChildItem (Join-Path $repo 'skills') -Directory -ErrorAction SilentlyContinue) {
-  $dest = Join-Path $claudeDir "skills\$($skill.Name)"
-  New-Item -ItemType Directory -Force $dest | Out-Null
-  Copy-Item (Join-Path $skill.FullName '*') $dest -Recurse -Force
-}
-# Agents: each file under agents/ becomes ~/.claude/agents/<name>.md (a file named like a built-in agent replaces it).
-if (Test-Path (Join-Path $repo 'agents')) {
-  New-Item -ItemType Directory -Force (Join-Path $claudeDir 'agents') | Out-Null
-  Copy-Item (Join-Path $repo 'agents\*.md') (Join-Path $claudeDir 'agents') -Force
-}
-# 3. Merge settings.json
-Write-Step 'Merging settings.json'
-$template = Get-Content (Join-Path $repo 'settings.json') -Raw | ConvertFrom-Json
-$current = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
-
-# Per-key rules (enabledPlugins, env, permissions, hooks merge; the rest is replaced) live in Merge-ClaudeSettings.
-$current = Merge-ClaudeSettings $current $template $repo
-$current = Remove-RetiredHooks $current $retiredHooks
-foreach ($d in @(Remove-UserAdvisor $current)) { Write-Host "    removed from settings.json: $d (the advisor is per project: advisor-switch skill)" }
-foreach ($r in $retiredHooks) { Remove-Item (Join-Path $claudeDir "hooks\$r") -Force -ErrorAction SilentlyContinue }
-# The status bar draws Nerd Font icons; on a machine without a Nerd Font the installed command gets --labels
-# (short words instead of glyphs), so the bar reads in whatever font the terminal uses.
-$slProp = $current.PSObject.Properties['statusLine']
-if ($slProp -and $slProp.Value -and $slProp.Value.PSObject.Properties['command'] -and @(Get-NerdFontFiles).Count -eq 0) {
-  $cmd = [string]$slProp.Value.command
-  if ($cmd -notmatch '--labels') { $slProp.Value | Add-Member -NotePropertyName command -NotePropertyValue "$cmd --labels" -Force }
-}
-Write-Utf8NoBom $settingsPath (($current | ConvertTo-Json -Depth 20) + "`n")
-
-# 4. Plugins
-# Windows PowerShell 5.1 turns a native command's stderr into a terminating error under
-# $ErrorActionPreference = 'Stop' ("plugin is already enabled" would abort the script), so the
-# plugin calls run with 'Continue' and their stderr is captured, not thrown.
-$savedEap = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-if (-not $SkipPlugins) {
-  # Plugins from outside the official marketplace (good-css) need their marketplace known first.
-  foreach ($mp in $template.extraKnownMarketplaces.PSObject.Properties) {
-    $out = & claude plugin marketplace add $mp.Value.source.repo 2>&1
-    if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') { $failures += "marketplace $($mp.Name): $out" }
+if (-not $Check) {
+  # 1. Backup
+  Write-Step "Backing up current config to $backup"
+  New-Item -ItemType Directory -Force $backup | Out-Null
+  foreach ($f in 'CLAUDE.md', 'settings.json', 'statusbar.py', 'statusline.py', 'keybindings.json') {
+    $p = Join-Path $claudeDir $f
+    if (Test-Path $p) { Copy-Item $p $backup }
   }
-  & claude plugin marketplace update 2>&1 | Out-Null
-  Write-Step 'Installing and enabling plugins'
-  foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
-    if ($plugin.Value -ne $true) { continue }
-    $name = $plugin.Name
-    $out = & claude plugin install $name --scope user 2>&1
-    if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') { $failures += "install $name : $out" }
-    & claude plugin enable $name --scope user 2>&1 | Out-Null
-    $upd = & claude plugin update $name --scope user 2>&1
-    $ver = ($upd | Out-String).Trim() -replace '\s+', ' '
-    Write-Host "    $name  $ver"
-  }
-  # --scope user: auto-detect would write into a project's .claude/settings.json when run inside a repo that has one.
-  # Enabling a plugin by name also flips on a same-named copy from another marketplace, so pin the false ones off afterwards.
-  foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
-    if ($plugin.Value -ne $false) { continue }
-    & claude plugin disable $plugin.Name --scope user 2>&1 | Out-Null
-  }
-}
-$ErrorActionPreference = $savedEap
 
-# 4b. BigQuery MCP server is retired: drop the user-scope registration (a missing one is not an error).
-Write-Step 'Removing BigQuery MCP server'
-$ErrorActionPreference = 'Continue'
-& claude mcp remove bigquery -s user 2>&1 | Out-Null
-$ErrorActionPreference = $savedEap
-
-# 4b2. The visual setup (theme, status line, readable-session mod, Windows Terminal Readable scheme) is retired. The
-# settings merge keeps machine keys the repo no longer has, so an earlier install is undone here, after the merge.
-# Step 1 backed up settings.json, statusline.py and keybindings.json; Windows Terminal settings are backed up below.
-Write-Step 'Removing the retired visual setup'
-$removed = 0
-$cur = Get-Content $settingsPath -Raw | ConvertFrom-Json
-$done = Remove-VisualSettings $cur
-if ($done.Count -gt 0) {
-  Write-Utf8NoBom $settingsPath (($cur | ConvertTo-Json -Depth 20) + "`n")
-  Write-Host "    removed from settings.json: $($done -join ', ')"; $removed++
-}
-$gone = @()
-foreach ($f in 'statusline.py', 'themes\readable.json') {
-  $p = Join-Path $claudeDir $f
-  if (Test-Path $p) { Remove-Item $p -Force; $gone += "~/.claude/$($f -replace '\\', '/')" }
-}
-foreach ($f in Get-ChildItem (Join-Path $claudeDir '__pycache__') -Filter 'statusline*.pyc' -ErrorAction SilentlyContinue) {
-  Remove-Item $f.FullName -Force; $gone += "~/.claude/__pycache__/$($f.Name)"
-}
-if ($gone.Count -gt 0) { Write-Host "    deleted: $($gone -join ', ')"; $removed++ }
-$kbPath = Join-Path $claudeDir 'keybindings.json'
-if (Test-Path $kbPath) {
-  $kb = Get-Content $kbPath -Raw | ConvertFrom-Json
-  $done = Remove-VisualKeybinding $kb
-  if ($done.Count -gt 0) {
-    Write-Utf8NoBom $kbPath (($kb | ConvertTo-Json -Depth 10) + "`n")
-    Write-Host "    removed from keybindings.json: $($done -join ', ')"; $removed++
+  # 2. Copy files
+  Write-Step 'Copying CLAUDE.md, statusbar.py, themes/, skills/, agents/'
+  Copy-Item (Join-Path $repo 'global\CLAUDE.md') $claudeDir -Force
+  Copy-Item (Join-Path $repo 'statusbar.py') $claudeDir -Force
+  # Themes: settings.json selects custom:clear, which Claude Code reads from ~/.claude/themes/clear.json.
+  $themesDir = Join-Path $claudeDir 'themes'
+  New-Item -ItemType Directory -Force $themesDir | Out-Null
+  Copy-Item (Join-Path $repo 'themes\*.json') $themesDir -Force
+  # Skills: each folder under skills/ becomes ~/.claude/skills/<name>. Copy keeps a skill's local .venv.
+  foreach ($skill in Get-ChildItem (Join-Path $repo 'skills') -Directory -ErrorAction SilentlyContinue) {
+    $dest = Join-Path $claudeDir "skills\$($skill.Name)"
+    New-Item -ItemType Directory -Force $dest | Out-Null
+    Copy-Item (Join-Path $skill.FullName '*') $dest -Recurse -Force
   }
-}
-foreach ($wt in $wtSettings) {
-  Backup-TerminalSettings $wt
-  $r = Remove-TerminalScheme $wt 'Readable'
-  if ($r.Scheme -or $r.Keys -gt 0) {
-    $what = @(); if ($r.Scheme) { $what += 'the Readable scheme' }; if ($r.Keys -gt 0) { $what += "$($r.Keys) colorScheme setting(s)" }
-    Write-Host "    removed $($what -join ' and ') from $wt"; $removed++
+  # Agents: each file under agents/ becomes ~/.claude/agents/<name>.md (a file named like a built-in agent replaces it).
+  if (Test-Path (Join-Path $repo 'agents')) {
+    New-Item -ItemType Directory -Force (Join-Path $claudeDir 'agents') | Out-Null
+    Copy-Item (Join-Path $repo 'agents\*.md') (Join-Path $claudeDir 'agents') -Force
   }
-}
-if ($removed -eq 0) { Write-Color '    nothing to remove' 244 }
+  # 3. Merge settings.json
+  Write-Step 'Merging settings.json'
+  $current = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
 
-# 4c. Adobe connector off by default: 5k tokens a turn that only design work needs. Back up ~/.claude.json first.
-Write-Step 'Adobe connector off in each known project (/mcp turns it back on)'
-$claudeJson = Join-Path $HOME '.claude.json'
-if (Test-Path $claudeJson) { Copy-Item $claudeJson (Join-Path $backup 'claude.json') }
-& python -S (Join-Path $repo 'mcp_off.py') $claudeJson (Join-Path $claudeDir 'claude-setup-state.json') 'claude.ai Adobe'
-if ($LASTEXITCODE -ne 0) { $failures += 'mcp_off.py failed' }
-
-# 4d. Nerd Font. Best effort: a failure here warns and never fails the install.
-if (-not $SkipFont) {
-  Write-Step 'Nerd Font'
-  $weInstalled = $false
-  if (@(Get-NerdFontFiles).Count -gt 0) {
-    Write-Color '    a Nerd Font is already installed' 244
-  } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
-    $savedEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    & winget install --id $nerdFontId -e --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
-    $ErrorActionPreference = $savedEap
-    $weInstalled = @(Get-NerdFontFiles).Count -gt 0
-    if ($weInstalled) { Write-Host "    installed $(Get-PrimaryFace $nerdFontFace)" } else { Write-Color "    winget could not install $nerdFontId; install a Nerd Font by hand (https://www.nerdfonts.com)" 228 }
-  } else {
-    Write-Color '    winget not found; install a Nerd Font by hand (https://www.nerdfonts.com)' 228
+  # Per-key rules (enabledPlugins, env, permissions, hooks merge; the rest is replaced) live in Merge-ClaudeSettings.
+  $current = Merge-ClaudeSettings $current $template $repo
+  $current = Remove-RetiredHooks $current $retiredHooks
+  foreach ($d in @(Remove-UserAdvisor $current)) { Write-Host "    removed from settings.json: $d (the advisor is per project: advisor-switch skill)" }
+  foreach ($r in $retiredHooks) { Remove-Item (Join-Path $claudeDir "hooks\$r") -Force -ErrorAction SilentlyContinue }
+  # The status bar draws Nerd Font icons; on a machine without a Nerd Font the installed command gets --labels
+  # (short words instead of glyphs), so the bar reads in whatever font the terminal uses.
+  $slProp = $current.PSObject.Properties['statusLine']
+  if ($slProp -and $slProp.Value -and $slProp.Value.PSObject.Properties['command'] -and @(Get-NerdFontFiles).Count -eq 0) {
+    $cmd = [string]$slProp.Value.command
+    if ($cmd -notmatch '--labels') { $slProp.Value | Add-Member -NotePropertyName command -NotePropertyValue "$cmd --labels" -Force }
   }
-  # Point Windows Terminal's default font at terminal/profile.json's (face and cellHeight) whenever it differs, but only
-  # when this run installed the face or the machine has JetBrainsMono; -KeepFont keeps the machine's own.
-  $haveFace = $weInstalled -or (@(Get-FaceFiles $nerdFontFace).Count -gt 0)
-  if ($KeepFont) {
-    Write-Color '    -KeepFont: the Windows Terminal font stays as it is' 244
-  } elseif ($haveFace) {
-    foreach ($wt in $wtSettings) {
-      Backup-TerminalSettings $wt
-      $r = Set-TerminalFont $wt $nerdFontFace ([string]$terminalLook.font.cellHeight)
-      $msg = switch ($r.Result) { 'set' { "font set in $wt ($($r.Changed -join ', '))" } 'already set' { "font already set in $wt" } default { "no defaults block in $wt; set the font by hand" } }
-      Write-Host "    $msg"
+  Write-Utf8NoBom $settingsPath (($current | ConvertTo-Json -Depth 20) + "`n")
+
+  # 4. Plugins
+  # Windows PowerShell 5.1 turns a native command's stderr into a terminating error under
+  # $ErrorActionPreference = 'Stop' ("plugin is already enabled" would abort the script), so the
+  # plugin calls run with 'Continue' and their stderr is captured, not thrown.
+  $savedEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  if (-not $SkipPlugins) {
+    # Plugins from outside the official marketplace (good-css) need their marketplace known first.
+    foreach ($mp in $template.extraKnownMarketplaces.PSObject.Properties) {
+      $out = & claude plugin marketplace add $mp.Value.source.repo 2>&1
+      if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') { $failures += "marketplace $($mp.Name): $out" }
     }
-    if (@($wtSettings).Count -eq 0) { Write-Color '    Windows Terminal not found; set the terminal font to a Nerd Font by hand' 228 }
+    & claude plugin marketplace update 2>&1 | Out-Null
+    Write-Step 'Installing and enabling plugins'
+    foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
+      if ($plugin.Value -ne $true) { continue }
+      $name = $plugin.Name
+      $out = & claude plugin install $name --scope user 2>&1
+      if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') { $failures += "install $name : $out" }
+      & claude plugin enable $name --scope user 2>&1 | Out-Null
+      $upd = & claude plugin update $name --scope user 2>&1
+      $ver = ($upd | Out-String).Trim() -replace '\s+', ' '
+      Write-Host "    $name  $ver"
+    }
+    # --scope user: auto-detect would write into a project's .claude/settings.json when run inside a repo that has one.
+    # Enabling a plugin by name also flips on a same-named copy from another marketplace, so pin the false ones off afterwards.
+    foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
+      if ($plugin.Value -ne $false) { continue }
+      & claude plugin disable $plugin.Name --scope user 2>&1 | Out-Null
+    }
   }
-}
+  $ErrorActionPreference = $savedEap
 
-# 4d2. Colour scheme. The status bar's and the session-cards mod's colours are the terminal's own 16, so every machine
-# runs the scheme in terminal/profile.json (Campbell). A colorScheme set on the default profile itself would outrank
-# the default, so it is removed. -KeepScheme keeps the machine's own.
-Write-Step 'Terminal scheme'
-if ($KeepScheme) {
-  Write-Color '    -KeepScheme: the Windows Terminal colour scheme stays as it is' 244
-} else {
+  # 4b. BigQuery MCP server is retired: drop the user-scope registration (a missing one is not an error).
+  Write-Step 'Removing BigQuery MCP server'
+  $ErrorActionPreference = 'Continue'
+  & claude mcp remove bigquery -s user 2>&1 | Out-Null
+  $ErrorActionPreference = $savedEap
+
+  # 4b2. The visual setup (theme, status line, readable-session mod, Windows Terminal Readable scheme) is retired. The
+  # settings merge keeps machine keys the repo no longer has, so an earlier install is undone here, after the merge.
+  # Step 1 backed up settings.json, statusline.py and keybindings.json; Windows Terminal settings are backed up below.
+  Write-Step 'Removing the retired visual setup'
+  $removed = 0
+  $cur = Get-Content $settingsPath -Raw | ConvertFrom-Json
+  $done = Remove-VisualSettings $cur
+  if ($done.Count -gt 0) {
+    Write-Utf8NoBom $settingsPath (($cur | ConvertTo-Json -Depth 20) + "`n")
+    Write-Host "    removed from settings.json: $($done -join ', ')"; $removed++
+  }
+  $gone = @()
+  foreach ($f in 'statusline.py', 'themes\readable.json') {
+    $p = Join-Path $claudeDir $f
+    if (Test-Path $p) { Remove-Item $p -Force; $gone += "~/.claude/$($f -replace '\\', '/')" }
+  }
+  foreach ($f in Get-ChildItem (Join-Path $claudeDir '__pycache__') -Filter 'statusline*.pyc' -ErrorAction SilentlyContinue) {
+    Remove-Item $f.FullName -Force; $gone += "~/.claude/__pycache__/$($f.Name)"
+  }
+  if ($gone.Count -gt 0) { Write-Host "    deleted: $($gone -join ', ')"; $removed++ }
+  $kbPath = Join-Path $claudeDir 'keybindings.json'
+  if (Test-Path $kbPath) {
+    $kb = Get-Content $kbPath -Raw | ConvertFrom-Json
+    $done = Remove-VisualKeybinding $kb
+    if ($done.Count -gt 0) {
+      Write-Utf8NoBom $kbPath (($kb | ConvertTo-Json -Depth 10) + "`n")
+      Write-Host "    removed from keybindings.json: $($done -join ', ')"; $removed++
+    }
+  }
   foreach ($wt in $wtSettings) {
     Backup-TerminalSettings $wt
-    $r = Set-TerminalScheme $wt ([string]$terminalLook.colorScheme)
-    $msg = switch ($r.Result) { 'set' { "scheme changed in $wt ($($r.Changed -join ', '))" } 'already set' { "scheme already set in $wt" } default { "no defaults block in $wt; set the scheme by hand" } }
+    $r = Remove-TerminalScheme $wt 'Readable'
+    if ($r.Scheme -or $r.Keys -gt 0) {
+      $what = @(); if ($r.Scheme) { $what += 'the Readable scheme' }; if ($r.Keys -gt 0) { $what += "$($r.Keys) colorScheme setting(s)" }
+      Write-Host "    removed $($what -join ' and ') from $wt"; $removed++
+    }
+  }
+  if ($removed -eq 0) { Write-Color '    nothing to remove' 244 }
+
+  # 4c. Adobe connector off by default: 5k tokens a turn that only design work needs. Back up ~/.claude.json first.
+  Write-Step 'Adobe connector off in each known project (/mcp turns it back on)'
+  $claudeJson = Join-Path $HOME '.claude.json'
+  if (Test-Path $claudeJson) { Copy-Item $claudeJson (Join-Path $backup 'claude.json') }
+  & python -S (Join-Path $repo 'mcp_off.py') $claudeJson (Join-Path $claudeDir 'claude-setup-state.json') 'claude.ai Adobe'
+  if ($LASTEXITCODE -ne 0) { $failures += 'mcp_off.py failed' }
+
+  # 4d. Nerd Font. Best effort: a failure here warns and never fails the install.
+  if (-not $SkipFont) {
+    Write-Step 'Nerd Font'
+    $weInstalled = $false
+    if (@(Get-NerdFontFiles).Count -gt 0) {
+      Write-Color '    a Nerd Font is already installed' 244
+    } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
+      $savedEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+      & winget install --id $nerdFontId -e --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+      $ErrorActionPreference = $savedEap
+      $weInstalled = @(Get-NerdFontFiles).Count -gt 0
+      if ($weInstalled) { Write-Host "    installed $(Get-PrimaryFace $nerdFontFace)" } else { Write-Color "    winget could not install $nerdFontId; install a Nerd Font by hand (https://www.nerdfonts.com)" 228 }
+    } else {
+      Write-Color '    winget not found; install a Nerd Font by hand (https://www.nerdfonts.com)' 228
+    }
+    # Point Windows Terminal's default font at terminal/profile.json's (face and cellHeight) whenever it differs, but only
+    # when this run installed the face or the machine has JetBrainsMono; -KeepFont keeps the machine's own.
+    $haveFace = $weInstalled -or (@(Get-FaceFiles $nerdFontFace).Count -gt 0)
+    if ($KeepFont) {
+      Write-Color '    -KeepFont: the Windows Terminal font stays as it is' 244
+    } elseif ($haveFace) {
+      foreach ($wt in $wtSettings) {
+        Backup-TerminalSettings $wt
+        $r = Set-TerminalFont $wt $nerdFontFace ([string]$terminalLook.font.cellHeight)
+        $msg = switch ($r.Result) { 'set' { "font set in $wt ($($r.Changed -join ', '))" } 'already set' { "font already set in $wt" } default { "no defaults block in $wt; set the font by hand" } }
+        Write-Host "    $msg"
+      }
+      if (@($wtSettings).Count -eq 0) { Write-Color '    Windows Terminal not found; set the terminal font to a Nerd Font by hand' 228 }
+    }
+  }
+
+  # 4d2. Colour scheme. The status bar's and the session-cards mod's colours are the terminal's own 16, so every machine
+  # runs the scheme in terminal/profile.json (Campbell). A colorScheme set on the default profile itself would outrank
+  # the default, so it is removed. -KeepScheme keeps the machine's own.
+  Write-Step 'Terminal scheme'
+  if ($KeepScheme) {
+    Write-Color '    -KeepScheme: the Windows Terminal colour scheme stays as it is' 244
+  } else {
+    foreach ($wt in $wtSettings) {
+      Backup-TerminalSettings $wt
+      $r = Set-TerminalScheme $wt ([string]$terminalLook.colorScheme)
+      $msg = switch ($r.Result) { 'set' { "scheme changed in $wt ($($r.Changed -join ', '))" } 'already set' { "scheme already set in $wt" } default { "no defaults block in $wt; set the scheme by hand" } }
+      Write-Host "    $msg"
+    }
+    if (@($wtSettings).Count -eq 0) { Write-Color '    Windows Terminal not found; set the colour scheme to Campbell by hand' 228 }
+  }
+
+  # 4e. Start folder (independent of the font): Windows Terminal's default, and the PowerShell 7 profile block.
+  Write-Step 'Terminal start folder'
+  foreach ($wt in $wtSettings) {
+    Backup-TerminalSettings $wt
+    $r = Set-TerminalStartDir $wt 'C:\dev'
+    $msg = switch ($r) { 'set' { "start folder set to C:\dev in $wt" } 'kept' { "a start folder is already set in $wt; left as is" } default { "no defaults block in $wt; set the start folder by hand" } }
     Write-Host "    $msg"
   }
-  if (@($wtSettings).Count -eq 0) { Write-Color '    Windows Terminal not found; set the colour scheme to Campbell by hand' 228 }
+  $ps7Profile = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Microsoft.PowerShell_profile.ps1'
+  $old = if (Test-Path $ps7Profile) { [IO.File]::ReadAllText($ps7Profile) } else { '' }
+  if ($old) { Copy-Item $ps7Profile (Join-Path $backup 'Microsoft.PowerShell_profile.ps1') }
+  $new = Set-ProfileBlock $old 'if ((Get-Location).Path -eq "$env:SystemRoot\System32") { Set-Location C:\dev }'
+  if ($new -ne $old) {
+    New-Item -ItemType Directory -Force (Split-Path $ps7Profile) | Out-Null
+    Write-Utf8NoBom $ps7Profile $new
+  }
+  Write-Host "    PowerShell 7 profile: $ps7Profile"
 }
-
-# 4e. Start folder (independent of the font): Windows Terminal's default, and the PowerShell 7 profile block.
-Write-Step 'Terminal start folder'
-foreach ($wt in $wtSettings) {
-  Backup-TerminalSettings $wt
-  $r = Set-TerminalStartDir $wt 'C:\dev'
-  $msg = switch ($r) { 'set' { "start folder set to C:\dev in $wt" } 'kept' { "a start folder is already set in $wt; left as is" } default { "no defaults block in $wt; set the start folder by hand" } }
-  Write-Host "    $msg"
-}
-$ps7Profile = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Microsoft.PowerShell_profile.ps1'
-$old = if (Test-Path $ps7Profile) { [IO.File]::ReadAllText($ps7Profile) } else { '' }
-if ($old) { Copy-Item $ps7Profile (Join-Path $backup 'Microsoft.PowerShell_profile.ps1') }
-$new = Set-ProfileBlock $old 'if ((Get-Location).Path -eq "$env:SystemRoot\System32") { Set-Location C:\dev }'
-if ($new -ne $old) {
-  New-Item -ItemType Directory -Force (Split-Path $ps7Profile) | Out-Null
-  Write-Utf8NoBom $ps7Profile $new
-}
-Write-Host "    PowerShell 7 profile: $ps7Profile"
 
 # 5. Verify
 $ErrorActionPreference = 'Continue'
@@ -869,7 +880,7 @@ if (("$py").Trim() -ne 'True') {
     $rows = @($bar.Output -split "\r?\n" | Where-Object { $_ -ne '' })
     $missing = @('Opus', 'main', '42%', '$ ', '1.23', [string][char]0x2588 | Where-Object { -not $bar.Output.Contains($_) })
     if ($bar.Ok -and $rows.Count -eq 1 -and $missing.Count -eq 0) {
-      foreach ($row in $rows) { Write-Host "    $row" }
+      if (-not $quiet) { foreach ($row in $rows) { Write-Host "    $row" } }
     } else {
       $failures += "status bar: '$barCommand' gave $($rows.Count) row(s) (exit ok: $($bar.Ok), missing: $($missing -join ' ')): $($rows -join ' / ')"
     }
@@ -888,7 +899,7 @@ if (-not $modListed) {
 } else {
   $out = & claude plugin validate $modDir 2>&1
   if ($LASTEXITCODE -ne 0) { $failures += "session cards mod: claude plugin validate $modDir failed: $(($out | Out-String).Trim())" }
-  else { Write-Host "    $claudeVersionText loads $modDir" }
+  elseif (-not $quiet) { Write-Host "    $claudeVersionText loads $modDir" }
 }
 
 # What shapes the screen, checked against what the repo asks for (terminal/profile.json, settings.json) and the
@@ -941,6 +952,14 @@ foreach ($row in $sameRows) {
 Write-Step 'MCP health'
 & claude mcp list 2>&1 | Where-Object { $_ -match 'Needs authentication|Failed|error' } | ForEach-Object { Write-Color "    $_" 228 }
 
+if ($Json) {
+  $docRows = @($sameRows | ForEach-Object { [pscustomobject]@{ name = $_.Name; expected = $_.Expected; actual = $_.Actual; status = $_.Status } })
+  $doc = [pscustomobject]@{ rows = $docRows; failures = @($failures) } | ConvertTo-Json -Depth 5 -Compress
+  [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+  [Console]::Out.WriteLine($doc)
+  if ($failures.Count -gt 0) { exit 1 }
+  exit 0
+}
 Write-Host ''
 if ($failures.Count -eq 0) {
   Write-Color 'DONE: all checks passed. Restart Claude Code to load the new config.' 223

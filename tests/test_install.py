@@ -1,3 +1,4 @@
+import glob
 import hashlib
 import json
 import os
@@ -75,7 +76,7 @@ class InstallerTest(unittest.TestCase):
 
     def test_installer_names_the_checks_and_switches(self):
         text = read("install.ps1")
-        for needle in ("Same experience", "-KeepFont", "-KeepScheme", "Session cards mod", "Terminal scheme"):
+        for needle in ("Same experience", "-KeepFont", "-KeepScheme", "Session cards mod", "Terminal scheme", "-Check", "-Json"):
             self.assertIn(needle, text)
 
     def test_installer_copies_the_themes_and_checks_the_file(self):
@@ -375,3 +376,57 @@ class UserAdvisorTest(unittest.TestCase):
     def test_the_template_has_no_advisor(self):
         self.assertNotIn("advisorModel", json.loads(read("settings.json")))
         self.assertIn("Remove-UserAdvisor $current", read("install.ps1"))
+
+
+LIVE = os.environ.get("CLAUDE_SETUP_LIVE") == "1"
+
+
+def wt_and_claude_settings():
+    home = os.path.expanduser("~")
+    paths = [os.path.join(home, ".claude", "settings.json")]
+    local = os.environ.get("LOCALAPPDATA", "")
+    for pattern in ("Packages/Microsoft.WindowsTerminal*/LocalState/settings.json", "Microsoft/Windows Terminal/settings.json"):
+        paths += glob.glob(os.path.join(local, pattern))
+    return [p for p in paths if os.path.exists(p)]
+
+
+def sha(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+class CheckModeTest(unittest.TestCase):
+    def run_check(self):
+        return subprocess.run([PWSH, "-NoProfile", "-File", os.path.join(ROOT, "install.ps1"), "-Check", "-Json"],
+                              capture_output=True, text=True, encoding="utf-8")
+
+    @unittest.skipUnless(LIVE and PWSH, "reads the real machine: set CLAUDE_SETUP_LIVE=1")
+    def test_check_changes_nothing(self):
+        before = {p: sha(p) for p in wt_and_claude_settings()}
+        self.run_check()
+        self.assertEqual(before, {p: sha(p) for p in before})
+
+    @unittest.skipUnless(LIVE and PWSH, "reads the real machine: set CLAUDE_SETUP_LIVE=1")
+    def test_json_is_one_document(self):
+        doc = json.loads(self.run_check().stdout)
+        names = [r["name"] for r in doc["rows"]]
+        self.assertIn("Terminal font face", names)
+        self.assertIn("Python version", names)
+        for r in doc["rows"]:
+            self.assertIn(r["status"], ("ok", "kept", "FAIL"))
+
+    def test_check_skips_the_install_steps(self):
+        text = read("install.ps1")
+        start = text.index("if (-not $Check) {")
+        depth, end = 0, None
+        for j in range(text.index("{", start), len(text)):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        self.assertIsNotNone(end)
+        self.assertTrue(start < text.index("Write-Step 'Merging settings.json'") < end)
+        self.assertGreater(text.index("Write-Step 'Same experience'"), end)
