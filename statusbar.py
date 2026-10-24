@@ -312,7 +312,7 @@ GROUP_JOIN = {G_MODEL: sgr(WHITE, " · ")}  # "Opus · high"; every other group 
 # Markers before a piece: a Nerd Font glyph (the default) or, with --labels, a short word for fonts without the
 # glyphs (then the repo, branch, PR and model carry no marker: they read on their own). Every glyph is followed
 # by a space because the non-Mono Nerd Font variants draw it wider than one cell and it would overlap the text.
-ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "pr": "\uf407", "model": "\uf2db", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073",
+ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "pr": "\uf407", "model": "󰚩", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073",
          "time": "󰅐"}  # time: md-clock-outline, since fa-clock-o is the 5-hour window's
 LABELS = {"ctx": "ctx", "5h": "5H", "7d": "7D", "time": "session"}
 GITLAB = "38;2;252;109;38"  # #FC6D26, GitLab's orange

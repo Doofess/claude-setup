@@ -312,6 +312,9 @@ class RowTest(unittest.TestCase):
         raw = statusbar.fit(self.demo_row(model={"id": "x", "display_name": "Other"}), 200)
         self.assertIn(statusbar.sgr(statusbar.WHITE, statusbar.ICONS["model"] + " "), raw)  # unknown model: white
 
+    def test_model_icon_is_an_agent(self):
+        self.assertEqual(statusbar.ICONS["model"], "󰚩")  # md-robot
+
     def test_model_colours(self):
         for name, code in [("Opus", "38;2;215;119;87"), ("claude-sonnet-5-5", 94), ("Haiku", 36), ("Fable 5.1", "38;2;255;215;0"), ("Mythos", 92), ("Other", None)]:
             self.assertEqual(statusbar.model_colour(name), code, name)
