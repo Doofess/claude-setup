@@ -124,7 +124,12 @@ It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` 
 After installing, the installer prints a `Same experience` table (`name  expected  actual  ok|FAIL`) and fails if any
 row is wrong. It checks everything that decides what the screen looks like: the Nerd Font and Windows Terminal's font
 face and `cellHeight`, the `Campbell` colour scheme, Claude Code's theme (`custom:clear` with its file), the status line command, the
-session-cards mod being loaded, and Claude Code 2.1.308+, Python 3.10+ and Git Bash. It also runs the status bar on
+session-cards mod being loaded, and Claude Code 2.1.308+, Python 3.10+ and Git Bash. The shell rows cover the rest:
+`Terminal profile overrides` (no profile sets its own font or colour scheme), `Terminal default profile` (PowerShell 7),
+`Git Bash profile` (present in Windows Terminal), `PowerShell 7` (pwsh found), `Windows PowerShell policy`
+(RemoteSigned or looser; a group-policy pin that is stricter is a FAIL and named), `PowerShell profiles` (the
+claude-setup block in both profile files) and `VS Code terminal` (font, Campbell colours and contrast set; `no VS Code`
+shows `kept`). These rows only read, so they run under `-Check` too. It also runs the status bar on
 sample data and prints it, so a broken bar or a mangled meter glyph stops the install. Rows covered by `-KeepFont`,
 `-KeepScheme` or `-SkipFont` show `kept`.
 

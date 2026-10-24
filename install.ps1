@@ -381,13 +381,13 @@ function Get-WtProfileName([string]$t, [int]$obj, [int]$n) {
   return "profile $($n + 1)"
 }
 
-# What the file says today: profiles.defaults font face, cellHeight and colorScheme, the font face, cellHeight and
+# What the file says today (DefaultGuid / DefaultName: the defaultProfile guid and the name of the list profile that has it, $null when none does): profiles.defaults font face, cellHeight and colorScheme, the font face, cellHeight and
 # colorScheme set on the default profile itself (each $null when not set), and Overrides: one "<profile name>: <key>
 # <value>" for every profile in the list (the default one included) that sets a face, cellHeight or colorScheme.
 function Read-TerminalLook([string]$path) {
   $t = [IO.File]::ReadAllText($path)
   $l = Get-WtLayout $t
-  $r = [pscustomobject]@{ HasDefaults = ($l.Defaults -ge 0); Face = $null; CellHeight = $null; Scheme = $null; ProfileFace = $null; ProfileCellHeight = $null; ProfileScheme = $null; Overrides = [string[]]@() }
+  $r = [pscustomobject]@{ HasDefaults = ($l.Defaults -ge 0); Face = $null; CellHeight = $null; Scheme = $null; ProfileFace = $null; ProfileCellHeight = $null; ProfileScheme = $null; Overrides = [string[]]@(); DefaultGuid = $null; DefaultName = $null }
   $over = @()
   for ($n = 0; $n -lt $l.Profiles.Count; $n++) {
     $o = $l.Profiles[$n]
@@ -399,6 +399,10 @@ function Read-TerminalLook([string]$path) {
     $x = Find-JsoncKey $t $o 'colorScheme'; if ($x) { $over += "${name}: colorScheme $(Get-JsoncString $t $x)" }
   }
   $r.Overrides = [string[]]@($over)
+  $dpRoot = Get-JsoncRoot $t
+  $dpKey = if ($dpRoot -ge 0) { Find-JsoncKey $t $dpRoot 'defaultProfile' } else { $null }
+  if ($dpKey) { $r.DefaultGuid = Get-JsoncString $t $dpKey }
+  if ($l.Profile -ge 0) { $r.DefaultName = Get-WtProfileName $t $l.Profile 0 }
   if ($l.Defaults -ge 0) {
     $f = Find-JsoncKey $t $l.Defaults 'font'
     if ($f -and $t[$f.ValueStart] -eq '{') {
@@ -1286,6 +1290,42 @@ $havePy = [regex]::Match((& python --version 2>&1 | Out-String), '\d+\.\d+(\.\d+
 Add-SameRow 'Python version' '>= 3.10' $(if ($havePy) { $havePy } else { 'unknown' }) ([bool]($havePy -and [version]$havePy -ge [version]'3.10'))
 $gitBash = Get-GitBash
 Add-SameRow 'Git Bash' 'bash.exe found' $(if (Test-Path $gitBash) { $gitBash } else { 'not found' }) (Test-Path $gitBash)
+$wtOverrides = if ($wtLook) { @($wtLook.Overrides) } else { @() }
+Add-SameRow 'Terminal profile overrides' 'none' $(if (-not $wtLook) { 'no Windows Terminal settings' } elseif ($wtOverrides.Count) { $wtOverrides -join '; ' } else { 'none' }) ([bool]($wtLook -and $wtOverrides.Count -eq 0)) ([bool]($fontKept -and $KeepScheme))
+$defActual = if (-not $wtLook) { 'no Windows Terminal settings' } elseif ($wtLook.DefaultName) { $wtLook.DefaultName } elseif ($wtLook.DefaultGuid) { $wtLook.DefaultGuid } else { 'not set' }
+Add-SameRow 'Terminal default profile' 'PowerShell 7' $defActual ([bool]($wtLook -and $wtLook.DefaultGuid -eq $ps7Guid))
+$gbActual = 'no Windows Terminal settings'
+if ($wtLook) {
+  $gbResult = Add-GitBashProfile @($wtSettings)[0] $gitBash $(if (Test-Path $gitBash) { Get-GitRoot $gitBash } else { '' }) -DryRun
+  $gbActual = if ($gbResult -eq 'present') { 'present' } elseif ($gbResult -eq 'added') { 'missing' } else { 'no profiles list' }
+}
+Add-SameRow 'Git Bash profile' 'present' $gbActual ($gbActual -eq 'present')
+$pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -First 1
+$pwshPath = if ($pwshCmd) { [string]$pwshCmd.Source } elseif (Test-Path "$env:ProgramFiles\PowerShell\7\pwsh.exe") { "$env:ProgramFiles\PowerShell\7\pwsh.exe" } else { '' }
+Add-SameRow 'PowerShell 7' 'pwsh found' $(if ($pwshPath) { $pwshPath } else { 'not found' }) (Test-Pwsh)
+$polReg = 'HKCU:\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell'
+$polNow = [string](Get-ItemProperty -Path $polReg -Name ExecutionPolicy -ErrorAction SilentlyContinue).ExecutionPolicy
+$polResult = Set-WindowsPowerShellPolicy -DryRun
+$polActual = if ($polResult -like 'pinned by *') { $polResult } elseif ($polResult -eq 'set') { $(if ($polNow) { $polNow } else { 'not set' }) } elseif ($polNow) { $polNow } else { 'pinned loose by policy' }
+Add-SameRow 'Windows PowerShell policy' 'RemoteSigned or looser' $polActual ($polResult -eq 'already set')
+$profMissing = @()
+foreach ($pp in (Get-PowerShellProfiles)) {
+  $hasBlock = $false
+  if (Test-Path $pp) { $pt = Read-Utf8 $pp; $hasBlock = $pt.Contains($profileStart) -and $pt.Contains($profileEnd) }
+  if (-not $hasBlock) { $profMissing += $pp }
+}
+Add-SameRow 'PowerShell profiles' 'block in both' $(if ($profMissing.Count) { 'missing in ' + ($profMissing -join '; ') } else { 'block in both' }) ($profMissing.Count -eq 0)
+$vsRowWant = Read-Utf8 (Join-Path $repo 'terminal\vscode.json') | ConvertFrom-Json
+$vsRowInstalled = Test-VsCode 'Microsoft VS Code' 'Code.exe' 'code'
+$vsRowPath = Join-Path $env:APPDATA 'Code\User\settings.json'
+$vsStatusKept = $false; $vsOk = $false
+try {
+  $vsRow = Set-VsCodeTerminal $vsRowPath $vsRowWant $vsRowInstalled $fontKept ([bool]$KeepScheme) -DryRun
+  if ($vsRow.Result -eq 'no VS Code') { $vsActual = 'no VS Code'; $vsStatusKept = $true }
+  elseif ($vsRow.Result -eq 'already set') { $vsActual = 'set'; $vsOk = $true }
+  else { $vsActual = @($vsRow.Changed) -join '; ' }
+} catch { $vsActual = $_.Exception.Message }
+Add-SameRow 'VS Code terminal' 'set' $vsActual $vsOk $vsStatusKept
 $wName = ($sameRows | ForEach-Object { $_.Name.Length } | Measure-Object -Maximum).Maximum
 $wExp = ($sameRows | ForEach-Object { $_.Expected.Length } | Measure-Object -Maximum).Maximum
 $wAct = ($sameRows | ForEach-Object { $_.Actual.Length } | Measure-Object -Maximum).Maximum

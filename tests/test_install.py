@@ -110,6 +110,22 @@ class InstallerTest(unittest.TestCase):
             self.assertIn("none on the default profile", row)
             self.assertIn("-not $wtLook.%s" % prop, row)
 
+    NEW_ROWS = ("Terminal profile overrides", "Terminal default profile", "Git Bash profile", "PowerShell 7",
+                "Windows PowerShell policy", "PowerShell profiles", "VS Code terminal")
+
+    def test_same_experience_has_the_shell_rows(self):
+        lines = [l for l in read("install.ps1").splitlines() if l.startswith("Add-SameRow ")]
+        for name in self.NEW_ROWS:
+            self.assertTrue(any(l.startswith("Add-SameRow '%s' " % name) for l in lines), name)
+
+    def test_same_experience_rows_never_write(self):
+        text = read("install.ps1")
+        tail = text[text.index("Write-Step 'Same experience'"):]
+        for fn in ("Set-WindowsPowerShellPolicy", "Set-TerminalDefaultProfile", "Add-GitBashProfile", "Set-VsCodeTerminal"):
+            calls = [l for l in tail.splitlines() if re.search(r"(?<![\w-])%s(?![\w-])" % fn, l)]
+            for l in calls:
+                self.assertIn("-DryRun", l, l)
+
 
 FIXTURES = os.path.join(ROOT, "tests", "fixtures", "terminal")
 PWSH = shutil.which("pwsh")
