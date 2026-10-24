@@ -14,6 +14,11 @@ export function promptText(text: string): string {
   return text.replace(WRAPPER, '')
 }
 
+/** A prompt that runs a slash command: `/name` first, then a space or the end. A path such as `/c/dev …` is not one. */
+export function isSlashCommand(text: string): boolean {
+  return /^\/[A-Za-z0-9:_-]+(\s|$)/.test(promptText(text).trimStart())
+}
+
 /** `HH:MM`, 24-hour, in the machine's local time. */
 export function clock(ms: number): string {
   const at = new Date(ms)
@@ -533,11 +538,14 @@ export const register: Register = on => {
       }
     }
 
-    const header = `  You prompted${at === null ? '' : ` · ${clock(at)}`}`
+    // A slash command is a card of its own, in the permission violet.
+    const command = isSlashCommand(text)
+    const colour = command ? 'permission' : 'claude'
+    const header = `  ${command ? 'You ran' : 'You prompted'}${at === null ? '' : ` · ${clock(at)}`}`
 
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
-        <Text color="claude" bold>
+      <Box flexDirection="column" borderStyle="round" borderColor={colour} paddingX={1}>
+        <Text color={colour} bold>
           {header}
         </Text>
         <Text>{promptText(text)}</Text>

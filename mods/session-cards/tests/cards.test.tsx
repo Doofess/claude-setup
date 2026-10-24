@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { clock, promptText } from '../hooks/register'
+import { clock, isSlashCommand, promptText } from '../hooks/register'
 
 const MESSAGE = (requestId: string, text: string, origin: object = { kind: 'composer' }) =>
   ({
@@ -22,6 +22,7 @@ const engine = (on: Parameters<Parameters<typeof test>[1]>[1]) => {
 }
 
 const HEADER = '\uf007  You prompted'
+const RAN = '\uf007  You ran'
 
 test('a prompt is an accent card headed You prompted and the time', async ($, on) => {
   const time = mock.clock(on, { now: new Date(2026, 9, 23, 14, 32).getTime() })
@@ -42,6 +43,43 @@ test('a prompt is an accent card headed You prompted and the time', async ($, on
 
   expect((await ui.find({ type: 'Text', text: /^hello$/ }))?.props.color).toBeUndefined()
   await ui.unmount()
+})
+
+test('a slash command is a violet card headed You ran', async ($, on) => {
+  const time = mock.clock(on, { now: new Date(2026, 9, 24, 16, 5).getTime() })
+  engine(on)
+
+  await $.prompt.submit({ text: '/code-review high', wait: false })
+
+  const ui = await $.ui.mount(MESSAGE('m1', '/code-review high'))
+  expect((await ui.find({ type: 'Box' }))?.props.borderColor).toBe('permission')
+
+  const head = await ui.find({ type: 'Text', text: /You ran/ })
+  expect(head?.text).toBe(`${RAN} · ${clock(time.now())}`)
+  expect(head?.props.bold).toBe(true)
+  expect(head?.props.color).toBe('permission')
+
+  expect(await ui.find({ type: 'Text', text: /^\/code-review high$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a slash command typed over several lines is drawn whole', async ($, on) => {
+  mock.clock(on)
+  engine(on)
+
+  const ui = await $.ui.mount(MESSAGE('m1', '/review\nthe parser\nand its tests'))
+  expect((await ui.find({ type: 'Text', text: /You ran/ }))?.text).toBe(RAN)
+  expect(await ui.find({ type: 'Text', text: '/review\nthe parser\nand its tests' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('test_is_slash_command', () => {
+  expect(isSlashCommand('/model')).toBe(true)
+  expect(isSlashCommand('/code-review high')).toBe(true)
+  expect(isSlashCommand('  /plugin:skill x')).toBe(true)
+  expect(isSlashCommand('/c/dev/x is a path')).toBe(false)
+  expect(isSlashCommand('hello /model')).toBe(false)
+  expect(isSlashCommand('<pasted_content id="a">\n/model\n</pasted_content id="a">')).toBe(true)
 })
 
 test('a row with no recorded time has no clock', async ($, on) => {
