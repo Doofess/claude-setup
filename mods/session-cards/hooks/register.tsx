@@ -1,6 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
+import type { TurnRecord } from '../types'
+import { neon, NEON_MS } from './neon'
+
+export type { TurnRecord }
+
 
 /** Claude Code's own wrapper lines around a pasted block: `<pasted_content …>` and `</pasted_content …>`. */
 const WRAPPER = /^[ \t]*<\/?pasted_content\b[^>\n]*>[ \t]*(?:\r?\n|$)/gm
@@ -8,6 +13,11 @@ const WRAPPER = /^[ \t]*<\/?pasted_content\b[^>\n]*>[ \t]*(?:\r?\n|$)/gm
 /** The prompt as typed, with the paste wrapper lines taken out. */
 export function promptText(text: string): string {
   return text.replace(WRAPPER, '')
+}
+
+/** A prompt that runs a slash command: `/name` first, then a space or the end. A path such as `/c/dev …` is not one. */
+export function isSlashCommand(text: string): boolean {
+  return /^\/[A-Za-z0-9:_-]+(\s|$)/.test(promptText(text).trimStart())
 }
 
 /** `HH:MM`, 24-hour, in the machine's local time. */
@@ -49,7 +59,7 @@ function cut(text: string, width: number): string {
   return width <= 0 ? '' : `${text.slice(0, width - 1)}…`
 }
 
-const firstLine = (text: string): string => text.split(/\r?\n/)[0].trim()
+const firstLine = (text: string): string => (text.split(/\r?\n/)[0] ?? '').trim()
 
 /** An icon, a verb pair (present, past) and a detail for one tool call, in plain words. */
 export function describeTool(tool: string, input: unknown, cwd: string): Described {
@@ -114,7 +124,7 @@ export function rowText(d: Described, state: RowState, width: number): string {
 
 const FAMILIES = ['opus', 'sonnet', 'haiku', 'fable', 'mythos'] as const
 const FAMILY_COLOURS: Record<(typeof FAMILIES)[number], string> = {
-  opus: 'magenta',
+  opus: 'claude',
   sonnet: 'blue',
   haiku: 'cyan',
   fable: 'yellowBright',
@@ -146,7 +156,7 @@ export function effortColour(level: string): string | undefined {
 function modelName(model: string): string {
   const family = familyOf(model)
 
-  return family === undefined ? model : family[0].toUpperCase() + family.slice(1)
+  return family === undefined ? model : family.charAt(0).toUpperCase() + family.slice(1)
 }
 
 /** `0s`, `48s`, `1m 0s`, `12m 5s`, `1h 2m`. */
@@ -203,16 +213,34 @@ export function agentRow(a: AgentRecord, now: number) {
   }
 }
 
+/** The words of a turn-end line: the duration and the time it ended as `12:34 PM`. */
+export function turnLine(r: TurnRecord): { duration: string; done: string } {
+  return {
+    duration: fmtElapsed(r.durationMs),
+    // Newer ICU puts a narrow no-break space before PM; the engine's line has a plain one.
+    done: new Date(r.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(/ /g, ' '),
+  }
+}
+
 /** Bumped on every change to an agent record and once a second while one runs. */
 const agentTick = atom({ plugin: 'session-cards', key: 'agentTick' } as const, 0)
 
 /** One run of the status bar's overflow: `colour` is a colour name, a hex string, or null for the default. */
-type Span = { text: string; colour: string | null; bold: boolean }
+type Span = { text: string; colour: string | null; bold: boolean; underline?: boolean }
+
+/** Bumped every NEON_MS while a Fable subagent runs: the frame of chalk-animation's neon on its row. */
+const neonTick = atom({ plugin: 'session-cards', key: 'neonTick' } as const, 0)
 
 /** Bumped every minute so the hint line reads the overflow file again. */
 const overflowTick = atom({ plugin: 'session-cards', key: 'overflowTick' } as const, 0)
 
 const SEPARATOR = ' │ '
+
+/**
+ * Cells of the mode label the engine draws in front of the hint on the same row, the widest one
+ * (`⏵⏵ bypass permissions on `). The hint text leaves the label out, but starts `(shift+tab to cycle)` when one is shown.
+ */
+const MODE_LABEL = 25
 
 function isSpan(value: unknown): value is Span {
   return typeof field(value, 'text') === 'string'
@@ -237,7 +265,8 @@ function parseOverflow(text: string): Span[][] | null {
   return pieces.map(piece => (Array.isArray(piece) ? piece.filter(isSpan) : []))
 }
 
-const widthOf = (piece: Span[]): number => piece.reduce((sum, span) => sum + span.text.length, 0)
+// By code point: a Nerd Font icon past U+FFFF (the clock, the robot) is two UTF-16 units but one cell.
+const widthOf = (piece: Span[]): number => piece.reduce((sum, span) => sum + [...span.text].length, 0)
 
 /** The leading pieces whose line (`hint`, two spaces, the pieces joined) fits in `room` cells. */
 export function fitPieces(pieces: Span[][], hintWidth: number, room: number): Span[][] {
@@ -268,6 +297,13 @@ export const register: Register = on => {
     $.clock.every(1000, () => {
       if ([...agents.values()].some(a => a.finishedAt === undefined)) {
         return update($, agentTick, n => n + 1)
+      }
+    })
+
+    // A running Fable agent's row pulses (neon): one tick per frame.
+    $.clock.every(NEON_MS, () => {
+      if ([...agents.values()].some(a => a.finishedAt === undefined && familyOf(a.model ?? '') === 'fable')) {
+        return update($, neonTick, n => n + 1)
       }
     })
 
@@ -369,6 +405,15 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    // A subagent's turn is not the main loop's: no turn-end line, so no record.
+    if (e.agentId === undefined) {
+      const key = { plugin: 'session-cards', key: 'turns' } as const
+      const { value = [] } = await $.state.get(key)
+      const seq = (value.at(-1)?.seq ?? -1) + 1
+      const all = [...value, { seq, durationMs: e.durationMs, endedAt: await $.clock.now(), shells: shells.size }]
+      await $.state.set(key, all.slice(-TURNS_KEPT))
+    }
+
     const record = known(e.agentId)
 
     if (record !== undefined) {
@@ -377,6 +422,95 @@ export const register: Register = on => {
     }
 
     return next(e)
+  })
+
+  // Background shells that run now, by the id the Bash/PowerShell result gave.
+  // A ui.render hook may not write $.state but may write the module, so the
+  // task-notification row can end one. That row can come after the turn ended
+  // (a shell that finished during the final answer), so the count is only ever
+  // too high: a turn that ended with one counted keeps the engine's line.
+  const shells = new Set<string>()
+
+  // A call that went to the background (run_in_background, ctrl+b, a timeout) answers with the task's id.
+  const backgrounded = <T extends { result?: unknown }>(answer: T): T => {
+    const id = answer.result === undefined ? undefined : (answer.result as { backgroundTaskId?: string }).backgroundTaskId
+
+    if (id !== undefined && id !== '') {
+      shells.add(id)
+    }
+
+    return answer
+  }
+
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => backgrounded(await next(e)))
+  on('tool.call', { tool: 'PowerShell' }, async ($, e, next) => backgrounded(await next(e)))
+
+  on('tool.call', { tool: 'TaskStop' }, async ($, e, next) => {
+    const answer = await next(e)
+    const id = answer.result === undefined ? undefined : (answer.result as { task_id?: string }).task_id
+
+    if (id !== undefined) {
+      shells.delete(id)
+    }
+
+    return answer
+  })
+
+  // Rows of the turn-end line pair with `turns` the way prompts pair with their times:
+  // `claimedTurns` pins a row (e.requestId) to its record's `seq`, so each row keeps
+  // its own record on every redraw, and as the cap drops the oldest.
+  const TURNS_KEPT = 200
+  const claimedTurns = new Map<string, number>()
+
+  on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
+    const { word, durationMs, isExpanded, waitingFor } = e.props
+
+    if (e.surface !== 'terminal' || isExpanded === true || waitingFor !== undefined) {
+      return next(e)
+    }
+
+    const { value = [] } = await $.state.get({ plugin: 'session-cards', key: 'turns' })
+    let at = claimedTurns.get(e.requestId)
+
+    if (at === undefined) {
+      const used = new Set(claimedTurns.values())
+      const found = value.find(r => r.durationMs === durationMs && !used.has(r.seq))
+
+      if (found === undefined) {
+        return next(e)
+      }
+
+      at = found.seq
+      claimedTurns.set(e.requestId, at)
+    }
+
+    const record = value.find(r => r.seq === at)
+
+    // A shell or a background agent still ran when the turn ended: the engine's line says
+    // so (`Waiting for 1 background agent to finish`), and only it knows when they end.
+    const waiting = (r: TurnRecord) =>
+      r.shells > 0 || [...agents.values()].some(a => a.background && a.finishedAt === undefined && a.startedAt <= r.endedAt)
+
+    if (record === undefined || waiting(record)) {
+      return next(e)
+    }
+
+    const line = turnLine(record)
+    const { Box, Text } = $.ui.resolve(e)
+
+    return (
+      <Box flexDirection="row" width="100%">
+        <Box minWidth={2}>
+          <Text color="claude">✻</Text>
+        </Box>
+        <Text dimColor>{`${word} for`}</Text>
+        <Text>{' '}</Text>
+        <Text bold color="text">
+          {line.duration}
+        </Text>
+        <Text color="success">{` · done ${line.done}`}</Text>
+      </Box>
+    )
   })
 
   // A row's time is settled at its first draw and kept for every redraw. A
@@ -398,6 +532,13 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
+    // The engine reports a finished background task as a notification row: its id ends the shell.
+    const ended = e.props.origin.kind === 'task-notification' ? e.props.task?.id : undefined
+
+    if (ended !== undefined) {
+      shells.delete(ended)
+    }
+
     if (e.surface !== 'terminal' || e.props.origin.kind !== 'composer') {
       return next(e)
     }
@@ -417,11 +558,14 @@ export const register: Register = on => {
       }
     }
 
-    const header = `  You prompted${at === null ? '' : ` · ${clock(at)}`}`
+    // A slash command is a card of its own, in the permission violet.
+    const command = isSlashCommand(text)
+    const colour = command ? 'permission' : 'claude'
+    const header = `  ${command ? 'You ran' : 'You prompted'}${at === null ? '' : ` · ${clock(at)}`}`
 
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
-        <Text color="claude" bold>
+      <Box flexDirection="column" borderStyle="round" borderColor={colour} paddingX={1}>
+        <Text color={colour} bold>
           {header}
         </Text>
         <Text>{promptText(text)}</Text>
@@ -497,6 +641,9 @@ export const register: Register = on => {
       }
 
       const row = agentRow(record, now)
+      const pulsing = row.verb === 'Running' && familyOf(row.model ?? '') === 'fable'
+      const frame = pulsing ? await read($, neonTick) : 0
+      const modelStyle = pulsing ? neon(frame) : familyOf(row.model ?? '') === 'fable' ? { color: 'yellowBright', bold: true } : {}
       const mark = isInterrupted ? ' (stopped)' : isErrored ? ' ✗' : ''
       const tail = `   ${row.elapsed} · ${row.tokens}`
       const fixed =
@@ -515,7 +662,9 @@ export const register: Register = on => {
           </Text>
           <Text color="text">{` ${row.type}`}</Text>
           {row.model !== undefined && <Text color="text">{' · '}</Text>}
-          {row.model !== undefined && <Text color={modelColour(row.model) ?? 'text'}>{row.model}</Text>}
+          {row.model !== undefined && <Text color={modelColour(row.model) ?? 'text'} {...modelStyle}>
+              {row.model}
+            </Text>}
           {row.effort !== undefined && <Text color="text">{' · '}</Text>}
           {row.effort !== undefined && <Text color={effortColour(row.effort) ?? 'text'}>{row.effort}</Text>}
           <Text color="text">{`  ${cut(row.action, columns - fixed)}`}</Text>
@@ -568,7 +717,8 @@ export const register: Register = on => {
     }
 
     const { hint } = e.props
-    const fits = pieces === null ? [] : fitPieces(pieces, hint.length, (e.viewport?.columns ?? 80) - 4)
+    const label = hint.startsWith('(shift+tab') ? MODE_LABEL : 0
+    const fits = pieces === null ? [] : fitPieces(pieces, label + hint.length, (e.viewport?.columns ?? 80) - 4)
 
     if (fits.length === 0) {
       return next(e)
@@ -576,19 +726,20 @@ export const register: Register = on => {
 
     const { Box, Text } = $.ui.resolve(e)
 
+    // One Text, so a row narrower than the estimate cuts its end instead of wrapping onto a second line.
     return (
-      <Box flexDirection="row">
+      <Text wrap="truncate-end">
         <Text dimColor>{hint}</Text>
         <Text>{'  '}</Text>
         {fits.map((piece, i) => [
           i > 0 && <Text color="text">{SEPARATOR}</Text>,
           ...piece.map(span => (
-            <Text color={span.colour ?? undefined} bold={span.bold === true}>
+            <Text color={span.colour ?? undefined} bold={span.bold === true} underline={span.underline === true}>
               {span.text}
             </Text>
           )),
         ])}
-      </Box>
+      </Text>
     )
   })
 }

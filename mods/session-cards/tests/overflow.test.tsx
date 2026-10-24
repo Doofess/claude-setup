@@ -1,6 +1,6 @@
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, mock, test, type TestBody } from 'claude-code/testing'
 
-type On = Parameters<Parameters<typeof test>[1]>[1]
+type On = Parameters<TestBody>[1]
 
 const HINT = '? for shortcuts'
 const FILE = 'C:/Users/me/.claude/statusbar-overflow/s1.json'
@@ -43,8 +43,9 @@ const engine = (
   })
 }
 
+// The row is one Text holding the hint and the pieces; its text is the whole line.
 const line = async (ui: { findAll: (q: { type: 'Text' }) => Promise<{ text: string }[]> }) =>
-  (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
+  (await ui.findAll({ type: 'Text' }))[0]?.text
 
 test('test_overflow_is_drawn_after_the_hint', async ($, on) => {
   engine(on, JSON.stringify({ written_at: 1, columns: 160, pieces: [[span('$1.23', 'green')]] }))
@@ -52,7 +53,7 @@ test('test_overflow_is_drawn_after_the_hint', async ($, on) => {
   const ui = await $.ui.mount(HINT_ROW(HINT, 160))
   expect(await line(ui)).toBe(`${HINT}  $1.23`)
   expect((await ui.find({ type: 'Text', text: /^\$1\.23$/ }))?.props.color).toBe('green')
-  expect((await ui.find({ type: 'Text', text: /shortcuts/ }))?.props.dimColor).toBe(true)
+  expect((await ui.find({ type: 'Text', text: /^\? for shortcuts$/ }))?.props.dimColor).toBe(true)
   await ui.unmount()
 })
 
@@ -67,7 +68,17 @@ test('pieces are joined by a bar, spans keep their colour and bold', async ($, o
   expect(first?.props.bold).toBe(true)
   expect((await ui.find({ type: 'Text', text: /^b$/ }))?.props.bold).not.toBe(true)
   expect((await ui.find({ type: 'Text', text: /^c$/ }))?.props.color).toBe('redBright')
-  expect((await ui.find({ type: 'Text', text: /│/ }))?.props.color).toBe('text')
+  expect((await ui.find({ type: 'Text', text: /^ │ $/ }))?.props.color).toBe('text')
+  await ui.unmount()
+})
+
+test('an underlined span stays underlined, and only that one', async ($, on) => {
+  const pieces = [[{ ...span('#12', 'yellow'), underline: true }], [span('$1.23', 'green')]]
+  engine(on, JSON.stringify({ written_at: 1, columns: 160, pieces }))
+
+  const ui = await $.ui.mount(HINT_ROW(HINT, 160))
+  expect((await ui.find({ type: 'Text', text: /^#12$/ }))?.props.underline).toBe(true)
+  expect((await ui.find({ type: 'Text', text: /^\$1\.23$/ }))?.props.underline).not.toBe(true)
   await ui.unmount()
 })
 
@@ -88,6 +99,24 @@ test('test_overflow_is_cut_to_the_room', async ($, on) => {
   await none.unmount()
 })
 
+test('a mode label in front of the hint is counted, and the row is cut rather than wrapped', async ($, on) => {
+  // Logged live at 169 columns while a subagent ran: the hint text leaves out the `⏵⏵ bypass permissions on `
+  // the engine draws before it on the same row, so the mod reserves that label's cells.
+  const hint = '(shift+tab to cycle) · /tasks to see subagents'
+  const pieces = [[span('a'.repeat(10), 'green')], [span('b'.repeat(10), 'green')]]
+  engine(on, JSON.stringify({ written_at: 1, columns: 80, pieces }))
+
+  // At 99 columns the room is 95: 25 + 46 + 2 + 10 = 83 fits, and the second piece would make 83 + 3 + 10 = 96.
+  const ui = await $.ui.mount(HINT_ROW(hint, 99))
+  expect(await line(ui)).toBe(`${hint}  ${'a'.repeat(10)}`)
+  await ui.unmount()
+
+  // Whatever the estimate, the row is one Text that truncates at the row's edge instead of wrapping.
+  const row = await $.ui.mount(HINT_ROW(hint, 120))
+  expect((await row.find({ type: 'Text', text: /shift\+tab/ }))?.props.wrap).toBe('truncate-end')
+  await row.unmount()
+})
+
 test('a Nerd Font glyph counts as one cell and no viewport means 80 columns', async ($, on) => {
   const pieces = [[span('\uf120'.repeat(10))], [span('\uf120'.repeat(10))]]
   engine(on, JSON.stringify({ written_at: 1, columns: 80, pieces }))
@@ -95,6 +124,17 @@ test('a Nerd Font glyph counts as one cell and no viewport means 80 columns', as
   // 15 + 2 + 10 = 27; with the second piece 27 + 3 + 10 = 40 <= 76.
   const ui = await $.ui.mount({ ...HINT_ROW(HINT, 0), viewport: undefined })
   expect(await line(ui)).toBe(`${HINT}  ${'\uf120'.repeat(10)} │ ${'\uf120'.repeat(10)}`)
+  await ui.unmount()
+})
+
+test('an icon past U+FFFF counts as one cell too', async ($, on) => {
+  // The status bar's clock (U+F0150) and robot (U+F06A9) are two UTF-16 units each.
+  const piece = [span('\u{F0150} 1h 33m')]
+  engine(on, JSON.stringify({ written_at: 1, columns: 80, pieces: [piece] }))
+
+  // 15 + 2 + 8 = 25 fills the room of 29 - 4 exactly.
+  const ui = await $.ui.mount(HINT_ROW(HINT, 29))
+  expect(await line(ui)).toBe(`${HINT}  \u{F0150} 1h 33m`)
   await ui.unmount()
 })
 

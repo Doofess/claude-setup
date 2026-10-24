@@ -12,21 +12,23 @@ terminal's font and colours.
 
 The line along the bottom of Claude Code, read left to right:
 
-- **Where you are**: the GitHub repo, the branch, and the open PR, if there is one.
+- **Where you are**: the repo (GitHub in violet, GitLab in its orange with its own icon, read from the origin remote), the branch, and the open PR's number, if there is one, yellow and underlined.
 - **Who is working**: the model and the effort level. Each model and each effort level has its own colour, so you can
-  tell at a glance whether you're on Opus or Sonnet, at high or medium.
+  tell at a glance whether you're on Opus (Claude orange) or Sonnet, at high or medium. Fable's name is a gold gradient, and a running Fable subagent's row pulses.
 - **How full the context is**: a meter that reaches 100% at the auto-compact point (about 267k of the 300k window), not
   at the end of the window. When it's full, it's time to `/clear`.
 - **How much plan is left**: the 5-hour and 7-day usage meters, each with the time until it resets.
 - **What the session has cost**, in green.
+- **How long the session has run**, beside a clock, in blue.
 
 The meters change colour as they fill: green below 50%, yellow from 50%, orange from 70% and red from 90%. The same
 session late in a busy day:
 
 ![The same bar with the context meter orange at 75%, the 5-hour meter red at 93% and the 7-day meter yellow at 57%](docs/images/statusbar-busy.png)
 
-When the window is narrow, the least important pieces drop first: cost, then reset times, PR, repo, effort and the plan
-meters. Branch, model and context always stay. Once the line fits, any dropped piece that still fits comes back, so
+When the window is narrow, the least important pieces drop first: session time, cost, then reset times, PR, effort and
+the plan meters. Repo, branch, model and context always stay; on a very narrow window the repo loses its owner, then
+letters of its name. Once the line fits, any dropped piece that still fits comes back, so
 no room is wasted:
 
 <img src="docs/images/statusbar-narrow.png" width="364" alt="The bar at 60 columns: only branch, model, effort and context remain">

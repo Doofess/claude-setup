@@ -20,7 +20,10 @@ class TerminalProfileTest(unittest.TestCase):
         self.profile = json.loads(read("terminal", "profile.json"))
 
     def test_font_is_a_nerd_font(self):
-        self.assertTrue(self.profile["font"]["face"].endswith("Nerd Font"))
+        self.assertTrue(self.profile["font"]["face"].split(",")[0].strip().endswith("Nerd Font"))
+
+    def test_segoe_ui_symbol_is_the_glyph_fallback(self):
+        self.assertEqual(self.profile["font"]["face"], "JetBrainsMono Nerd Font, Segoe UI Symbol")
 
     def test_cell_height(self):
         self.assertEqual(self.profile["font"]["cellHeight"], "1.25")
@@ -112,6 +115,50 @@ def installer_helpers():
     return writer + "\n" + block
 
 
+LISTFACE = "JetBrainsMono Nerd Font, Segoe UI Symbol"
+
+
+def font_helpers():
+    source = read("install.ps1").replace("\r\n", "\n")
+    out = []
+    for name in ("Get-NerdFontFiles", "Get-PrimaryFace", "Get-FaceFiles"):
+        m = re.search(r"^function %s.*?^}" % name, source, re.S | re.M)
+        assert m is not None, name
+        out.append(m.group(0))
+    return "\n".join(out)
+
+
+@unittest.skipUnless(PWSH, "pwsh is not on PATH")
+class FontCheckTest(unittest.TestCase):
+    def run_check(self, face, files):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = os.path.join(tmp, "local", "Microsoft", "Windows", "Fonts")
+            win = os.path.join(tmp, "win", "Fonts")
+            os.makedirs(local)
+            os.makedirs(win)
+            for name in files:
+                open(os.path.join(local, name), "w").close()
+            script = os.path.join(tmp, "check.ps1")
+            with open(script, "w", encoding="utf-8") as f:
+                f.write("param([string]$Face)\n$env:LOCALAPPDATA = '%s'\n$env:WINDIR = '%s'\n%s\n"
+                        "@(Get-FaceFiles $Face).Count\n" % (os.path.join(tmp, "local"), os.path.join(tmp, "win"), font_helpers()))
+            r = subprocess.run([str(PWSH), "-NoProfile", "-NonInteractive", "-File", script, face],
+                               capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            return int(r.stdout.strip().splitlines()[-1])
+
+    def test_installed_check_uses_the_first_face(self):
+        self.assertEqual(self.run_check(LISTFACE, ["JetBrainsMonoNerdFont-Regular.ttf"]), 1)
+
+    def test_installed_check_still_fails_without_the_first_face(self):
+        self.assertEqual(self.run_check(LISTFACE, ["FiraCodeNerdFont-Regular.ttf"]), 0)
+
+    def test_installer_installs_and_compares_with_the_right_face(self):
+        text = read("install.ps1")
+        self.assertIn("Get-PrimaryFace $nerdFontFace", text)
+        self.assertIn("$wtLook.Face -eq $nerdFontFace", text)
+
+
 DRIVER = """param([string]$Mode, [string]$Path, [string]$Face, [string]$Height, [string]$Scheme)
 $ErrorActionPreference = 'Stop'
 {HELPERS}
@@ -180,6 +227,16 @@ class TerminalHelpersTest(unittest.TestCase):
         self.assertEqual(again["Scheme"]["Result"], "already set")
         self.assertEqual(self.digest(path), before, "a second run changed the file")
         return path
+
+    def test_a_comma_list_face_is_written_verbatim(self):
+        path = self.fixture_copy("A_realistic")
+        r = subprocess.run([str(PWSH), "-NoProfile", "-NonInteractive", "-File", self.script, "font", path, LISTFACE, HEIGHT, SCHEME],
+                           capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(load_jsonc(path)["profiles"]["defaults"]["font"]["face"], LISTFACE)
+        r = subprocess.run([str(PWSH), "-NoProfile", "-NonInteractive", "-File", self.script, "font", path, LISTFACE, HEIGHT, SCHEME],
+                           capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(json.loads(r.stdout)["Result"], "already set")
 
     def test_a_realistic(self):
         path = self.check_fixture("A_realistic")

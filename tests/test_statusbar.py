@@ -14,6 +14,19 @@ sys.path.insert(0, ROOT)
 import statusbar  # noqa: E402
 
 
+def hue_family(code):
+    """Which of the six hues an SGR colour is (0 red, 1 yellow, 2 green, 3 cyan, 4 blue, 5 magenta): 31/91 and 33/93
+    look alike in most schemes, and a 24-bit colour counts as the hue it is nearest."""
+    if isinstance(code, int):
+        return [None, 0, 2, 1, 4, 5, 3][code % 10]
+    r, g, b = (int(x) / 255 for x in code.split(";")[2:])
+    hi, lo = max(r, g, b), min(r, g, b)
+    if hi == lo:
+        return None
+    h = (g - b) / (hi - lo) % 6 if hi == r else (b - r) / (hi - lo) + 2 if hi == g else (r - g) / (hi - lo) + 4
+    return round(h) % 6
+
+
 class FormatTest(unittest.TestCase):
     def test_tokens(self):
         for n, s in [(950, "950"), (12_345, "12k"), (135_000, "135k"), (267_000, "267k"), (1_000_000, "1M"), (1_234_567, "1.2M")]:
@@ -57,6 +70,10 @@ class SpanTest(unittest.TestCase):
         self.assertEqual(statusbar.spans(statusbar.sgr(91, "x"))[0]["colour"], "redBright")
         self.assertEqual(statusbar.spans(statusbar.sgr("38;2;76;200;110", "x"))[0]["colour"], "#4cc86e")
         self.assertEqual(statusbar.spans(""), [])
+
+    def test_underline_is_carried_only_where_set(self):
+        self.assertEqual(statusbar.spans(statusbar.sgr(4, statusbar.sgr(33, "#12")) + "x"), [
+            {"text": "#12", "colour": "yellow", "bold": False, "underline": True}, {"text": "x", "colour": None, "bold": False}])
 
     def test_adjacent_runs_in_one_style_merge(self):
         self.assertEqual(statusbar.spans(statusbar.sgr(32, "a") + statusbar.sgr(32, "b")), [{"text": "ab", "colour": "green", "bold": False}])
@@ -124,10 +141,77 @@ class BranchTest(unittest.TestCase):
         self.assertIsNone(statusbar.branch(os.path.join(self.tmp, "repo/src"), stop_dir=os.path.join(self.tmp, "repo/src")))
 
 
+class OriginRemoteTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def write(self, rel, text):
+        p = os.path.join(self.tmp, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def remote(self, url, rel="repo"):
+        self.write(rel + "/.git/config", "[core]\n\tbare = false\n[remote \"upstream\"]\n\turl = https://x.org/no/pe\n"
+                   "[remote \"origin\"]\n\turl = " + url + "\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n")
+        return statusbar.origin_remote(os.path.join(self.tmp, rel))
+
+    def test_gitlab_with_subgroups(self):
+        self.assertEqual(self.remote("https://gitlab.com/grp/sub/proj.git"), ("gitlab", "grp/sub/proj"))
+
+    def test_github_scp_style(self):
+        self.assertEqual(self.remote("git@github.com:Doofess/claude-setup.git"), ("github", "Doofess/claude-setup"))
+
+    def test_self_hosted_gitlab(self):
+        self.assertEqual(self.remote("https://gitlab.example.org/a/b"), ("gitlab", "a/b"))
+
+    def test_ssh_url_with_port(self):
+        self.assertEqual(self.remote("ssh://git@gitlab.example.org:2222/a/b.git"), ("gitlab", "a/b"))
+
+    def test_other_host(self):
+        self.assertEqual(self.remote("https://bitbucket.org/a/b"), ("other", "a/b"))
+
+    def test_linked_worktree_resolves_through_commondir(self):
+        self.remote("https://gitlab.com/a/b.git", "main")
+        self.write("main/.git/worktrees/wt/commondir", "../..\n")
+        self.write("wt/.git", "gitdir: " + os.path.join(self.tmp, "main/.git/worktrees/wt") + "\n")
+        os.makedirs(os.path.join(self.tmp, "wt/src"))
+        self.assertEqual(statusbar.origin_remote(os.path.join(self.tmp, "wt/src")), ("gitlab", "a/b"))
+
+    def test_no_repo(self):
+        os.makedirs(os.path.join(self.tmp, "empty"))
+        self.assertIsNone(statusbar.origin_remote(os.path.join(self.tmp, "empty/none"), stop_dir=os.path.join(self.tmp, "empty")))
+
+    def test_repo_without_origin(self):
+        self.write("repo/.git/config", "[core]\n\tbare = false\n")
+        self.assertIsNone(statusbar.origin_remote(os.path.join(self.tmp, "repo")))
+
+    def test_gitlab_repo_renders_with_gitlab_icon_and_orange(self):
+        self.remote("https://gitlab.com/grp/proj.git")
+        data = {"workspace": {"current_dir": os.path.join(self.tmp, "repo")}}
+        raw = statusbar.fit(statusbar.segments(data, {}, 0, [], None), 200)
+        orange = "38;2;252;109;38"
+        self.assertIn(statusbar.sgr(orange, "\uf296 "), raw)
+        self.assertIn(statusbar.sgr(orange, "grp/proj"), raw)
+        self.assertEqual([span["colour"] for span in statusbar.spans(raw) if "grp/proj" in span["text"]], ["#fc6d26"])
+
+    def test_workspace_repo_with_a_gitlab_origin_takes_the_gitlab_look(self):
+        self.remote("https://gitlab.com/grp/proj.git")
+        data = {"workspace": {"current_dir": os.path.join(self.tmp, "repo"), "repo": "me/other"}}
+        raw = statusbar.fit(statusbar.segments(data, {}, 0, [], None), 200)
+        self.assertIn(statusbar.sgr("38;2;252;109;38", "me/other"), raw)
+
+    def test_labels_keep_the_bare_name(self):
+        self.remote("https://gitlab.com/grp/proj.git")
+        data = {"workspace": {"current_dir": os.path.join(self.tmp, "repo")}}
+        self.assertTrue(statusbar.plain(statusbar.fit(statusbar.segments(data, {}, 0, [], None, icons=False), 200)).startswith("grp/proj "))
+
+
 class RowTest(unittest.TestCase):
     NOW = 1_700_000_000
     MARKERS = {  # what to look for in the plain row, in the order the pieces should disappear when the terminal narrows
-        "cost": "$1.23", "7d reset": "→ 3d4h", "5h reset": "→ 2h10m", "PR": "#12", "repo": "Doofess",
+        "session time": "1h 33m", "cost": "$1.23", "7d reset": "→ 3d4h", "5h reset": "→ 2h10m", "PR": "#12",
         "effort": "high", "7d meter": "41%", "5h meter": "23%",
     }
 
@@ -141,12 +225,12 @@ class RowTest(unittest.TestCase):
         row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
         # Each icon takes a cell and a space (plain() shows the icon as a space): the non-Mono Nerd Font
         # variants draw glyphs wider than one cell, and without the space they overlap the text.
-        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus · high │   ████████ 42%  112k/267k │   5H ████████ 23%  → 2h10m │   7D ████████ 41%  → 3d4h │ $1.23")
+        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus   high │   ████████ 42%  112k/267k │   5H ████████ 23%  → 2h10m │   7D ████████ 41%  → 3d4h │ $1.23 │   1h 33m")
 
     def test_labels_instead_of_icons(self):
         # --labels: dim words for fonts without the Nerd Font glyphs; the rest of the line is the same.
         row = statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200))
-        self.assertEqual(row, "Doofess/claude-setup  main  #12 │ Opus · high │ ctx ████████ 42%  112k/267k │ 5H ████████ 23%  → 2h10m │ 7D ████████ 41%  → 3d4h │ $1.23")
+        self.assertEqual(row, "Doofess/claude-setup  main  #12 │ Opus · high │ ctx ████████ 42%  112k/267k │ 5H ████████ 23%  → 2h10m │ 7D ████████ 41%  → 3d4h │ $1.23 │ session 1h 33m")
 
     def test_window_meters_name_their_window(self):
         # The 5-hour and 7-day meters say which window they are, in the bar's level colour, beside the icon.
@@ -157,21 +241,25 @@ class RowTest(unittest.TestCase):
         self.assertEqual(statusbar.plain(row).count("5H"), 1)  # the word once, in icon mode as in --labels
 
     def test_refills_leftover_space_with_smaller_pieces(self):
-        # At 113 cells the repo (24 cells with its join) cannot fit, but the PR number and the 5-hour reset can,
-        # so they come back after the repo goes: the line uses the width rather than leaving a gap. The 7-day
-        # reset is one cell too many and stays out.
-        row = statusbar.plain(statusbar.fit(self.demo_row(), 113))
-        self.assertLessEqual(len(row), 113)
-        self.assertNotIn("Doofess", row)
+        # At 129 cells the 7-day reset drops before the 5-hour one, but once the 5-hour reset (one cell wider)
+        # has gone too, the 7-day reset fits again and comes back: the line uses the width rather than leaving a gap.
+        row = statusbar.plain(statusbar.fit(self.demo_row(), 129))
+        self.assertEqual(len(row), 129)
         self.assertNotIn("$1.23", row)
-        self.assertNotIn("→ 3d4h", row)
-        for marker in ("#12", "→ 2h10m", "high"):
+        self.assertNotIn("→ 2h10m", row)
+        for marker in ("Doofess/claude-setup", "#12", "high", "→ 3d4h"):
             self.assertIn(marker, row)
+
+    def test_short_repo(self):
+        self.assertEqual(statusbar.short_repo("Doofess/claude-setup", 20), "Doofess/claude-setup")
+        self.assertEqual(statusbar.short_repo("Doofess/claude-setup", 19), "claude-setup")
+        self.assertEqual(statusbar.short_repo("Doofess/claude-setup", 9), "claude-s…")
+        self.assertEqual(statusbar.short_repo("Doofess/claude-setup", 0), "c…")
 
     def test_layout_lists_the_dropped_pieces_in_display_order(self):
         line, dropped = statusbar.layout(self.demo_row(), 113)
         self.assertEqual(line, statusbar.fit(self.demo_row(), 113))
-        self.assertEqual([statusbar.plain(t).strip() for t, _, _ in dropped], ["Doofess/claude-setup", "→ 3d4h", "$1.23"])
+        self.assertEqual([statusbar.plain(t).strip() for t, _, _ in dropped], ["#12", "high", "→ 2h10m", "→ 3d4h", "$1.23", "1h 33m"])
         self.assertEqual(statusbar.layout(self.demo_row(), 200)[1], [])
 
     def test_overflow_record(self):
@@ -179,8 +267,29 @@ class RowTest(unittest.TestCase):
         record = statusbar.overflow_record(dropped, 110, self.NOW)
         self.assertEqual(record["columns"], 110)
         self.assertEqual(record["written_at"], self.NOW)
-        self.assertEqual(len(record["pieces"]), 3)
-        self.assertEqual(record["pieces"][2], [{"text": "$1.23", "colour": "green", "bold": False}])
+        self.assertEqual(len(record["pieces"]), 6)
+        self.assertEqual(record["pieces"][4], [{"text": "$1.23", "colour": "green", "bold": False}])
+
+    def test_pr_number_is_yellow_and_underlined(self):
+        raw = statusbar.fit(self.demo_row(), 200)
+        self.assertIn(statusbar.sgr(statusbar.YELLOW, statusbar.ICONS["pr"] + " ") + statusbar.sgr(statusbar.UNDERLINE, statusbar.sgr(statusbar.YELLOW, "#12")), raw)
+
+    def test_session_time_is_blue_with_a_clock(self):
+        raw = statusbar.fit(self.demo_row(), 200)
+        self.assertTrue(raw.endswith(statusbar.sgr(statusbar.BLUE, statusbar.ICONS["time"] + " ") + statusbar.sgr(statusbar.BLUE, "1h 33m")), repr(raw[-60:]))
+        self.assertNotEqual(statusbar.ICONS["time"], statusbar.ICONS["5h"])  # its own clock, not the 5-hour window's
+        self.assertNotIn("1h 33m", statusbar.plain(statusbar.fit(self.demo_row(cost={"total_cost_usd": 1.23}), 200)))
+
+    def test_fmt_elapsed(self):
+        for ms, text in [(0, "0m"), (59_000, "0m"), (12 * 60_000, "12m"), (5_580_000, "1h 33m"), (26 * 3_600_000 + 60_000, "1d 2h")]:
+            self.assertEqual(statusbar.fmt_elapsed(ms), text, ms)
+
+    def test_a_duration_that_is_not_a_time_is_left_out(self):
+        # The line must survive it: int() of infinity or NaN raises, and a negative time means nothing.
+        for ms in [float("inf"), float("nan"), -1, True]:
+            row = statusbar.plain(statusbar.fit(self.demo_row(cost={"total_cost_usd": 1.23, "total_duration_ms": ms}), 200))
+            self.assertIn("$1.23", row, ms)
+            self.assertFalse(row.rstrip().endswith("m") or row.rstrip().endswith("h"), (ms, row[-20:]))
 
     def test_lines_changed_are_not_shown(self):
         self.assertNotIn("+156", statusbar.plain(statusbar.fit(self.demo_row(), 200)))
@@ -192,8 +301,9 @@ class RowTest(unittest.TestCase):
             for name, marker in self.MARKERS.items():
                 if marker not in row:
                     gone_at.setdefault(name, width)
-            for marker in ("main", "Opus", "42%", "112k/267k"):
+            for marker in ("Doofess/claude-setup", "main", "Opus", "42%", "112k/267k"):
                 self.assertIn(marker, row, f"{marker} dropped at width {width}")
+            self.assertTrue(row.lstrip(" " + statusbar.ICONS["repo"]).startswith("Doofess/claude-setup"), f"repo not first at width {width}")
         self.assertEqual(list(gone_at), list(self.MARKERS))
         self.assertGreater(len(set(gone_at.values())), 1)
 
@@ -209,7 +319,7 @@ class RowTest(unittest.TestCase):
     def test_cost_model_and_effort_are_coloured(self):
         raw = statusbar.fit(self.demo_row(), 200)
         self.assertIn("\x1b[32m$1.23", raw)
-        self.assertIn("\x1b[95mOpus", raw)
+        self.assertIn("\x1b[1m\x1b[38;2;215;119;87mOpus", raw)
         self.assertIn("\x1b[91mhigh", raw)
 
     def test_repo_icon_is_violet_like_the_repo(self):
@@ -218,17 +328,38 @@ class RowTest(unittest.TestCase):
 
     def test_model_icon_takes_the_model_colour(self):
         raw = statusbar.fit(self.demo_row(), 200)
-        self.assertIn(statusbar.sgr(95, statusbar.ICONS["model"] + " "), raw)
+        self.assertIn(statusbar.sgr(statusbar.CLAUDE_ORANGE, statusbar.ICONS["model"] + " "), raw)
         raw = statusbar.fit(self.demo_row(model={"id": "x", "display_name": "Other"}), 200)
         self.assertIn(statusbar.sgr(statusbar.WHITE, statusbar.ICONS["model"] + " "), raw)  # unknown model: white
 
+    def test_effort_has_a_bolt_in_its_colour(self):
+        # A bolt before the effort instead of the dot; --labels keeps the dot.
+        self.assertEqual(statusbar.ICONS["effort"], "")  # fa-flash, not U+26A1, which draws as a colour emoji
+        raw = statusbar.fit(self.demo_row(), 200)
+        self.assertIn(statusbar.sgr(91, statusbar.ICONS["effort"] + " ") + statusbar.sgr(91, "high"), raw)
+        self.assertNotIn(" · ", statusbar.plain(raw))
+        self.assertIn("Opus · high", statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200)))
+
+    def test_model_icon_is_an_agent(self):
+        self.assertEqual(statusbar.ICONS["model"], "󰚩")  # md-robot
+
     def test_model_colours(self):
-        for name, code in [("Opus", 95), ("claude-sonnet-5-5", 94), ("Haiku", 36), ("Fable 5.1", 93), ("Mythos", 92), ("Other", None)]:
+        for name, code in [("Opus", "38;2;215;119;87"), ("claude-sonnet-5-5", 94), ("Haiku", 36), ("Fable 5.1", "38;2;255;215;0"), ("Mythos", 92), ("Other", None)]:
             self.assertEqual(statusbar.model_colour(name), code, name)
         # every model its own colour, and no two of them the same hue (35 and 95 look alike in most schemes)
         codes = list(statusbar.MODEL_COLOURS.values())
         self.assertEqual(len(codes), len(set(codes)))
-        self.assertEqual(len({c % 60 for c in codes}), len(codes))
+        self.assertEqual(len({hue_family(c) for c in codes}), len(codes))
+        self.assertEqual(statusbar.spans(statusbar.sgr(statusbar.MODEL_COLOURS["opus"], "Opus"))[0]["colour"], "#d77757")
+
+    def test_fable_is_a_gold_gradient(self):
+        raw = statusbar.fit(self.demo_row(model={"id": "claude-fable-5-1", "display_name": "Fable 5.1"}), 200)
+        self.assertIn(statusbar.sgr("38;2;255;215;0", statusbar.ICONS["model"] + " "), raw)
+        self.assertIn("[38;2;255;215;0mF", raw)
+        self.assertIn("[38;2;255;140;0m1", raw)
+        self.assertEqual(statusbar.plain(raw).count("Fable 5.1"), 1)
+        self.assertEqual(statusbar.spans(statusbar.model_text("Fable 5.1"))[0]["colour"], "#ffd700")
+        self.assertTrue(all(span["bold"] for span in statusbar.spans(statusbar.model_text("Fable 5.1"))))
 
     def test_effort_colours(self):
         for level, code in [("low", 32), ("medium", 33), ("high", 91), ("xhigh", 95), ("max", 97), ("odd", None)]:
@@ -271,8 +402,9 @@ class RowTest(unittest.TestCase):
     def test_colours_are_the_sixteen_or_the_named_ones(self):
         # The terminal's 16, plus the repo's violet (Claude Code's exact theme colour) and the meter levels (24-bit).
         text = statusbar.fit(self.demo_row(), 200)
-        allowed = {"0", "1", statusbar.VIOLET, statusbar.WHITE} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
+        allowed = {"0", "1", "4", statusbar.VIOLET, statusbar.WHITE, "38;2;215;119;87"} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
         allowed |= {code for pair in statusbar.LEVELS.values() for code in pair}
+        allowed |= set(re.findall(r"\[([0-9;]+)m", statusbar.model_text("Fable 5.1")))
         self.assertEqual(set(re.findall(r"\x1b\[([0-9;]+)m", text)) - allowed, set())
 
 
@@ -300,6 +432,7 @@ class ProgramTest(unittest.TestCase):
         self.assertIn("Opus", row)
         self.assertIn("main", row)
         self.assertIn("42%", row)
+        self.assertTrue(row.lstrip().startswith("claude-s…"), row)  # the repo gives up its owner, then letters
 
     def run_bar_at_home(self, data, home, columns="60"):
         env = dict(os.environ, COLUMNS=columns, CLAUDE_CODE_AUTO_COMPACT_WINDOW="300000", HOME=home, USERPROFILE=home)

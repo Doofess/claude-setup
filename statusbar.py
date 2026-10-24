@@ -3,23 +3,25 @@
 Usage: Claude Code runs `python statusbar.py` and pipes its session JSON to stdin; `--demo` prints
 sample data instead and `--demo-json` prints that sample as the JSON Claude Code would send. Column width comes from the COLUMNS environment variable (default 120).
 
-The line reads left to right: repo (owner/name), git branch, PR number │ model · effort │ a context
+The line reads left to right: repo (owner/name), git branch, PR number │ model, a bolt, effort │ a context
 meter with tokens used out of the auto-compact point │ the 5-hour and 7-day plan usage meters with the
-time until each resets, each named 5H or 7D beside its icon │ cost. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
-short words (ctx, 5H, 7D) so the bar also reads in a font without the glyphs (the installer adds the flag
+time until each resets, each named 5H or 7D beside its icon │ cost │ how long the session has run. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
+short words (ctx, 5H, 7D, session) so the bar also reads in a font without the glyphs (the installer adds the flag
 on a machine with no Nerd Font). Colours are the terminal's own 16-colour palette, so the bar follows the
-terminal's scheme: cost green, each model and each effort level its own colour. Everything else is sent as
+terminal's scheme: cost green, the PR number yellow and underlined, the session time bright blue, each model (Opus in Claude orange, Fable a gold gradient) and each effort level its own colour. Everything else is sent as
 exact 24-bit colours, never the terminal's default foreground (a light grey in most schemes): the chrome
-(separators, the place and model icons, branch, PR number, reset times) in pure white; the repo name in the
+(separators, the place and model icons, branch, reset times) in pure white; the repo name in the
 violet Claude Code highlights with (its dark theme's `permission` colour, rgb 177,185,249); and the three
 8-cell meters, whose icon, figures, filled blocks and (darker) unfilled blocks all take the meter's level:
 green below 50%, yellow from 50, orange from 70, red from 90. Nothing is grey.
 
 Width fitting: the line may use COLUMNS minus a small margin that Claude Code keeps for itself. Each
 piece (a segment) has a priority. While the line is too wide, the piece with the highest priority
-number is dropped: cost first, then the 7-day and 5-hour reset times, the PR number, the repo, the
-effort, then the 7-day and 5-hour meters; the branch, the model and the context meter always stay. Once
+number is dropped: the session time first, then cost, then the 7-day and 5-hour reset times, the PR number, the effort, then
+the 7-day and 5-hour meters; the repo, the branch, the model and the context meter always stay. Once
 the line fits, dropped pieces that still fit come back, most important first, so no room is left unused.
+When even the pieces that always stay are too wide, the repo gives up the difference: its owner goes
+first, then its name is cut with an ellipsis.
 
 The 33k headroom: the context meter does not run to the full context window but to the point where
 Claude Code auto-compacts. That point is the auto-compact window (from the environment or the
@@ -45,14 +47,22 @@ import time
 GREEN = 32
 YELLOW = 33
 RED = 31
+BLUE = 94  # bright blue: the plain one is too dark on black
 BOLD = 1
+UNDERLINE = 4
 # Claude Code's own highlight colour (the dark theme's `permission` token), 24-bit so it matches exactly: the repo name.
 VIOLET = "38;2;177;185;249"
 # The chrome: pure white, 24-bit, because the terminal's default foreground is a light grey in most schemes.
 WHITE = "38;2;255;255;255"
-# One colour per model family and per effort level, from the terminal's 16. Magenta, blue and red are their bright
+# Opus is Claude orange (the dark theme's `claude` token), 24-bit so it matches exactly.
+CLAUDE_ORANGE = "38;2;215;119;87"
+# Fable is a gold gradient across its name, first letter to last (linear in RGB); the icon takes the first colour.
+FABLE_FROM = (255, 215, 0)  # #FFD700
+FABLE_TO = (255, 140, 0)  # #FF8C00
+FABLE_GOLD = "38;2;255;215;0"
+# One colour per model family and per effort level, from the terminal's 16 (Opus aside). Magenta, blue and red are their bright
 # variants: the plain ones are too dark to read on a black background (Campbell's blue is #0037DA).
-MODEL_COLOURS = {"opus": 95, "sonnet": 94, "haiku": 36, "fable": 93, "mythos": 92}  # bright magenta, bright blue, cyan, gold, bright green
+MODEL_COLOURS = {"opus": CLAUDE_ORANGE, "sonnet": 94, "haiku": 36, "fable": FABLE_GOLD, "mythos": 92}  # Claude orange, bright blue, cyan, gold gradient, bright green
 EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": 91, "xhigh": 95, "max": 97}  # a heat ramp: green, yellow, bright red, bright magenta, white-hot
 BLOCK = "█"
 # Meter levels: (filled colour, unfilled colour) as 24-bit SGR parameters. The unfilled part is the same hue at
@@ -104,6 +114,17 @@ def fmt_reset(resets_at: float, now: float) -> str:
     if hours < 24:
         return f"→ {hours}h{minutes % 60}m"
     return f"→ {hours // 24}d{hours % 24}h"  # minutes would be noise this far out
+
+
+def fmt_elapsed(ms: float) -> str:
+    """How long the session has run: 0m, 12m, 1h 33m, 1d 2h: a space between the units."""
+    minutes = int(ms) // 60_000
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h {minutes % 60}m"
+    return f"{hours // 24}d {hours % 24}h"
 
 
 def meter(pct: float, cells: int) -> str:
@@ -223,6 +244,58 @@ def branch(start_dir: str, stop_dir: str | None = None) -> str | None:
     return head[:7]
 
 
+def _remote_url(config_text: str) -> str | None:
+    """The url of [remote "origin"] in a git config file's text (a line parser: configparser chokes on subsections)."""
+    in_origin = False
+    for line in config_text.splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            in_origin = re.fullmatch(r'\[\s*remote\s+"origin"\s*\]', line) is not None
+        elif in_origin:
+            key, _, value = line.partition("=")
+            if key.strip().lower() == "url" and value.strip():
+                return value.strip()
+    return None
+
+
+def origin_remote(cwd: str, stop_dir: str | None = None) -> tuple[str, str] | None:
+    """(host kind, "owner/name") of the origin remote, read from the git config without git; None on any failure.
+
+    host kind is "github", "gitlab" (gitlab.com or a host with "gitlab" in its name) or "other". A linked worktree's
+    .git file leads to its gitdir and that gitdir's commondir, which holds the config. stop_dir ends the walk up
+    from cwd after looking there (tests use it)."""
+    try:
+        here = os.path.abspath(cwd)
+        stop = os.path.abspath(stop_dir) if stop_dir else None
+        while not os.path.exists(os.path.join(here, ".git")):
+            parent = os.path.dirname(here)
+            if parent == here or here == stop:
+                return None
+            here = parent
+        git = os.path.join(here, ".git")
+        if os.path.isfile(git):
+            pointer = _read_small(git) or ""
+            if not pointer.startswith("gitdir:"):
+                return None
+            git = os.path.join(here, pointer[len("gitdir:"):].strip())
+            common = _read_small(os.path.join(git, "commondir"))
+            if common:
+                git = os.path.join(git, common)
+        with open(os.path.join(git, "config"), encoding="utf-8", errors="replace") as f:
+            url = _remote_url(f.read())
+        match = url and (re.fullmatch(r"[\w+.-]+://(?:[^@/]*@)?([^/:]+)(?::\d+)?/(.+)", url)
+                         or re.fullmatch(r"(?:[^@/:]+@)?([^/:]+):(?!//)(.+)", url))
+        if not match:
+            return None
+        host, path = match.group(1).lower(), match.group(2).strip("/").removesuffix(".git")
+        if not path:
+            return None
+        kind = "github" if host == "github.com" else "gitlab" if host == "gitlab.com" or "gitlab" in host else "other"
+        return kind, path
+    except (OSError, ValueError):
+        return None
+
+
 MARGIN = 4  # cells Claude Code keeps for its own spacing around the status line
 DEFAULT_COLUMNS = 120
 SEPARATOR = sgr(WHITE, " │ ")  # separators, icons and labels are explicit white: no grey text
@@ -230,17 +303,22 @@ SEPARATOR = sgr(WHITE, " │ ")  # separators, icons and labels are explicit whi
 # (text with colours, priority, group): priority 0 never drops, a higher number drops sooner;
 # segments of one group sit together and groups are joined by a separator.
 Segment = tuple[str, int, int]
-# Drop order, least important first (the user's call: cost, then reset times, then the rest).
-P_COST, P_7D_RESET, P_5H_RESET, P_PR, P_REPO, P_EFFORT, P_7D, P_5H = 8, 7, 6, 5, 4, 3, 2, 1
-G_PLACE, G_MODEL, G_CONTEXT, G_5H, G_7D, G_COST = range(6)
-GROUP_JOIN = {G_MODEL: sgr(WHITE, " · ")}  # "Opus · high"; every other group joins its pieces with two spaces
+# Drop order, least important first (the user's call: session time, cost, then reset times, then the rest). The repo
+# never drops: it always opens the line, like the branch, model and context meter.
+P_TIME, P_COST, P_7D_RESET, P_5H_RESET, P_PR, P_EFFORT, P_7D, P_5H = 8, 7, 6, 5, 4, 3, 2, 1
+G_PLACE, G_MODEL, G_CONTEXT, G_5H, G_7D, G_COST, G_TIME = range(7)
+GROUP_JOIN = {G_MODEL: " "}  # "Opus <bolt> high", or "Opus · high" under --labels; every other group joins its pieces with two spaces
 
 # Markers before a piece: a Nerd Font glyph (the default) or, with --labels, a short word for fonts without the
 # glyphs (then the repo, branch, PR and model carry no marker: they read on their own). Every glyph is followed
 # by a space because the non-Mono Nerd Font variants draw it wider than one cell and it would overlap the text.
-ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "pr": "\uf407", "model": "\uf2db", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073"}
-LABELS = {"ctx": "ctx", "5h": "5H", "7d": "7D"}
-ICONS_RE = re.compile("[" + "".join(ICONS.values()) + "]")
+ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "pr": "\uf407", "model": "󰚩", "effort": "", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073",
+         "time": "󰅐"}  # time: md-clock-outline, since fa-clock-o is the 5-hour window's
+LABELS = {"effort": "·", "ctx": "ctx", "5h": "5H", "7d": "7D", "time": "session"}
+GITLAB = "38;2;252;109;38"  # #FC6D26, GitLab's orange
+# The repo piece's icon and colour by host kind (origin_remote): GitHub, GitLab, and the plain git glyph for the rest.
+REPO_LOOKS = {"github": (ICONS["repo"], VIOLET), "gitlab": ("", GITLAB), "other": ("", VIOLET)}
+ICONS_RE = re.compile("[" + "".join(ICONS.values()) + "".join(icon for icon, _ in REPO_LOOKS.values()) + "]")
 
 
 def _dict(value) -> dict:
@@ -260,17 +338,35 @@ def _mark(markers: dict, key: str, text: str, colour: int | str | None = None) -
     return sgr(colour or WHITE, marker + " ") + text
 
 
-def model_colour(name: str) -> int | None:
+def model_colour(name: str) -> int | str | None:
     """SGR colour for a model display name or id (Opus, claude-sonnet-5-5, Fable 5.1); None when unknown."""
     lowered = name.lower()
     return next((code for family, code in MODEL_COLOURS.items() if family in lowered), None)
+
+
+def gradient(text: str, start: tuple[int, int, int], end: tuple[int, int, int]) -> str:
+    """text with each character its own 24-bit colour, linear in RGB from start (first) to end (last); one reset at the end."""
+    last = max(len(text) - 1, 1)
+    parts = []
+    for i, char in enumerate(text):
+        r, g, b = (round(a + (z - a) * i / last) for a, z in zip(start, end))
+        parts.append(f"[38;2;{r};{g};{b}m{char}")
+    return "".join(parts) + "[0m"
+
+
+def model_text(name: str) -> str:
+    """The model name in bold, in its family colour: Fable's name as its gold gradient."""
+    colour = model_colour(name)
+    if colour == FABLE_GOLD:
+        return sgr(BOLD, gradient(name, FABLE_FROM, FABLE_TO))
+    return sgr(BOLD, _coloured(name, colour))
 
 
 def effort_colour(level: str) -> int | None:
     return EFFORT_COLOURS.get(level.lower())
 
 
-def _coloured(text: str, colour: int | None) -> str:
+def _coloured(text: str, colour: int | str | None) -> str:
     return sgr(colour, text) if colour else text
 
 
@@ -278,6 +374,16 @@ def _repo_name(repo) -> str | None:
     if isinstance(repo, dict):
         repo = f"{repo.get('owner')}/{repo.get('name')}" if repo.get("owner") and repo.get("name") else None
     return repo if isinstance(repo, str) and repo else None
+
+
+def short_repo(repo: str, room: int) -> str:
+    """repo in at most room cells: whole, then without its owner, then cut with an ellipsis (one letter at least)."""
+    if cells(repo) <= room:
+        return repo
+    name = repo.rsplit("/", 1)[-1]
+    if cells(name) <= room:
+        return name
+    return name[:max(room - 1, 1)] + "…"
 
 
 def _meter_piece(marks: dict, key: str, pct: float, cells: int, detail: str = "", name: str = "") -> str:
@@ -291,26 +397,36 @@ def _meter_piece(marks: dict, key: str, pct: float, cells: int, detail: str = ""
     return _mark(marks, key, bar, fill) + sgr(fill, figures)
 
 
-def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: str | None, icons: bool = True) -> list[Segment]:
-    """The whole line as segments, in display order; icons=False uses the text labels."""
+def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: str | None, icons: bool = True,
+             repo_shrink: int = 0) -> list[Segment]:
+    """The whole line as segments, in display order; icons=False uses the text labels.
+    repo_shrink: cells the repo must give up (see short_repo), for a terminal too narrow for the never-dropped pieces."""
     out: list[Segment] = []
     marks = ICONS if icons else LABELS
-    repo = _repo_name(_dict(data.get("workspace")).get("repo"))
+    workspace = _dict(data.get("workspace"))
+    repo = _repo_name(workspace.get("repo"))
+    remote = origin_remote(str(workspace.get("current_dir") or os.getcwd()))
+    repo = repo or (remote[1] if remote else None)
+    kind = remote[0] if remote else "github"  # Claude Code fills workspace.repo for GitHub only
     number = _dict(data.get("pr")).get("number")
     model = _dict(data.get("model"))
     name = model.get("display_name") or model.get("id")
     effort = _dict(data.get("effort")).get("level")
     if repo:
-        out.append((_mark(marks, "repo", sgr(VIOLET, repo), VIOLET), P_REPO, G_PLACE))
+        icon, colour = REPO_LOOKS[kind]
+        repo = short_repo(repo, cells(repo) - repo_shrink) if repo_shrink > 0 else repo
+        out.append((_mark({"repo": icon} if marks is ICONS else marks, "repo", sgr(colour, repo), colour), 0, G_PLACE))
     if branch_name:
         out.append((_mark(marks, "branch", sgr(WHITE, branch_name)), 0, G_PLACE))
     if number:
-        out.append((_mark(marks, "pr", sgr(WHITE, f"#{number}")), P_PR, G_PLACE))
+        out.append((_mark(marks, "pr", sgr(UNDERLINE, sgr(YELLOW, f"#{number}")), YELLOW), P_PR, G_PLACE))
     if name:
         colour = model_colour(str(name))
-        out.append((_mark(marks, "model", sgr(BOLD, _coloured(str(name), colour)), colour), 0, G_MODEL))
+        out.append((_mark(marks, "model", model_text(str(name)), colour), 0, G_MODEL))
         if effort:
-            out.append((_coloured(str(effort), effort_colour(str(effort))), P_EFFORT, G_MODEL))
+            level = effort_colour(str(effort))
+            # The bolt takes the level's colour; the --labels dot stays white.
+            out.append((_mark(marks, "effort", _coloured(str(effort), level), level if marks is ICONS else None), P_EFFORT, G_MODEL))
 
     window = _dict(data.get("context_window"))
     used = int(_num(window.get("total_input_tokens")))
@@ -334,6 +450,9 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     cost = _dict(data.get("cost"))
     if isinstance(cost.get("total_cost_usd"), (int, float)):
         out.append((sgr(GREEN, f"${cost['total_cost_usd']:.2f}"), P_COST, G_COST))
+    elapsed = cost.get("total_duration_ms")
+    if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) and 0 <= elapsed < float("inf"):
+        out.append((_mark(marks, "time", sgr(BLUE, fmt_elapsed(elapsed)), BLUE), P_TIME, G_TIME))
     return out
 
 
@@ -371,20 +490,22 @@ def fit(segments: list[Segment], width: int) -> str:
 
 
 def spans(text: str) -> list[dict]:
-    """text split into runs of one style, each `{"text", "colour", "bold"}`, for the mod to draw: the colour is
+    """text split into runs of one style, each `{"text", "colour", "bold"}` (plus `"underline": true` where underlined), for the mod to draw: the colour is
     a terminal name (`green`, `redBright`), a hex value for a 24-bit colour, or None for the default."""
     out: list[dict] = []
     colour: str | None = None
-    bold = False
+    bold = underline = False
     pos = 0
     for match in SGR_RE.finditer(text):
-        _add_span(out, text[pos:match.start()], colour, bold)
+        _add_span(out, text[pos:match.start()], colour, bold, underline)
         pos = match.end()
         params = match.group()[2:-1]
         if params in ("", "0"):
-            colour, bold = None, False
+            colour, bold, underline = None, False, False
         elif params == "1":
             bold = True
+        elif params == "4":
+            underline = True
         elif params.startswith("38;2;"):
             r, g, b = (int(v) for v in params.split(";")[2:5])
             colour = f"#{r:02x}{g:02x}{b:02x}"
@@ -392,17 +513,19 @@ def spans(text: str) -> list[dict]:
             colour = COLOUR_NAMES[int(params) - 30]
         elif params.isdigit() and 90 <= int(params) <= 97:
             colour = COLOUR_NAMES[int(params) - 90] + "Bright"
-    _add_span(out, text[pos:], colour, bold)
+    _add_span(out, text[pos:], colour, bold, underline)
     return out
 
 
-def _add_span(out: list[dict], text: str, colour: str | None, bold: bool) -> None:
+def _add_span(out: list[dict], text: str, colour: str | None, bold: bool, underline: bool = False) -> None:
+    """Appends a run, merged into the last one when the style is the same; `underline` is only written when set."""
     if not text:
         return
-    if out and out[-1]["colour"] == colour and out[-1]["bold"] == bold:
+    span = {"text": text, "colour": colour, "bold": bold} | ({"underline": True} if underline else {})
+    if out and {**out[-1], "text": text} == span:
         out[-1]["text"] += text
     else:
-        out.append({"text": text, "colour": colour, "bold": bold})
+        out.append(span)
 
 
 def overflow_record(dropped: list[Segment], columns: int, now: float) -> dict:
@@ -464,6 +587,8 @@ def compose(data: dict, env: dict, now: float, icons: bool = True) -> tuple[str,
         columns = DEFAULT_COLUMNS
     width = max(columns - MARGIN, 1)
     line, dropped = layout(segments(data, env, now, files, branch_name, icons), width)
+    if cells(line) > width:  # the never-dropped pieces alone are too wide: the repo gives up the difference
+        line, dropped = layout(segments(data, env, now, files, branch_name, icons, cells(line) - width), width)
     return line, dropped, columns
 
 
@@ -483,7 +608,7 @@ DEMO = {
         "five_hour": {"used_percentage": 23, "resets_at": DEMO_NOW + 2 * 3600 + 10 * 60},
         "seven_day": {"used_percentage": 41, "resets_at": DEMO_NOW + 3 * 86400 + 4 * 3600},
     },
-    "cost": {"total_cost_usd": 1.23},
+    "cost": {"total_cost_usd": 1.23, "total_duration_ms": 5_580_000},
 }
 
 
