@@ -35,8 +35,8 @@ Overflow: the pieces a narrow terminal dropped are written, per session, to
 says where the `session-cards` mod draws each one on Claude Code's own hint line: `under` holds a reset time
 whose bar stayed, without its arrow, at the screen column of the bar's first block; `bars` holds each moved
 meter with its reset time, the first one's first block under the last bar left on the top row (or a separator
-after the reset times there), the next one a separator after it; `right` holds the rest, right-aligned, each
-with its drop priority as `rank` so the mod drops the least important first when the hint needs the room.
+after the reset times there), the next one a separator after it; `right` holds the rest, right-aligned. Each
+carries its drop priority as `rank`: where pieces collide, the mod drops the least important of them first.
 `label` is the width of the mode label in front of the hint (`⏵⏵ bypass permissions on · `), read from the last
 `permission-mode` entry near the end of the session transcript; `pieces` keeps the old flat list for an older
 mod. Files older than a day are removed on each run; a session with no id writes nothing.
@@ -578,7 +578,7 @@ def overflow_record(kept: list[Segment], dropped: list[Segment], columns: int, n
     pieces as spans in display order (`pieces`), the mode label's width (`label`), and where the mod draws each one:
     `under` a kept meter (its reset time without the arrow, at the screen column of the meter's first block),
     `bars` (a dropped meter with its reset, the first one's first block under the last kept meter's, each next one a
-    separator's width after the one before), or `right` (the rest). bars and right carry their drop priority as rank."""
+    separator's width after the one before), or `right` (the rest). Each carries its drop priority as rank."""
     def first_block(meter: Segment) -> int:  # screen column of a kept meter's first block
         upto = kept[:kept.index(meter) + 1]  # a meter is its group's first piece, so this joined line ends with it
         return STATUS_X + cells(_join(upto)) - cells(meter.text) + _to_block(meter.text)
@@ -593,7 +593,7 @@ def overflow_record(kept: list[Segment], dropped: list[Segment], columns: int, n
     for s in dropped:
         kind, _, window = s.role.partition(":")
         if kind == "reset" and window in meters:
-            under.append({"col": first_block(meters[window]), "spans": spans(re.sub("→ ?", "", s.text, count=1))})
+            under.append({"col": first_block(meters[window]), "rank": s.priority, "spans": spans(re.sub("→ ?", "", s.text, count=1))})
         elif kind == "meter" and last:
             text = s.text + ("  " + resets[window].text if window in resets else "")
             # The first one lines up under the last kept meter, unless that meter's own reset is there: then it

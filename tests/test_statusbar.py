@@ -300,6 +300,7 @@ class RowTest(unittest.TestCase):
         seven = [e for e in record["under"] if self.text(e) == "3d4h"]
         self.assertEqual(len(seven), 1, record["under"])
         self.assertEqual(seven[0]["col"], statusbar.STATUS_X + row.index(statusbar.BLOCK, row.index("7D")))
+        self.assertEqual(seven[0]["rank"], statusbar.P_7D_RESET)  # a reset time competes by its drop priority too
 
     def test_meter_and_reset_move_together(self):
         width = self.width_where(lambda d: any("41%" in p for p in d))

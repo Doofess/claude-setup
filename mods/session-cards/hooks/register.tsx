@@ -284,7 +284,7 @@ type Ranked = { rank: number; spans: Span[] }
  * The status bar's overflow file: `pieces` is the flat list every statusbar.py writes; a newer one also says
  * where each piece goes (`under` its bar, moved `bars`, the `right` group) and the mode label's width.
  */
-export type Overflow = { pieces: Span[][]; label?: number; under?: Placed[]; bars?: (Placed & Ranked)[]; right?: Ranked[] }
+export type Overflow = { pieces: Span[][]; label?: number; under?: (Placed & Ranked)[]; bars?: (Placed & Ranked)[]; right?: Ranked[] }
 
 const spansOf = (value: unknown): Span[] | null => {
   const spans = field(value, 'spans')
@@ -330,7 +330,7 @@ function parseOverflow(text: string): Overflow | null {
   return {
     pieces: pieces.map(piece => (Array.isArray(piece) ? piece.filter(isSpan) : [])),
     label: numberOf(parsed, 'label') ?? undefined,
-    under: entries<Placed>(parsed, 'under', ['col']),
+    under: entries<Placed & Ranked>(parsed, 'under', ['col', 'rank']),
     bars: entries<Placed & Ranked>(parsed, 'bars', ['col', 'rank']),
     right: entries<Ranked>(parsed, 'right', ['rank']),
   }
@@ -348,58 +348,67 @@ const joined = (pieces: Span[][]): Span[] => pieces.flatMap((piece, i) => (i ===
  * Where the second row's pieces go, as offsets inside the hook's tree, which starts after the mode label at screen
  * column `HINT_X + record.label` and opens with `hintCells` of hint and two spaces. Reset times go under their bar
  * (one the hint reaches is not drawn); moved bars go where the record lines them up, or join the right group when
- * one would start inside the hint or run past the margin; the right group ends at the margin of `columns - 4`,
- * dropping its highest rank while it reaches the pieces before it. Null when nothing is left to draw.
+ * one would start inside the hint or run past the margin; the right group ends at the margin of `columns - 4`.
+ * While the right group reaches the hint or a piece before it, the highest rank among those pieces drops, so a
+ * moved bar outranks a reset time it collides with. Null when nothing is left to draw.
  */
 export function placeRow(record: Overflow, hintCells: number, columns: number): Placed[] | null {
   const origin = HINT_X + (record.label ?? 0)
   const end = columns - 4 - origin
-  const placed: Placed[] = []
-  let edge = hintCells + 2
+  const left = hintCells + 2
+  const endOf = (piece: Placed) => piece.col + widthOf(piece.spans)
+  const inRow = (piece: Placed) => piece.col >= left && endOf(piece) <= end
+  let fixed: (Placed & Ranked)[] = []
 
   for (const piece of record.under ?? []) {
-    const at = piece.col - origin
+    const at = { ...piece, col: piece.col - origin }
+    const before = fixed[fixed.length - 1]
 
-    if (at >= edge && at + widthOf(piece.spans) <= end) {
-      placed.push({ col: at, spans: piece.spans })
-      edge = at + widthOf(piece.spans)
+    if (inRow(at) && (!before || at.col >= endOf(before))) {
+      fixed.push(at)
     }
   }
 
-  const bars = record.bars ?? []
+  const bars = (record.bars ?? []).map(bar => ({ ...bar, col: bar.col - origin }))
+  const clear = (bar: Placed) => fixed.every(piece => endOf(piece) <= bar.col || endOf(bar) <= piece.col)
   let right: Ranked[] = record.right ?? []
-  const lineUp = bars.every(bar => bar.col - origin >= edge && bar.col - origin + widthOf(bar.spans) <= end)
 
-  if (!lineUp) {
-    right = [...bars, ...right]
+  if (bars.every(bar => inRow(bar) && clear(bar))) {
+    fixed = [...fixed, ...bars]
   } else {
-    for (const bar of bars) {
-      const at = bar.col - origin
-      const before = placed[placed.length - 1]
-
-      // A bar a separator after the piece before it is drawn with the separator, as on the top row.
-      if (before && before.col + widthOf(before.spans) + SEPARATOR.length === at) {
-        before.spans = [...before.spans, separatorSpan, ...bar.spans]
-      } else {
-        placed.push({ col: at, spans: bar.spans })
-      }
-      edge = at + widthOf(bar.spans)
-    }
+    right = [...bars.map(({ rank, spans }) => ({ rank, spans })), ...right]
   }
 
-  // Two spaces between the last piece placed and the right group, as after the hint.
-  const start = placed.length === 0 ? edge : edge + 2
+  let group: Placed | null = null
 
   while (right.length > 0) {
-    const group = joined(right.map(piece => piece.spans))
+    const spans = joined(right.map(piece => piece.spans))
+    const start = end - widthOf(spans)
+    // Two spaces between a piece before and the right group, as after the hint.
+    const blocking = fixed.filter(piece => endOf(piece) + 2 > start)
 
-    if (end - widthOf(group) >= start) {
-      placed.push({ col: end - widthOf(group), spans: group })
+    if (start >= left && blocking.length === 0) {
+      group = { col: start, spans }
       break
     }
 
-    const worst = right.reduce((a, b) => (b.rank > a.rank ? b : a))
+    const contenders: Ranked[] = start < left ? right : [...right, ...blocking]
+    const worst = contenders.reduce((a, b) => (b.rank > a.rank ? b : a))
     right = right.filter(piece => piece !== worst)
+    fixed = fixed.filter(piece => piece !== worst)
+  }
+
+  const placed: Placed[] = []
+
+  for (const piece of [...fixed, ...(group ? [group] : [])].sort((a, b) => a.col - b.col)) {
+    const before = placed[placed.length - 1]
+
+    // A piece a separator after the one before it is drawn with the separator, as on the top row.
+    if (before && endOf(before) + SEPARATOR.length === piece.col) {
+      before.spans = [...before.spans, separatorSpan, ...piece.spans]
+    } else {
+      placed.push({ col: piece.col, spans: piece.spans })
+    }
   }
 
   return placed.length === 0 ? null : placed
