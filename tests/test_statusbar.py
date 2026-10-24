@@ -216,7 +216,7 @@ class OriginRemoteTest(unittest.TestCase):
 class RowTest(unittest.TestCase):
     NOW = 1_700_000_000
     MARKERS = {  # what to look for in the plain row, in the order the pieces should disappear when the terminal narrows
-        "session time": "1h33m", "cost": "$1.23", "7d reset": "→ 3d4h", "5h reset": "→ 2h10m",
+        "session time": "1h33m", "cost": "$ 1.23", "7d reset": "→ 3d4h", "5h reset": "→ 2h10m",
         "7d meter": "41%", "5h meter": "23%",
     }
 
@@ -230,12 +230,12 @@ class RowTest(unittest.TestCase):
         row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
         # Each icon takes a cell and a space (plain() shows the icon as a space): the non-Mono Nerd Font
         # variants draw glyphs wider than one cell, and without the space they overlap the text.
-        self.assertEqual(row, "  Doofess/claude-setup    main │   Opus   high │   ████████ 42%  112k/267k │   5H ████████ 23%  → 2h10m │   7D ████████ 41%  → 3d4h │ $1.23 │   1h33m")
+        self.assertEqual(row, "  Doofess/claude-setup    main │   Opus   high │   ████████ 42%  112k/267k │   5H ████████ 23%  → 2h10m │   7D ████████ 41%  → 3d4h │ $ 1.23 │   1h33m")
 
     def test_labels_instead_of_icons(self):
         # --labels: dim words for fonts without the Nerd Font glyphs; the rest of the line is the same.
         row = statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200))
-        self.assertEqual(row, "Doofess/claude-setup  main │ Opus · high │ ctx ████████ 42%  112k/267k │ 5H ████████ 23%  → 2h10m │ 7D ████████ 41%  → 3d4h │ $1.23 │ session 1h33m")
+        self.assertEqual(row, "Doofess/claude-setup  main │ Opus · high │ ctx ████████ 42%  112k/267k │ 5H ████████ 23%  → 2h10m │ 7D ████████ 41%  → 3d4h │ $ 1.23 │ session 1h33m")
 
     def test_window_meters_name_their_window(self):
         # The 5-hour and 7-day meters say which window they are, in the bar's level colour, beside the icon.
@@ -250,7 +250,7 @@ class RowTest(unittest.TestCase):
         # has gone too, the 7-day reset fits again and comes back: the line uses the width rather than leaving a gap.
         row = statusbar.plain(statusbar.fit(self.demo_row(), 122))
         self.assertEqual(len(row), 122)
-        self.assertNotIn("$1.23", row)
+        self.assertNotIn("$ 1.23", row)
         self.assertNotIn("→ 2h10m", row)
         for marker in ("Doofess/claude-setup", "high", "→ 3d4h"):
             self.assertIn(marker, row)
@@ -264,7 +264,7 @@ class RowTest(unittest.TestCase):
     def test_layout_lists_the_dropped_pieces_in_display_order(self):
         line, dropped = statusbar.layout(self.demo_row(), 120)
         self.assertEqual(line, statusbar.fit(self.demo_row(), 120))
-        self.assertEqual([statusbar.plain(t).strip() for t, *_ in dropped], ["→ 2h10m", "→ 3d4h", "$1.23", "1h33m"])
+        self.assertEqual([statusbar.plain(t).strip() for t, *_ in dropped], ["→ 2h10m", "→ 3d4h", "$ 1.23", "1h33m"])
         self.assertEqual(statusbar.layout(self.demo_row(), 200)[1], [])
 
     def test_overflow_record(self):
@@ -274,7 +274,7 @@ class RowTest(unittest.TestCase):
         self.assertEqual(record["columns"], 110)
         self.assertEqual(record["written_at"], self.NOW)
         self.assertEqual(len(record["pieces"]), 4)
-        self.assertEqual(record["pieces"][2], [{"text": "$1.23", "colour": "green", "bold": False}])
+        self.assertEqual(record["pieces"][2], [{"text": "$ ", "colour": "green", "bold": False}, {"text": "1.23", "colour": "#ffffff", "bold": False}])
 
     def width_where(self, test):
         """The widest line width whose dropped pieces pass test (a predicate on their plain texts)."""
@@ -344,9 +344,9 @@ class RowTest(unittest.TestCase):
         self.assertEqual([s.text for s in dropped], ["M" * 30, "RRR"])
 
     def test_right_pieces_carry_rank(self):
-        record, _ = self.record_at(self.width_where(lambda d: "$1.23" in d and "1h33m" in d))
+        record, _ = self.record_at(self.width_where(lambda d: "$ 1.23" in d and "1h33m" in d))
         ranks = {statusbar.plain(self.text(e)).strip(): e["rank"] for e in record["right"]}
-        self.assertGreater(ranks["1h33m"], ranks["$1.23"])
+        self.assertGreater(ranks["1h33m"], ranks["$ 1.23"])
 
     def test_pieces_stay_the_flat_list(self):
         segs = self.demo_row()
@@ -432,7 +432,7 @@ class RowTest(unittest.TestCase):
         # The line must survive it: int() of infinity or NaN raises, and a negative time means nothing.
         for ms in [float("inf"), float("nan"), -1, True]:
             row = statusbar.plain(statusbar.fit(self.demo_row(cost={"total_cost_usd": 1.23, "total_duration_ms": ms}), 200))
-            self.assertIn("$1.23", row, ms)
+            self.assertIn("$ 1.23", row, ms)
             self.assertFalse(row.rstrip().endswith("m") or row.rstrip().endswith("h"), (ms, row[-20:]))
 
     def test_lines_changed_are_not_shown(self):
@@ -462,7 +462,8 @@ class RowTest(unittest.TestCase):
 
     def test_cost_model_and_effort_are_coloured(self):
         raw = statusbar.fit(self.demo_row(), 200)
-        self.assertIn("\x1b[32m$1.23", raw)
+        # The dollar sign is the cost's icon, green with a space after it; the amount is white.
+        self.assertIn(statusbar.sgr(statusbar.GREEN, "$ ") + statusbar.sgr(statusbar.WHITE, "1.23"), raw)
         self.assertIn("\x1b[1m\x1b[38;2;215;119;87mOpus", raw)
         self.assertIn("\x1b[" + statusbar.ERROR_RED + "mhigh", raw)
 
@@ -613,7 +614,7 @@ class ProgramTest(unittest.TestCase):
                 record = json.load(f)
             self.assertEqual(record["columns"], 60)
             texts = ["".join(span["text"] for span in piece) for piece in record["pieces"]]
-            self.assertIn("$1.23", texts)
+            self.assertIn("$ 1.23", texts)
             self.assertNotIn("Opus", "".join(texts))
         finally:
             shutil.rmtree(home, ignore_errors=True)
