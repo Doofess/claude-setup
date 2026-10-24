@@ -17,7 +17,7 @@ test('modelColour names the family colour', () => {
 test('effortColour names the level colour', () => {
   expect(effortColour('low')).toBe('green')
   expect(effortColour('medium')).toBe('yellow')
-  expect(effortColour('high')).toBe('red')
+  expect(effortColour('high')).toBe('error')
   expect(effortColour('xhigh')).toBe('magentaBright')
   expect(effortColour('max')).toBe('whiteBright')
   expect(effortColour('7')).toBeUndefined()
@@ -141,7 +141,7 @@ test('test_agent_row_shows_type_model_effort_and_action', async ($, on) => {
   expect(verb?.props.bold).toBe(true)
   expect(verb?.props.color).toBe('text')
   expect((await ui.find({ type: 'Text', text: /Sonnet/ }))?.props.color).toBe('blue')
-  expect((await ui.find({ type: 'Text', text: /^high$/ }))?.props.color).toBe('red')
+  expect((await ui.find({ type: 'Text', text: /^high$/ }))?.props.color).toBe('error')
 
   for (const t of await ui.findAll({ type: 'Text' })) {
     if (!/^(Sonnet|high)$/.test(t.text)) {

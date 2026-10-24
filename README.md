@@ -158,8 +158,10 @@ Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers)
 - The pieces dropped on a narrow terminal are written to `~/.claude/statusbar-overflow/<session_id>.json`, as text with
   their colours; files older than a day are removed. The session-cards mod reads them for the hint line. While the hint
   line shows that overflow, its shortcut pills are plain text; with nothing to show, Claude Code's own line stays.
-- The bar's and the mod's colours are the colour scheme's own 16, and the icons depend on the Nerd Font's glyph widths,
-  so a different scheme or font gives a different screen.
+- Reset times and the session time leave out a zero hour count past a day: `5d`, not `5d0h`.
+- Most of the bar's and the mod's colours are the colour scheme's own 16; Claude orange, the repo's violet and high
+  effort's red (the red of `bypass permissions on`) are Claude Code's exact theme colours. The icons depend on the Nerd
+  Font's glyph widths, so a different scheme or font gives a different screen.
 
 ### Settings merge rules
 
