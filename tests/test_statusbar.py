@@ -214,7 +214,7 @@ class OriginRemoteTest(unittest.TestCase):
 class RowTest(unittest.TestCase):
     NOW = 1_700_000_000
     MARKERS = {  # what to look for in the plain row, in the order the pieces should disappear when the terminal narrows
-        "session time": "1h 33m", "cost": "$1.23", "7d reset": "→ 3d4h", "5h reset": "→ 2h10m",
+        "session time": "1h33m", "cost": "$1.23", "7d reset": "→ 3d4h", "5h reset": "→ 2h10m",
         "7d meter": "41%", "5h meter": "23%",
     }
 
@@ -228,12 +228,12 @@ class RowTest(unittest.TestCase):
         row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
         # Each icon takes a cell and a space (plain() shows the icon as a space): the non-Mono Nerd Font
         # variants draw glyphs wider than one cell, and without the space they overlap the text.
-        self.assertEqual(row, "  Doofess/claude-setup    main │   Opus   high │   ████████ 42%  112k/267k │   5H ████████ 23%  → 2h10m │   7D ████████ 41%  → 3d4h │ $1.23 │   1h 33m")
+        self.assertEqual(row, "  Doofess/claude-setup    main │   Opus   high │   ████████ 42%  112k/267k │   5H ████████ 23%  → 2h10m │   7D ████████ 41%  → 3d4h │ $1.23 │   1h33m")
 
     def test_labels_instead_of_icons(self):
         # --labels: dim words for fonts without the Nerd Font glyphs; the rest of the line is the same.
         row = statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200))
-        self.assertEqual(row, "Doofess/claude-setup  main │ Opus · high │ ctx ████████ 42%  112k/267k │ 5H ████████ 23%  → 2h10m │ 7D ████████ 41%  → 3d4h │ $1.23 │ session 1h 33m")
+        self.assertEqual(row, "Doofess/claude-setup  main │ Opus · high │ ctx ████████ 42%  112k/267k │ 5H ████████ 23%  → 2h10m │ 7D ████████ 41%  → 3d4h │ $1.23 │ session 1h33m")
 
     def test_window_meters_name_their_window(self):
         # The 5-hour and 7-day meters say which window they are, in the bar's level colour, beside the icon.
@@ -262,7 +262,7 @@ class RowTest(unittest.TestCase):
     def test_layout_lists_the_dropped_pieces_in_display_order(self):
         line, dropped = statusbar.layout(self.demo_row(), 120)
         self.assertEqual(line, statusbar.fit(self.demo_row(), 120))
-        self.assertEqual([statusbar.plain(t).strip() for t, _, _ in dropped], ["→ 2h10m", "→ 3d4h", "$1.23", "1h 33m"])
+        self.assertEqual([statusbar.plain(t).strip() for t, _, _ in dropped], ["→ 2h10m", "→ 3d4h", "$1.23", "1h33m"])
         self.assertEqual(statusbar.layout(self.demo_row(), 200)[1], [])
 
     def test_overflow_record(self):
@@ -287,12 +287,12 @@ class RowTest(unittest.TestCase):
 
     def test_session_time_is_blue_with_a_clock(self):
         raw = statusbar.fit(self.demo_row(), 200)
-        self.assertTrue(raw.endswith(statusbar.sgr(statusbar.BLUE, statusbar.ICONS["time"] + " ") + statusbar.sgr(statusbar.BLUE, "1h 33m")), repr(raw[-60:]))
+        self.assertTrue(raw.endswith(statusbar.sgr(statusbar.BLUE, statusbar.ICONS["time"] + " ") + statusbar.sgr(statusbar.BLUE, "1h33m")), repr(raw[-60:]))
         self.assertNotEqual(statusbar.ICONS["time"], statusbar.ICONS["5h"])  # its own clock, not the 5-hour window's
-        self.assertNotIn("1h 33m", statusbar.plain(statusbar.fit(self.demo_row(cost={"total_cost_usd": 1.23}), 200)))
+        self.assertNotIn("1h33m", statusbar.plain(statusbar.fit(self.demo_row(cost={"total_cost_usd": 1.23}), 200)))
 
     def test_fmt_elapsed(self):
-        for ms, text in [(0, "0m"), (59_000, "0m"), (12 * 60_000, "12m"), (5_580_000, "1h 33m"), (26 * 3_600_000 + 60_000, "1d 2h"), (24 * 3_600_000 + 60_000, "1d")]:
+        for ms, text in [(0, "0m"), (59_000, "0m"), (12 * 60_000, "12m"), (5_580_000, "1h33m"), (26 * 3_600_000 + 60_000, "1d2h"), (24 * 3_600_000 + 60_000, "1d")]:
             self.assertEqual(statusbar.fmt_elapsed(ms), text, ms)
 
     def test_a_duration_that_is_not_a_time_is_left_out(self):

@@ -120,15 +120,15 @@ def fmt_reset(resets_at: float, now: float) -> str:
 
 
 def fmt_elapsed(ms: float) -> str:
-    """How long the session has run: 0m, 12m, 1h 33m, 1d 2h, 1d: a space between the units."""
+    """How long the session has run: 0m, 12m, 1h33m, 1d2h, 1d, with no space between the units, as the reset times."""
     minutes = int(ms) // 60_000
     if minutes < 60:
         return f"{minutes}m"
     hours = minutes // 60
     if hours < 24:
-        return f"{hours}h {minutes % 60}m"
+        return f"{hours}h{minutes % 60}m"
     days, hours = divmod(hours, 24)
-    return f"{days}d {hours}h" if hours else f"{days}d"
+    return f"{days}d{hours}h" if hours else f"{days}d"
 
 
 def meter(pct: float, cells: int) -> str:
