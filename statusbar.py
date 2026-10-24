@@ -56,6 +56,8 @@ VIOLET = "38;2;177;185;249"
 WHITE = "38;2;255;255;255"
 # Opus is Claude orange (the dark theme's `claude` token), 24-bit so it matches exactly.
 CLAUDE_ORANGE = "38;2;215;119;87"
+# High effort is the red of `bypass permissions on` (the dark theme's `error` token), 24-bit so it matches exactly.
+ERROR_RED = "38;2;255;107;128"
 # Fable is a gold gradient across its name, first letter to last (linear in RGB); the icon takes the first colour.
 FABLE_FROM = (255, 215, 0)  # #FFD700
 FABLE_TO = (255, 140, 0)  # #FF8C00
@@ -63,7 +65,7 @@ FABLE_GOLD = "38;2;255;215;0"
 # One colour per model family and per effort level, from the terminal's 16 (Opus aside). Magenta, blue and red are their bright
 # variants: the plain ones are too dark to read on a black background (Campbell's blue is #0037DA).
 MODEL_COLOURS = {"opus": CLAUDE_ORANGE, "sonnet": 94, "haiku": 36, "fable": FABLE_GOLD, "mythos": 92}  # Claude orange, bright blue, cyan, gold gradient, bright green
-EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": 91, "xhigh": 95, "max": 97}  # a heat ramp: green, yellow, bright red, bright magenta, white-hot
+EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": ERROR_RED, "xhigh": 95, "max": 97}  # a heat ramp: green, yellow, Claude's error red, bright magenta, white-hot
 BLOCK = "█"
 # Meter levels: (filled colour, unfilled colour) as 24-bit SGR parameters. The unfilled part is the same hue at
 # a third of the brightness, drawn with the same solid block, so the bar reads as one coloured bar with a dark
@@ -104,7 +106,7 @@ def fmt_tokens(n: int) -> str:
 
 
 def fmt_reset(resets_at: float, now: float) -> str:
-    """Time until a usage window resets: 45m, 2h10m, 3d4h. Under a minute or already past is now."""
+    """Time until a usage window resets: 45m, 2h10m, 3d4h, 5d. Under a minute or already past is now."""
     minutes = int(resets_at - now) // 60  # rounded down to the minute
     if minutes < 1:
         return "→now"
@@ -113,18 +115,20 @@ def fmt_reset(resets_at: float, now: float) -> str:
     hours = minutes // 60
     if hours < 24:
         return f"→ {hours}h{minutes % 60}m"
-    return f"→ {hours // 24}d{hours % 24}h"  # minutes would be noise this far out
+    days, hours = divmod(hours, 24)
+    return f"→ {days}d" + (f"{hours}h" if hours else "")  # minutes would be noise this far out, and 0h is too
 
 
 def fmt_elapsed(ms: float) -> str:
-    """How long the session has run: 0m, 12m, 1h 33m, 1d 2h: a space between the units."""
+    """How long the session has run: 0m, 12m, 1h 33m, 1d 2h, 1d: a space between the units."""
     minutes = int(ms) // 60_000
     if minutes < 60:
         return f"{minutes}m"
     hours = minutes // 60
     if hours < 24:
         return f"{hours}h {minutes % 60}m"
-    return f"{hours // 24}d {hours % 24}h"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h" if hours else f"{days}d"
 
 
 def meter(pct: float, cells: int) -> str:
@@ -362,7 +366,7 @@ def model_text(name: str) -> str:
     return sgr(BOLD, _coloured(name, colour))
 
 
-def effort_colour(level: str) -> int | None:
+def effort_colour(level: str) -> int | str | None:
     return EFFORT_COLOURS.get(level.lower())
 
 

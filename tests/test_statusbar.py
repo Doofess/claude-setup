@@ -37,6 +37,7 @@ class FormatTest(unittest.TestCase):
         self.assertEqual(statusbar.fmt_reset(now + 45 * 60, now), "→ 45m")
         self.assertEqual(statusbar.fmt_reset(now + 2 * 3600 + 10 * 60, now), "→ 2h10m")
         self.assertEqual(statusbar.fmt_reset(now + 3 * 86400 + 4 * 3600 + 20 * 60, now), "→ 3d4h")
+        self.assertEqual(statusbar.fmt_reset(now + 5 * 86400 + 20 * 60, now), "→ 5d")  # no 0h
 
     def test_reset_already_passed(self):
         self.assertEqual(statusbar.fmt_reset(1_700_000_000 - 5, 1_700_000_000), "→now")
@@ -281,7 +282,7 @@ class RowTest(unittest.TestCase):
         self.assertNotIn("1h 33m", statusbar.plain(statusbar.fit(self.demo_row(cost={"total_cost_usd": 1.23}), 200)))
 
     def test_fmt_elapsed(self):
-        for ms, text in [(0, "0m"), (59_000, "0m"), (12 * 60_000, "12m"), (5_580_000, "1h 33m"), (26 * 3_600_000 + 60_000, "1d 2h")]:
+        for ms, text in [(0, "0m"), (59_000, "0m"), (12 * 60_000, "12m"), (5_580_000, "1h 33m"), (26 * 3_600_000 + 60_000, "1d 2h"), (24 * 3_600_000 + 60_000, "1d")]:
             self.assertEqual(statusbar.fmt_elapsed(ms), text, ms)
 
     def test_a_duration_that_is_not_a_time_is_left_out(self):
@@ -320,7 +321,7 @@ class RowTest(unittest.TestCase):
         raw = statusbar.fit(self.demo_row(), 200)
         self.assertIn("\x1b[32m$1.23", raw)
         self.assertIn("\x1b[1m\x1b[38;2;215;119;87mOpus", raw)
-        self.assertIn("\x1b[91mhigh", raw)
+        self.assertIn("\x1b[" + statusbar.ERROR_RED + "mhigh", raw)
 
     def test_repo_icon_is_violet_like_the_repo(self):
         raw = statusbar.fit(self.demo_row(), 200)
@@ -336,7 +337,7 @@ class RowTest(unittest.TestCase):
         # A bolt before the effort instead of the dot; --labels keeps the dot.
         self.assertEqual(statusbar.ICONS["effort"], "")  # fa-flash, not U+26A1, which draws as a colour emoji
         raw = statusbar.fit(self.demo_row(), 200)
-        self.assertIn(statusbar.sgr(91, statusbar.ICONS["effort"] + " ") + statusbar.sgr(91, "high"), raw)
+        self.assertIn(statusbar.sgr(statusbar.ERROR_RED, statusbar.ICONS["effort"] + " ") + statusbar.sgr(statusbar.ERROR_RED, "high"), raw)
         self.assertNotIn(" · ", statusbar.plain(raw))
         self.assertIn("Opus · high", statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200)))
 
@@ -362,11 +363,11 @@ class RowTest(unittest.TestCase):
         self.assertTrue(all(span["bold"] for span in statusbar.spans(statusbar.model_text("Fable 5.1"))))
 
     def test_effort_colours(self):
-        for level, code in [("low", 32), ("medium", 33), ("high", 91), ("xhigh", 95), ("max", 97), ("odd", None)]:
+        for level, code in [("low", 32), ("medium", 33), ("high", "38;2;255;107;128"), ("xhigh", 95), ("max", 97), ("odd", None)]:
             self.assertEqual(statusbar.effort_colour(level), code, level)
         # every level its own colour, no two of them the same hue (31 and 91 look alike in most schemes)
-        codes = list(statusbar.EFFORT_COLOURS.values())
-        self.assertEqual(len({c % 60 for c in codes}), len(codes))
+        hues = [hue_family(c) for c in statusbar.EFFORT_COLOURS.values() if c != 97]  # white-hot max has no hue
+        self.assertEqual(len(set(hues)), len(hues))
 
     def test_only_common_characters(self):
         # No private-use (Nerd Font) code points: the bar must read the same in Consolas or Cascadia Mono.
@@ -400,9 +401,9 @@ class RowTest(unittest.TestCase):
         self.assertIn(statusbar.sgr(statusbar.WHITE, "→ 2h10m"), raw)
 
     def test_colours_are_the_sixteen_or_the_named_ones(self):
-        # The terminal's 16, plus the repo's violet (Claude Code's exact theme colour) and the meter levels (24-bit).
+        # The terminal's 16, plus the repo's violet and the effort red (Claude Code's exact theme colours) and the meter levels (24-bit).
         text = statusbar.fit(self.demo_row(), 200)
-        allowed = {"0", "1", "4", statusbar.VIOLET, statusbar.WHITE, "38;2;215;119;87"} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
+        allowed = {"0", "1", "4", statusbar.VIOLET, statusbar.WHITE, statusbar.ERROR_RED, "38;2;215;119;87"} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
         allowed |= {code for pair in statusbar.LEVELS.values() for code in pair}
         allowed |= set(re.findall(r"\[([0-9;]+)m", statusbar.model_text("Fable 5.1")))
         self.assertEqual(set(re.findall(r"\x1b\[([0-9;]+)m", text)) - allowed, set())

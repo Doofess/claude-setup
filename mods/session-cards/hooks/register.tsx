@@ -129,7 +129,7 @@ const FAMILY_COLOURS: Record<(typeof FAMILIES)[number], string> = {
 const EFFORT_COLOURS: Record<string, string> = {
   low: 'green',
   medium: 'yellow',
-  high: 'red',
+  high: 'error', // the red of `bypass permissions on`, as the status bar draws it
   xhigh: 'magentaBright',
   max: 'whiteBright',
 }
