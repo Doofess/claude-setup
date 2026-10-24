@@ -37,7 +37,14 @@ class SettingsTest(unittest.TestCase):
         self.settings = json.loads(read("settings.json"))
 
     def test_theme_is_pinned(self):
-        self.assertEqual(self.settings["theme"], "dark")
+        self.assertEqual(self.settings["theme"], "custom:clear")
+
+    def test_clear_theme_is_dark_with_a_clear_prompt_background(self):
+        # Claude Code 2.1.310 draws the sticky prompt line (the last prompt, pinned at the top once it scrolls away) on
+        # userMessageBackground; no theme value is transparent, so it is Campbell's own background.
+        theme = json.loads(read("themes", "clear.json"))
+        self.assertEqual(theme, {"name": "Clear", "base": "dark", "overrides": {"userMessageBackground": "#0c0c0c"}})
+        self.assertEqual(json.loads(read("terminal", "profile.json"))["colorScheme"], "Campbell")
 
     def test_mod_folder_is_loaded(self):
         dirs = self.settings["env"]["CLAUDE_CODE_PLUGIN_DIRS"]
@@ -50,6 +57,13 @@ class InstallerTest(unittest.TestCase):
         text = read("install.ps1")
         for needle in ("Same experience", "-KeepFont", "-KeepScheme", "Session cards mod", "Terminal scheme"):
             self.assertIn(needle, text)
+
+    def test_installer_copies_the_themes_and_checks_the_file(self):
+        text = read("install.ps1")
+        self.assertIn("Copy-Item (Join-Path $repo 'themes\*.json') $themesDir -Force", text)
+        row = [l for l in text.splitlines() if l.startswith("Add-SameRow 'Claude Code theme'")]
+        self.assertEqual(len(row), 1)
+        self.assertIn("$themeFileOk", row[0])
 
     def test_font_rows_require_no_font_on_the_default_profile(self):
         rows = [l for l in read("install.ps1").splitlines()

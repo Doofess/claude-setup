@@ -19,7 +19,7 @@
     "deny": ["Skill(mattpocock-skills:grilling)", "Skill(grilling)"]
   },
   "model": "opus",
-  "theme": "dark",
+  "theme": "custom:clear",
   "env": {
     "CLAUDE_CODE_NATIVE_CURSOR": "1",
     "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
