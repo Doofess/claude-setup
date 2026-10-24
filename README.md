@@ -76,6 +76,9 @@ Nothing to look at here, but it shapes every session:
 - **`advisor-switch`**: turns Claude Code's advisor on (Opus, or Fable when Opus is stuck) and off for one project, in
   its `.claude/settings.local.json`. Claude runs it itself before and after a plan with workers; the installer removes a
   user-level `advisorModel`, so the advisor is never on in every project at once.
+- **`codex`**: hands a task to OpenAI's Codex CLI in the background (`codex exec`, read-only unless it works in a
+  worktree), on the OpenAI subscription: questions about Codex, independent research, second opinions. Its sibling
+  setup is [codex-setup](https://github.com/Doofess/codex-setup).
 - **`underwater-photoshop`**: a personal skill that edits underwater and macro photos in the local Photoshop.
 
 ## Set up a new machine (Windows)

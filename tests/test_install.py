@@ -1107,3 +1107,27 @@ class StateRepoBase:
 
 
 per_engine(StateRepoBase, globals())
+
+
+class CodexSkillStaticTest(unittest.TestCase):
+    def test_skill_hands_work_to_codex_read_only_in_the_background(self):
+        text = read("skills", "codex", "SKILL.md")
+        self.assertRegex(text, r"\A---\nname: codex\ndescription: Use when ")
+        for word in ("codex exec -s read-only --skip-git-repo-check --ephemeral", "-o", "scratchpad",
+                     "run_in_background", "verify", "worktree"):
+            self.assertIn(word, text)
+        self.assertLess(len(text.splitlines()), 80)
+
+    def test_edits_are_sandboxed_to_the_worktree(self):
+        # codex-setup gives Codex full disk access by default; -C only sets the folder, -s workspace-write fences it.
+        text = read("skills", "codex", "SKILL.md")
+        edits = text[text.index("## Edits"):]
+        self.assertIn('-s workspace-write -C "<worktree>"', edits)
+
+    def test_update_runs_from_powershell(self):
+        text = read("skills", "codex", "SKILL.md")
+        self.assertIn("codex update", text)
+        self.assertIn("not Git Bash", text)
+
+    def test_global_rules_point_at_it(self):
+        self.assertIn("`codex` skill", read("global", "CLAUDE.md"))
