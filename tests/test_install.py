@@ -315,3 +315,36 @@ class TerminalHelpersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(PWSH, "pwsh is not on PATH")
+class UserAdvisorTest(unittest.TestCase):
+    """The advisor is per project (skills/advisor-switch); the installer takes it out of the user settings."""
+
+    def run_remove(self, settings):
+        source = read("install.ps1").replace("\r\n", "\n")
+        m = re.search(r"^function Remove-UserAdvisor.*?^}", source, re.S | re.M)
+        self.assertIsNotNone(m, "Remove-UserAdvisor")
+        with tempfile.TemporaryDirectory() as tmp:
+            script = os.path.join(tmp, "remove.ps1")
+            with open(script, "w", encoding="utf-8") as f:
+                f.write("param([string]$Json)\n%s\n$c = $Json | ConvertFrom-Json\n$done = Remove-UserAdvisor $c\n"
+                        "[pscustomobject]@{ Settings = $c; Done = @($done) } | ConvertTo-Json -Depth 10 -Compress\n" % m.group(0))
+            r = subprocess.run([str(PWSH), "-NoProfile", "-NonInteractive", "-File", script, json.dumps(settings)],
+                               capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            return json.loads(r.stdout)
+
+    def test_user_advisor_is_removed(self):
+        out = self.run_remove({"advisorModel": "opus", "theme": "custom:clear"})
+        self.assertEqual(out["Settings"], {"theme": "custom:clear"})
+        self.assertEqual(out["Done"], ["advisorModel opus"])
+
+    def test_nothing_to_remove(self):
+        out = self.run_remove({"theme": "custom:clear"})
+        self.assertEqual(out["Settings"], {"theme": "custom:clear"})
+        self.assertEqual(out["Done"], [])
+
+    def test_the_template_has_no_advisor(self):
+        self.assertNotIn("advisorModel", json.loads(read("settings.json")))
+        self.assertIn("Remove-UserAdvisor $current", read("install.ps1"))

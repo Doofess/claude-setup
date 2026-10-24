@@ -552,6 +552,16 @@ function Remove-RetiredHooks($current, [string[]]$retired) {
   return $current
 }
 
+# The advisor is switched per project (skills/advisor-switch writes the project's .claude/settings.local.json). A
+# user-level advisorModel, which /advisor writes, would turn it on in every session of every project, so it goes.
+# Returns what it removed (nothing when the key was not there).
+function Remove-UserAdvisor($current) {
+  $p = $current.PSObject.Properties['advisorModel']
+  if (-not $p) { return @() }
+  $current.PSObject.Properties.Remove('advisorModel')
+  return @("advisorModel $($p.Value)")
+}
+
 # Retired visual setup, as it sits on a machine that installed it. Each function changes the object it is given and
 # returns the lines to print (none when there was nothing to remove).
 # settings.json: theme only when it is ours, statusLine only when it launches statusline, and the readable-session
@@ -675,6 +685,7 @@ $current = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | Conve
 # Per-key rules (enabledPlugins, env, permissions, hooks merge; the rest is replaced) live in Merge-ClaudeSettings.
 $current = Merge-ClaudeSettings $current $template $repo
 $current = Remove-RetiredHooks $current $retiredHooks
+foreach ($d in @(Remove-UserAdvisor $current)) { Write-Host "    removed from settings.json: $d (the advisor is per project: advisor-switch skill)" }
 foreach ($r in $retiredHooks) { Remove-Item (Join-Path $claudeDir "hooks\$r") -Force -ErrorAction SilentlyContinue }
 # The status bar draws Nerd Font icons; on a machine without a Nerd Font the installed command gets --labels
 # (short words instead of glyphs), so the bar reads in whatever font the terminal uses.
