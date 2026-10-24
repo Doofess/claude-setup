@@ -211,8 +211,8 @@ class OriginRemoteTest(unittest.TestCase):
 class RowTest(unittest.TestCase):
     NOW = 1_700_000_000
     MARKERS = {  # what to look for in the plain row, in the order the pieces should disappear when the terminal narrows
-        "session time": "1h 33m", "cost": "$1.23", "7d reset": "→ 3d4h", "5h reset": "→ 2h10m", "PR": "#12",
-        "effort": "high", "7d meter": "41%", "5h meter": "23%",
+        "session time": "1h 33m", "cost": "$1.23", "7d reset": "→ 3d4h", "5h reset": "→ 2h10m",
+        "7d meter": "41%", "5h meter": "23%",
     }
 
     def demo_row(self, icons=True, **changes):
@@ -225,12 +225,12 @@ class RowTest(unittest.TestCase):
         row = statusbar.plain(statusbar.fit(self.demo_row(), 200))
         # Each icon takes a cell and a space (plain() shows the icon as a space): the non-Mono Nerd Font
         # variants draw glyphs wider than one cell, and without the space they overlap the text.
-        self.assertEqual(row, "  Doofess/claude-setup    main    #12 │   Opus   high │   ████████ 42%  112k/267k │   5H ████████ 23%  → 2h10m │   7D ████████ 41%  → 3d4h │ $1.23 │   1h 33m")
+        self.assertEqual(row, "  Doofess/claude-setup    main │   Opus   high │   ████████ 42%  112k/267k │   5H ████████ 23%  → 2h10m │   7D ████████ 41%  → 3d4h │ $1.23 │   1h 33m")
 
     def test_labels_instead_of_icons(self):
         # --labels: dim words for fonts without the Nerd Font glyphs; the rest of the line is the same.
         row = statusbar.plain(statusbar.fit(self.demo_row(icons=False), 200))
-        self.assertEqual(row, "Doofess/claude-setup  main  #12 │ Opus · high │ ctx ████████ 42%  112k/267k │ 5H ████████ 23%  → 2h10m │ 7D ████████ 41%  → 3d4h │ $1.23 │ session 1h 33m")
+        self.assertEqual(row, "Doofess/claude-setup  main │ Opus · high │ ctx ████████ 42%  112k/267k │ 5H ████████ 23%  → 2h10m │ 7D ████████ 41%  → 3d4h │ $1.23 │ session 1h 33m")
 
     def test_window_meters_name_their_window(self):
         # The 5-hour and 7-day meters say which window they are, in the bar's level colour, beside the icon.
@@ -241,13 +241,13 @@ class RowTest(unittest.TestCase):
         self.assertEqual(statusbar.plain(row).count("5H"), 1)  # the word once, in icon mode as in --labels
 
     def test_refills_leftover_space_with_smaller_pieces(self):
-        # At 129 cells the 7-day reset drops before the 5-hour one, but once the 5-hour reset (one cell wider)
+        # At 122 cells the 7-day reset drops before the 5-hour one, but once the 5-hour reset (one cell wider)
         # has gone too, the 7-day reset fits again and comes back: the line uses the width rather than leaving a gap.
-        row = statusbar.plain(statusbar.fit(self.demo_row(), 129))
-        self.assertEqual(len(row), 129)
+        row = statusbar.plain(statusbar.fit(self.demo_row(), 122))
+        self.assertEqual(len(row), 122)
         self.assertNotIn("$1.23", row)
         self.assertNotIn("→ 2h10m", row)
-        for marker in ("Doofess/claude-setup", "#12", "high", "→ 3d4h"):
+        for marker in ("Doofess/claude-setup", "high", "→ 3d4h"):
             self.assertIn(marker, row)
 
     def test_short_repo(self):
@@ -257,22 +257,30 @@ class RowTest(unittest.TestCase):
         self.assertEqual(statusbar.short_repo("Doofess/claude-setup", 0), "c…")
 
     def test_layout_lists_the_dropped_pieces_in_display_order(self):
-        line, dropped = statusbar.layout(self.demo_row(), 113)
-        self.assertEqual(line, statusbar.fit(self.demo_row(), 113))
-        self.assertEqual([statusbar.plain(t).strip() for t, _, _ in dropped], ["#12", "high", "→ 2h10m", "→ 3d4h", "$1.23", "1h 33m"])
+        line, dropped = statusbar.layout(self.demo_row(), 120)
+        self.assertEqual(line, statusbar.fit(self.demo_row(), 120))
+        self.assertEqual([statusbar.plain(t).strip() for t, _, _ in dropped], ["→ 2h10m", "→ 3d4h", "$1.23", "1h 33m"])
         self.assertEqual(statusbar.layout(self.demo_row(), 200)[1], [])
 
     def test_overflow_record(self):
-        _, dropped = statusbar.layout(self.demo_row(), 113)
+        _, dropped = statusbar.layout(self.demo_row(), 120)
         record = statusbar.overflow_record(dropped, 110, self.NOW)
         self.assertEqual(record["columns"], 110)
         self.assertEqual(record["written_at"], self.NOW)
-        self.assertEqual(len(record["pieces"]), 6)
-        self.assertEqual(record["pieces"][4], [{"text": "$1.23", "colour": "green", "bold": False}])
+        self.assertEqual(len(record["pieces"]), 4)
+        self.assertEqual(record["pieces"][2], [{"text": "$1.23", "colour": "green", "bold": False}])
 
-    def test_pr_number_is_yellow_and_underlined(self):
-        raw = statusbar.fit(self.demo_row(), 200)
-        self.assertIn(statusbar.sgr(statusbar.YELLOW, statusbar.ICONS["pr"] + " ") + statusbar.sgr(statusbar.UNDERLINE, statusbar.sgr(statusbar.YELLOW, "#12")), raw)
+    def test_no_pr_number_on_the_bar(self):
+        # Claude Code draws its own PR badge next to the status line, so the bar leaves it out.
+        self.assertNotIn("#12", statusbar.plain(statusbar.fit(self.demo_row(pr={"number": 12}), 200)))
+
+    def test_model_and_effort_stay_together(self):
+        # At 110 cells the effort used to move to the overflow alone; now it stays beside the model.
+        line, dropped = statusbar.layout(self.demo_row(), 110)
+        row = statusbar.plain(line)
+        self.assertIn("Opus", row)
+        self.assertIn("high", row)
+        self.assertNotIn("high", [statusbar.plain(t).strip() for t, _, _ in dropped])
 
     def test_session_time_is_blue_with_a_clock(self):
         raw = statusbar.fit(self.demo_row(), 200)
@@ -313,7 +321,7 @@ class RowTest(unittest.TestCase):
         self.assertIn("Doofess/claude-setup", row)
 
     def test_absent_data(self):
-        row = self.demo_row(rate_limits={}, pr=None, effort=None, cost=None, context_window={"total_input_tokens": 0, "context_window_size": 300_000})
+        row = self.demo_row(rate_limits={}, effort=None, cost=None, context_window={"total_input_tokens": 0, "context_window_size": 300_000})
         self.assertEqual(statusbar.plain(statusbar.fit(row, 200)), "  Doofess/claude-setup    main │   Opus │   ████████ 0%  0/267k")
 
     def test_cost_model_and_effort_are_coloured(self):
@@ -388,7 +396,7 @@ class RowTest(unittest.TestCase):
         self.assertNotIn("\x1b[2m", raw)
 
     def test_everything_visible_has_an_explicit_colour(self):
-        # The terminal's default foreground is a light grey in most schemes, so the chrome (icons, branch, PR,
+        # The terminal's default foreground is a light grey in most schemes, so the chrome (icons, branch,
         # separators, reset times) is sent as exact white rather than left to the default.
         for icons in (True, False):
             for span in statusbar.spans(statusbar.fit(self.demo_row(icons=icons), 200)):
@@ -432,7 +440,8 @@ class ProgramTest(unittest.TestCase):
         self.assertIn("Opus", row)
         self.assertIn("main", row)
         self.assertIn("42%", row)
-        self.assertTrue(row.lstrip().startswith("claude-s…"), row)  # the repo gives up its owner, then letters
+        self.assertIn("high", row)  # the effort stays with the model, so the repo gives up its owner, then most letters
+        self.assertTrue(row.lstrip().startswith("c…"), row)
 
     def run_bar_at_home(self, data, home, columns="60"):
         env = dict(os.environ, COLUMNS=columns, CLAUDE_CODE_AUTO_COMPACT_WINDOW="300000", HOME=home, USERPROFILE=home)
