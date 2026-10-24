@@ -1,9 +1,9 @@
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, mock, test, type TestBody } from 'claude-code/testing'
 
 import { fmtElapsed, turnLine } from '../hooks/register'
 
-type Raise = Parameters<Parameters<typeof test>[1]>[0]
-type On = Parameters<Parameters<typeof test>[1]>[1]
+type Raise = Parameters<TestBody>[0]
+type On = Parameters<TestBody>[1]
 
 const AT = new Date(2026, 9, 24, 12, 34).getTime()
 
@@ -63,11 +63,11 @@ test('a finished turn is coloured', async ($, on) => {
   const ui = await $.ui.mount(ROW('r1'))
   const parts = await runs(ui)
   expect(parts.map(t => t.text)).toEqual(['✻', 'Brewed for', '16m 56s', ' · done 12:34 PM'])
-  expect(parts[0].props.color).toBe('claude')
-  expect(parts[1].props.dimColor).toBe(true)
-  expect(parts[2].props.bold).toBe(true)
-  expect(parts[2].props.color).toBe('text')
-  expect(parts[3].props.color).toBe('success')
+  expect(parts[0]?.props.color).toBe('claude')
+  expect(parts[1]?.props.dimColor).toBe(true)
+  expect(parts[2]?.props.bold).toBe(true)
+  expect(parts[2]?.props.color).toBe('text')
+  expect(parts[3]?.props.color).toBe('success')
   expect(await ui.find({ type: 'Text', text: /still running/ })).toBeUndefined()
 
   // The ✻ sits in a cell two wide, in a row, as the engine lays it out.

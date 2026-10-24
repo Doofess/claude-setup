@@ -59,7 +59,7 @@ function cut(text: string, width: number): string {
   return width <= 0 ? '' : `${text.slice(0, width - 1)}…`
 }
 
-const firstLine = (text: string): string => text.split(/\r?\n/)[0].trim()
+const firstLine = (text: string): string => (text.split(/\r?\n/)[0] ?? '').trim()
 
 /** An icon, a verb pair (present, past) and a detail for one tool call, in plain words. */
 export function describeTool(tool: string, input: unknown, cwd: string): Described {
@@ -156,7 +156,7 @@ export function effortColour(level: string): string | undefined {
 function modelName(model: string): string {
   const family = familyOf(model)
 
-  return family === undefined ? model : family[0].toUpperCase() + family.slice(1)
+  return family === undefined ? model : family.charAt(0).toUpperCase() + family.slice(1)
 }
 
 /** `0s`, `48s`, `1m 0s`, `12m 5s`, `1h 2m`. */
@@ -431,19 +431,19 @@ export const register: Register = on => {
   // too high: a turn that ended with one counted keeps the engine's line.
   const shells = new Set<string>()
 
-  for (const tool of ['Bash', 'PowerShell'] as const) {
-    // A call that went to the background (run_in_background, ctrl+b, a timeout) answers with the task's id.
-    on('tool.call', { tool }, async ($, e, next) => {
-      const answer = await next(e)
-      const id = answer.result === undefined ? undefined : (answer.result as { backgroundTaskId?: string }).backgroundTaskId
+  // A call that went to the background (run_in_background, ctrl+b, a timeout) answers with the task's id.
+  const backgrounded = <T extends { result?: unknown }>(answer: T): T => {
+    const id = answer.result === undefined ? undefined : (answer.result as { backgroundTaskId?: string }).backgroundTaskId
 
-      if (id !== undefined && id !== '') {
-        shells.add(id)
-      }
+    if (id !== undefined && id !== '') {
+      shells.add(id)
+    }
 
-      return answer
-    })
+    return answer
   }
+
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => backgrounded(await next(e)))
+  on('tool.call', { tool: 'PowerShell' }, async ($, e, next) => backgrounded(await next(e)))
 
   on('tool.call', { tool: 'TaskStop' }, async ($, e, next) => {
     const answer = await next(e)

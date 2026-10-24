@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test, type TestBody } from 'claude-code/testing'
 
 import { describeTool, rowText } from '../hooks/register'
 
@@ -13,7 +13,7 @@ const TOOL = (tool: string, input: unknown, props: object = {}, extra: object = 
   }) as const
 
 // Nothing sits beneath the plugin: this hook stands for the engine.
-const engine = (on: Parameters<Parameters<typeof test>[1]>[1]) => {
+const engine = (on: Parameters<TestBody>[1]) => {
   on('session.cwd', () => ({ value: 'C:/dev' }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)

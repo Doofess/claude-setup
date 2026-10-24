@@ -1,8 +1,10 @@
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, mock, test, type TestBody } from 'claude-code/testing'
+
+import type { PromptOrigin } from 'claude-code'
 
 import { clock, isSlashCommand, promptText } from '../hooks/register'
 
-const MESSAGE = (requestId: string, text: string, origin: object = { kind: 'composer' }) =>
+const MESSAGE = (requestId: string, text: string, origin: PromptOrigin = { kind: 'composer' }) =>
   ({
     plugin: 'session-cards',
     surface: 'terminal',
@@ -12,7 +14,7 @@ const MESSAGE = (requestId: string, text: string, origin: object = { kind: 'comp
   }) as const
 
 // Nothing sits beneath the plugin: these two hooks stand for the engine.
-const engine = (on: Parameters<Parameters<typeof test>[1]>[1]) => {
+const engine = (on: Parameters<TestBody>[1]) => {
   on('prompt.submit', (_, e) => ({ text: e.text }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -28,7 +30,7 @@ test('a prompt is an accent card headed You prompted and the time', async ($, on
   const time = mock.clock(on, { now: new Date(2026, 9, 23, 14, 32).getTime() })
   engine(on)
 
-  await $.prompt.submit({ text: 'hello', wait: false })
+  await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } })
 
   const ui = await $.ui.mount(MESSAGE('m1', 'hello'))
   const box = await ui.find({ type: 'Box' })
@@ -49,7 +51,7 @@ test('a slash command is a violet card headed You ran', async ($, on) => {
   const time = mock.clock(on, { now: new Date(2026, 9, 24, 16, 5).getTime() })
   engine(on)
 
-  await $.prompt.submit({ text: '/code-review high', wait: false })
+  await $.prompt.submit({ text: '/code-review high', wait: false, origin: { kind: 'composer' } })
 
   const ui = await $.ui.mount(MESSAGE('m1', '/code-review high'))
   expect((await ui.find({ type: 'Box' }))?.props.borderColor).toBe('permission')
@@ -96,10 +98,10 @@ test('test_repeated_prompt_keeps_both_times', async ($, on) => {
   engine(on)
 
   const first = time.now()
-  await $.prompt.submit({ text: 'x', wait: false })
+  await $.prompt.submit({ text: 'x', wait: false, origin: { kind: 'composer' } })
   await time.advance(90 * 60 * 1000)
   const second = time.now()
-  await $.prompt.submit({ text: 'x', wait: false })
+  await $.prompt.submit({ text: 'x', wait: false, origin: { kind: 'composer' } })
   expect(clock(first)).not.toBe(clock(second))
 
   const one = await $.ui.mount(MESSAGE('m1', 'x'))

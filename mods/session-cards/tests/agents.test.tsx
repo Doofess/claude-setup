@@ -1,9 +1,9 @@
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, mock, test, type TestBody } from 'claude-code/testing'
 
 import { neon, NEON_MS } from '../hooks/neon'
 import { effortColour, fmtElapsed, fmtTokens, modelColour } from '../hooks/register'
 
-type On = Parameters<Parameters<typeof test>[1]>[1]
+type On = Parameters<TestBody>[1]
 
 test('modelColour names the family colour', () => {
   expect(modelColour('claude-opus-5-5')).toBe('claude')
@@ -97,7 +97,7 @@ const engine = (
 
 }
 
-type Raise = Parameters<Parameters<typeof test>[1]>[0]
+type Raise = Parameters<TestBody>[0]
 
 const spawn = ($: Raise, background = false) =>
   $.agent.spawn({
@@ -403,7 +403,7 @@ test('neon is the chalk-animation neon effect in Fable gold', () => {
   expect(neon(2)).toEqual(neon(0))
 })
 
-const modelText = async (ui: Awaited<ReturnType<Raise['ui']['mount']>>, name: RegExp) => (await ui.find({ type: 'Text', text: name }))?.props
+const modelText = async (ui: { find: (q: { type: 'Text'; text: RegExp }) => Promise<{ props: Record<string, unknown> } | undefined> }, name: RegExp) => (await ui.find({ type: 'Text', text: name }))?.props
 
 test('a running Fable row pulses dim and bold, a finished one is plain bold, Opus is unaffected', async ($, on) => {
   const time = mock.clock(on)
