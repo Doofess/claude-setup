@@ -39,7 +39,8 @@ permissions text:
 - A reset time whose meter stays on the top row sits right under the meter's first block, without its `→`.
 - A meter that moves takes its reset time with it (`7D ████ 32%  → 4d21h`), its first block under the last meter
   left on the top row. Where it can't line up, it goes to the right.
-- The rest (cost, session time) is right-aligned at the margin.
+- The rest (cost, session time) is right-aligned at the margin, or, when a moved meter holds the margin, in the
+  free space before it.
 - Where pieces collide, the least important one drops, in the bar's own order; the hint always stays.
 
 ![At 104 columns the bar keeps repo, branch, model, effort, context and the 5-hour meter; the 7-day meter moves onto the hint line with its reset time, right-aligned](docs/images/hint-overflow.png)
