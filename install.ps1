@@ -713,17 +713,18 @@ if (-not $SkipPlugins) {
   foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
     if ($plugin.Value -ne $true) { continue }
     $name = $plugin.Name
-    $out = & claude plugin install $name 2>&1
+    $out = & claude plugin install $name --scope user 2>&1
     if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') { $failures += "install $name : $out" }
-    & claude plugin enable $name 2>&1 | Out-Null
-    $upd = & claude plugin update $name 2>&1
+    & claude plugin enable $name --scope user 2>&1 | Out-Null
+    $upd = & claude plugin update $name --scope user 2>&1
     $ver = ($upd | Out-String).Trim() -replace '\s+', ' '
     Write-Host "    $name  $ver"
   }
+  # --scope user: auto-detect would write into a project's .claude/settings.json when run inside a repo that has one.
   # Enabling a plugin by name also flips on a same-named copy from another marketplace, so pin the false ones off afterwards.
   foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
     if ($plugin.Value -ne $false) { continue }
-    & claude plugin disable $plugin.Name 2>&1 | Out-Null
+    & claude plugin disable $plugin.Name --scope user 2>&1 | Out-Null
   }
 }
 $ErrorActionPreference = $savedEap
