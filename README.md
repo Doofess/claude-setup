@@ -34,9 +34,15 @@ no room is wasted:
 <img src="docs/images/statusbar-narrow.png" width="380" alt="The bar at 60 columns: the repo cut to claude-s…, then branch, model and context">
 
 Dropped pieces aren't lost. The session-cards mod (below) moves them onto Claude Code's hint line, beside the
-permissions text, so a piece only disappears once both lines are full:
+permissions text:
 
-![At 104 columns the bar keeps repo, branch, model, effort, context and the 5-hour meter; the 5-hour reset, the 7-day meter and the cost move onto the hint line](docs/images/hint-overflow.png)
+- A reset time whose meter stays on the top row sits right under the meter's first block, without its `→`.
+- A meter that moves takes its reset time with it (`7D ████ 32%  → 4d21h`), its first block under the last meter
+  left on the top row. Where it can't line up, it goes to the right.
+- The rest (cost, session time) is right-aligned at the margin.
+- Where pieces collide, the least important one drops, in the bar's own order; the hint always stays.
+
+![At 104 columns the bar keeps repo, branch, model, effort, context and the 5-hour meter; the 7-day meter moves onto the hint line with its reset time, right-aligned](docs/images/hint-overflow.png)
 
 The icons come from a Nerd Font. On a machine without one, the installer switches the bar to short words instead
 (`ctx`, `5H`, `7D`), so it reads fine in any monospace font. To see the bar without starting Claude Code, run
@@ -159,7 +165,8 @@ Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers)
 - Effort runs green, yellow, the bypass red, then xhigh and max as the `/effort` picker draws them, held still: xhigh in
   the violet of `accept edits` with its middle letter lit, max a rainbow that starts at the bolt.
 - The pieces dropped on a narrow terminal are written to `~/.claude/statusbar-overflow/<session_id>.json`, as text with
-  their colours; files older than a day are removed. The session-cards mod reads them for the hint line. While the hint
+  their colours, with where each one goes and the width of the mode label in front of the hint (read from the session
+  transcript); files older than a day are removed. The session-cards mod reads them for the hint line. While the hint
   line shows that overflow, its shortcut pills are plain text; with nothing to show, Claude Code's own line stays.
 - Reset times and the session time leave out a zero hour count past a day: `5d`, not `5d0h`.
 - Most of the bar's and the mod's colours are the colour scheme's own 16; Claude orange, the repo's violet and high
