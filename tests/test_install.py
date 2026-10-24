@@ -53,6 +53,18 @@ class SettingsTest(unittest.TestCase):
 
 
 class InstallerTest(unittest.TestCase):
+    def test_status_bar_check_finds_each_piece_in_the_demo_bar(self):
+        # The installer runs the demo sample through the bar and looks for these strings in the raw, coloured output.
+        line = next(l for l in read("install.ps1").splitlines() if l.strip().startswith("$missing = @("))
+        needles = re.findall(r"'([^']*)'", line)
+        self.assertIn("Opus", needles)
+        bar = os.path.join(ROOT, "statusbar.py")
+        sample = subprocess.run(["python", "-I", "-S", bar, "--demo-json"], capture_output=True, text=True, encoding="utf-8").stdout
+        env = {**os.environ, "COLUMNS": "160", "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000"}  # as Test-StatusBar sets them
+        out = subprocess.run(["python", "-I", "-S", bar], input=sample, capture_output=True, text=True, encoding="utf-8", env=env).stdout
+        for needle in needles:
+            self.assertIn(needle, out)
+
     def test_installer_names_the_checks_and_switches(self):
         text = read("install.ps1")
         for needle in ("Same experience", "-KeepFont", "-KeepScheme", "Session cards mod", "Terminal scheme"):

@@ -866,7 +866,7 @@ if (("$py").Trim() -ne 'True') {
     $sample = (& python -I -S (Join-Path $repo 'statusbar.py') --demo-json) -join "`n"
     $bar = Test-StatusBar $barCommand $sample
     $rows = @($bar.Output -split "\r?\n" | Where-Object { $_ -ne '' })
-    $missing = @('Opus', 'main', '42%', '$1.23', [string][char]0x2588 | Where-Object { -not $bar.Output.Contains($_) })
+    $missing = @('Opus', 'main', '42%', '$ ', '1.23', [string][char]0x2588 | Where-Object { -not $bar.Output.Contains($_) })
     if ($bar.Ok -and $rows.Count -eq 1 -and $missing.Count -eq 0) {
       foreach ($row in $rows) { Write-Host "    $row" }
     } else {

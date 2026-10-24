@@ -485,7 +485,8 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
 
     cost = _dict(data.get("cost"))
     if isinstance(cost.get("total_cost_usd"), (int, float)):
-        out.append(Segment(sgr(GREEN, f"${cost['total_cost_usd']:.2f}"), P_COST, G_COST))
+        # The dollar sign is the cost's icon: green, with a space after it like the other icons; the amount is white.
+        out.append(Segment(sgr(GREEN, "$ ") + sgr(WHITE, f"{cost['total_cost_usd']:.2f}"), P_COST, G_COST))
     elapsed = cost.get("total_duration_ms")
     if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) and 0 <= elapsed < float("inf"):
         out.append(Segment(_mark(marks, "time", sgr(VIOLET, fmt_elapsed(elapsed)), VIOLET), P_TIME, G_TIME))
