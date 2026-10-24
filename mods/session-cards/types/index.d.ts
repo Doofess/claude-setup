@@ -1,6 +1,9 @@
 /** Prompt text -> the times (ms since the epoch) prompt.submit saw it, oldest first. */
 export type PromptTimes = Record<string, number[]>
 
+/** One finished main-loop turn: how long it ran, when it ended (ms since the epoch) and how many background shells still ran then. */
+export type TurnRecord = { durationMs: number; endedAt: number; shells: number }
+
 declare module 'claude-code' {
   interface PluginState {
     'session-cards': {
@@ -9,6 +12,8 @@ declare module 'claude-code' {
       overflowTick: number
       /** Bumped when an agent record changes and each second while a subagent runs, so Agent rows redraw. */
       agentTick: number
+      /** The main loop's finished turns, oldest first, the last 200: what the turn-end line draws. */
+      turns: TurnRecord[]
     }
   }
 }

@@ -1,6 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
+import type { TurnRecord } from '../types'
+
+export type { TurnRecord }
+
 
 /** Claude Code's own wrapper lines around a pasted block: `<pasted_content …>` and `</pasted_content …>`. */
 const WRAPPER = /^[ \t]*<\/?pasted_content\b[^>\n]*>[ \t]*(?:\r?\n|$)/gm
@@ -203,6 +207,16 @@ export function agentRow(a: AgentRecord, now: number) {
   }
 }
 
+/** The words of a turn-end line: the duration, the time it ended as `12:34 PM`, and the running shells (null when none). */
+export function turnLine(r: TurnRecord): { duration: string; done: string; shells: string | null } {
+  return {
+    duration: fmtElapsed(r.durationMs),
+    // Newer ICU puts a narrow no-break space before PM; the engine's line has a plain one.
+    done: new Date(r.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(/ /g, ' '),
+    shells: r.shells > 0 ? `${r.shells} ${r.shells === 1 ? 'shell' : 'shells'} still running` : null,
+  }
+}
+
 /** Bumped on every change to an agent record and once a second while one runs. */
 const agentTick = atom({ plugin: 'session-cards', key: 'agentTick' } as const, 0)
 
@@ -369,6 +383,16 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    // A subagent's turn is not the main loop's: no turn-end line, so no record.
+    if (e.agentId === undefined) {
+      const key = { plugin: 'session-cards', key: 'turns' } as const
+      const { value = [] } = await $.state.get(key)
+      const all = [...value, { durationMs: e.durationMs, endedAt: await $.clock.now(), shells: shells.size }]
+      const kept = all.slice(-TURNS_KEPT)
+      trimmed += all.length - kept.length
+      await $.state.set(key, kept)
+    }
+
     const record = known(e.agentId)
 
     if (record !== undefined) {
@@ -377,6 +401,91 @@ export const register: Register = on => {
     }
 
     return next(e)
+  })
+
+  // Background shells that run now, by the id the Bash/PowerShell result gave.
+  // A ui.render hook may not write $.state but may write the module, so the
+  // task-notification row can end one. The turn-end line only needs the count
+  // as it stood when the turn ended, which turn.complete snapshots into `turns`.
+  const shells = new Set<string>()
+
+  for (const tool of ['Bash', 'PowerShell'] as const) {
+    // A call that went to the background (run_in_background, ctrl+b, a timeout) answers with the task's id.
+    on('tool.call', { tool }, async ($, e, next) => {
+      const answer = await next(e)
+      const id = answer.result === undefined ? undefined : (answer.result as { backgroundTaskId?: string }).backgroundTaskId
+
+      if (id !== undefined && id !== '') {
+        shells.add(id)
+      }
+
+      return answer
+    })
+  }
+
+  on('tool.call', { tool: 'TaskStop' }, async ($, e, next) => {
+    const answer = await next(e)
+    const id = answer.result === undefined ? undefined : (answer.result as { task_id?: string }).task_id
+
+    if (id !== undefined) {
+      shells.delete(id)
+    }
+
+    return answer
+  })
+
+  // Rows of the turn-end line pair with `turns` the way prompts pair with their times:
+  // `claimed` pins a row (e.requestId) to its record, by absolute position (`trimmed`
+  // counts the records the cap has dropped), so each row keeps its own record on every redraw.
+  const TURNS_KEPT = 200
+  const claimedTurns = new Map<string, number>()
+  let trimmed = 0
+
+  on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
+    const { word, durationMs, isExpanded, waitingFor } = e.props
+
+    if (e.surface !== 'terminal' || isExpanded === true || waitingFor !== undefined) {
+      return next(e)
+    }
+
+    const { value = [] } = await $.state.get({ plugin: 'session-cards', key: 'turns' })
+    let at = claimedTurns.get(e.requestId)
+
+    if (at === undefined) {
+      const used = new Set(claimedTurns.values())
+      const index = value.findIndex((r, i) => r.durationMs === durationMs && !used.has(i + trimmed))
+
+      if (index < 0) {
+        return next(e)
+      }
+
+      at = index + trimmed
+      claimedTurns.set(e.requestId, at)
+    }
+
+    const record = value[at - trimmed]
+
+    if (record === undefined) {
+      return next(e)
+    }
+
+    const line = turnLine(record)
+    const { Box, Text } = $.ui.resolve(e)
+
+    return (
+      <Box flexDirection="row" width="100%">
+        <Box minWidth={2}>
+          <Text color="claude">✻</Text>
+        </Box>
+        <Text dimColor>{`${word} for`}</Text>
+        <Text>{' '}</Text>
+        <Text bold color="text">
+          {line.duration}
+        </Text>
+        <Text color="success">{` · done ${line.done}`}</Text>
+        {line.shells !== null && <Text color="warning">{` · ${line.shells}`}</Text>}
+      </Box>
+    )
   })
 
   // A row's time is settled at its first draw and kept for every redraw. A
@@ -398,6 +507,13 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
+    // The engine reports a finished background task as a notification row: its id ends the shell.
+    const ended = e.props.origin.kind === 'task-notification' ? e.props.task?.id : undefined
+
+    if (ended !== undefined) {
+      shells.delete(ended)
+    }
+
     if (e.surface !== 'terminal' || e.props.origin.kind !== 'composer') {
       return next(e)
     }
