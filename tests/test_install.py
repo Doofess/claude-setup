@@ -53,6 +53,14 @@ class SettingsTest(unittest.TestCase):
 
 
 class InstallerTest(unittest.TestCase):
+    def test_plugin_commands_are_user_scope(self):
+        # Without a scope, `claude plugin enable` run in a repo whose .claude/settings.json turns a plugin off
+        # writes `true` into that project file instead of the user settings.
+        lines = [l for l in read("install.ps1").splitlines() if re.search(r"& claude plugin (install|enable|disable|update) ", l)]
+        self.assertEqual(len(lines), 4)
+        for line in lines:
+            self.assertIn("--scope user", line)
+
     def test_status_bar_check_finds_each_piece_in_the_demo_bar(self):
         # The installer runs the demo sample through the bar and looks for these strings in the raw, coloured output.
         line = next(l for l in read("install.ps1").splitlines() if l.strip().startswith("$missing = @("))
