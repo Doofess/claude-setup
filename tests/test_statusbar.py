@@ -264,16 +264,121 @@ class RowTest(unittest.TestCase):
     def test_layout_lists_the_dropped_pieces_in_display_order(self):
         line, dropped = statusbar.layout(self.demo_row(), 120)
         self.assertEqual(line, statusbar.fit(self.demo_row(), 120))
-        self.assertEqual([statusbar.plain(t).strip() for t, _, _ in dropped], ["→ 2h10m", "→ 3d4h", "$1.23", "1h33m"])
+        self.assertEqual([statusbar.plain(t).strip() for t, *_ in dropped], ["→ 2h10m", "→ 3d4h", "$1.23", "1h33m"])
         self.assertEqual(statusbar.layout(self.demo_row(), 200)[1], [])
 
     def test_overflow_record(self):
-        _, dropped = statusbar.layout(self.demo_row(), 120)
-        record = statusbar.overflow_record(dropped, 110, self.NOW)
+        segs = self.demo_row()
+        _, dropped = statusbar.layout(segs, 120)
+        record = statusbar.overflow_record([s for s in segs if s not in dropped], dropped, 110, self.NOW, 0)
         self.assertEqual(record["columns"], 110)
         self.assertEqual(record["written_at"], self.NOW)
         self.assertEqual(len(record["pieces"]), 4)
         self.assertEqual(record["pieces"][2], [{"text": "$1.23", "colour": "green", "bold": False}])
+
+    def width_where(self, test):
+        """The widest line width whose dropped pieces pass test (a predicate on their plain texts)."""
+        for width in range(200, 60, -1):
+            _, dropped = statusbar.layout(self.demo_row(), width)
+            if test([statusbar.plain(s.text).strip() for s in dropped]):
+                return width
+        self.fail("no such width")
+
+    def record_at(self, width):
+        segs = statusbar.layout(self.demo_row(), width)
+        kept = [s for s in self.demo_row() if s not in segs[1]]
+        return statusbar.overflow_record(kept, segs[1], width + statusbar.MARGIN, self.NOW, 0), segs[0]
+
+    @staticmethod
+    def text(entry):
+        return "".join(span["text"] for span in entry["spans"])
+
+    def test_reset_under_its_meter(self):
+        width = self.width_where(lambda d: "→ 3d4h" in d and not any("41%" in p for p in d))
+        record, line = self.record_at(width)
+        row = statusbar.plain(line)
+        seven = [e for e in record["under"] if self.text(e) == "3d4h"]
+        self.assertEqual(len(seven), 1, record["under"])
+        self.assertEqual(seven[0]["col"], statusbar.STATUS_X + row.index(statusbar.BLOCK, row.index("7D")))
+
+    def test_meter_and_reset_move_together(self):
+        width = self.width_where(lambda d: any("41%" in p for p in d))
+        record, _ = self.record_at(width)
+        self.assertEqual([statusbar.plain(self.text(e)).strip() for e in record["bars"]], ["7D ████████ 41%  → 3d4h"])
+        for entry in record["under"] + record["right"]:
+            self.assertNotIn("3d4h", self.text(entry))
+            self.assertNotIn("41%", self.text(entry))
+        self.assertEqual(record["bars"][0]["rank"], statusbar.P_7D)
+
+    def test_moved_bar_lines_up_under_the_last_top_bar(self):
+        width = self.width_where(lambda d: any("41%" in p for p in d))
+        record, line = self.record_at(width)
+        row = statusbar.plain(line)
+        bar = statusbar.plain(self.text(record["bars"][0]))
+        self.assertEqual(record["bars"][0]["col"] + bar.index(statusbar.BLOCK), statusbar.STATUS_X + row.index(statusbar.BLOCK, row.index("5H")))
+
+        width = self.width_where(lambda d: any("23%" in p for p in d))
+        record, line = self.record_at(width)
+        row = statusbar.plain(line)
+        first, second = record["bars"]
+        self.assertIn("5H", self.text(first))
+        self.assertIn("7D", self.text(second))
+        self.assertEqual(first["col"] + statusbar.plain(self.text(first)).index(statusbar.BLOCK), statusbar.STATUS_X + row.index(statusbar.BLOCK))
+        self.assertEqual(second["col"], first["col"] + statusbar.cells(self.text(first)) + 3)
+
+    def test_moved_bar_clears_the_reset_under_the_last_top_bar(self):
+        # With 7D moved and the 5H reset under the 5H bar, both would start under 5H's first block: the bar
+        # gives way and starts a separator after the reset time.
+        width = self.width_where(lambda d: "→ 2h10m" in d and any("41%" in p for p in d))
+        record, _ = self.record_at(width)
+        (reset,) = record["under"]
+        self.assertEqual(self.text(reset), "2h10m")
+        self.assertEqual(record["bars"][0]["col"], reset["col"] + statusbar.cells(self.text(reset)) + 3)
+
+    def test_put_back_never_keeps_a_reset_without_its_meter(self):
+        S = statusbar.Segment
+        row = [S("A" * 10, 0, 0, ""), S("M" * 30, 2, 1, "meter:7d"), S("RRR", 4, 1, "reset:7d")]
+        line, dropped = statusbar.layout(row, 20)
+        self.assertEqual(line, "A" * 10)
+        self.assertEqual([s.text for s in dropped], ["M" * 30, "RRR"])
+
+    def test_right_pieces_carry_rank(self):
+        record, _ = self.record_at(self.width_where(lambda d: "$1.23" in d and "1h33m" in d))
+        ranks = {statusbar.plain(self.text(e)).strip(): e["rank"] for e in record["right"]}
+        self.assertGreater(ranks["1h33m"], ranks["$1.23"])
+
+    def test_pieces_stay_the_flat_list(self):
+        segs = self.demo_row()
+        line, dropped = statusbar.layout(segs, 116)
+        kept = [s for s in segs if s not in dropped]
+        record = statusbar.overflow_record(kept, dropped, 120, self.NOW, 27)
+        self.assertEqual(record["pieces"], [statusbar.spans(s.text) for s in dropped])
+        self.assertEqual(record["label"], 27)
+
+    def test_mode_label_from_transcript(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+
+        def transcript(name, *lines):
+            path = os.path.join(folder, name)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            return path
+
+        def mode(m):
+            return json.dumps({"type": "permission-mode", "permissionMode": m, "sessionId": "x"})
+
+        filler = "\n".join(json.dumps({"type": "user", "message": "x" * 200}) for _ in range(24_000))  # about 5 MB
+        self.assertEqual(statusbar.mode_label_cells(transcript("plan.jsonl", mode("default"), mode("plan"))), statusbar.LABEL_CELLS["plan"])
+        self.assertEqual(statusbar.mode_label_cells(transcript("default.jsonl", mode("plan"), mode("default"))), 0)
+        self.assertEqual(statusbar.mode_label_cells(os.path.join(folder, "missing.jsonl")), statusbar.LABEL_CELLS["bypassPermissions"])
+        self.assertEqual(statusbar.mode_label_cells(None), statusbar.LABEL_CELLS["bypassPermissions"])
+        self.assertEqual(statusbar.mode_label_cells(transcript("odd.jsonl", mode("someNewMode"))), statusbar.LABEL_CELLS["bypassPermissions"])
+        big = transcript("big.jsonl", mode("default"), filler, mode("plan"), filler[:9_000].rsplit("\n", 1)[0])
+        self.assertGreater(os.path.getsize(big), 5_000_000)
+        self.assertEqual(statusbar.mode_label_cells(big), statusbar.LABEL_CELLS["plan"])
+        # Only the tail is read: a mode line 5 MB back is not found, and the bypass width stands.
+        self.assertEqual(statusbar.mode_label_cells(transcript("old.jsonl", mode("plan"), filler)), statusbar.LABEL_CELLS["bypassPermissions"])
 
     def test_no_pr_number_on_the_bar(self):
         # Claude Code draws its own PR badge next to the status line, so the bar leaves it out.
@@ -285,7 +390,7 @@ class RowTest(unittest.TestCase):
         row = statusbar.plain(line)
         self.assertIn("Opus", row)
         self.assertIn("high", row)
-        self.assertNotIn("high", [statusbar.plain(t).strip() for t, _, _ in dropped])
+        self.assertNotIn("high", [statusbar.plain(t).strip() for t, *_ in dropped])
 
     def test_session_time_and_its_clock_are_the_repo_violet(self):
         raw = statusbar.fit(self.demo_row(), 200)

@@ -30,11 +30,16 @@ settings files, else the model's own window) minus 33,000 tokens, which is the 1
 Code keeps free plus the 20,000 it reserves for the reply. A meter at 100% means compaction is due.
 
 Overflow: the pieces a narrow terminal dropped are written, per session, to
-`~/.claude/statusbar-overflow/<session_id>.json` as `{"written_at", "columns", "pieces"}`, each piece a
-list of spans `{"text", "colour", "bold"}` (colour a terminal name such as `green`/`redBright`, a hex
-value for the 24-bit ones, or null). The `session-cards` mod draws them on Claude Code's own hint line,
-to the right of the permissions text, so a piece only disappears when both lines are full. Files older
-than a day are removed on each run; a session with no id writes nothing.
+`~/.claude/statusbar-overflow/<session_id>.json`, each piece a list of spans `{"text", "colour", "bold"}`
+(colour a terminal name such as `green`/`redBright`, a hex value for the 24-bit ones, or null). The record
+says where the `session-cards` mod draws each one on Claude Code's own hint line: `under` holds a reset time
+whose bar stayed, without its arrow, at the screen column of the bar's first block; `bars` holds each moved
+meter with its reset time, the first one's first block under the last bar left on the top row (or a separator
+after the reset times there), the next one a separator after it; `right` holds the rest, right-aligned, each
+with its drop priority as `rank` so the mod drops the least important first when the hint needs the room.
+`label` is the width of the mode label in front of the hint (`⏵⏵ bypass permissions on · `), read from the last
+`permission-mode` entry near the end of the session transcript; `pieces` keeps the old flat list for an older
+mod. Files older than a day are removed on each run; a session with no id writes nothing.
 
 Standard library only. The branch is read straight from .git/HEAD, with no git subprocess. On any error
 the bar prints one plain `statusbar: <error>` row.
@@ -44,6 +49,7 @@ import os
 import re
 import sys
 import time
+from typing import NamedTuple
 
 GREEN = 32
 YELLOW = 33
@@ -306,12 +312,23 @@ def origin_remote(cwd: str, stop_dir: str | None = None) -> tuple[str, str] | No
 
 
 MARGIN = 4  # cells Claude Code keeps for its own spacing around the status line
+STATUS_X = 2  # screen column of the status line's first cell (measured on 2.1.310)
+# Cells of the mode label Claude Code draws before its hint: symbol, space, indicator, " on", " · " (measured on 2.1.310).
+LABEL_CELLS = {"default": 0, "acceptEdits": 21, "auto": 18, "bypassPermissions": 27, "dontAsk": 18, "plan": 17}
+LABEL_TAIL = 65_536  # bytes read from the end of the transcript to find the permission mode
 DEFAULT_COLUMNS = 120
 SEPARATOR = sgr(WHITE, " │ ")  # separators, icons and labels are explicit white: no grey text
 
-# (text with colours, priority, group): priority 0 never drops, a higher number drops sooner;
-# segments of one group sit together and groups are joined by a separator.
-Segment = tuple[str, int, int]
+class Segment(NamedTuple):
+    """One piece of the line, its text with colours. priority 0 never drops, a higher number drops sooner; segments
+    of one group sit together and groups are joined by a separator. role names the meters and reset times the
+    overflow places by their bar: "meter:ctx", "meter:5h", "reset:5h", "meter:7d", "reset:7d", or "" for the rest."""
+    text: str
+    priority: int
+    group: int
+    role: str = ""
+
+
 # Drop order, least important first (the user's call: session time, cost, then reset times, then the rest). The repo
 # never drops: it always opens the line, like the branch, the model with its effort (they stay together) and the
 # context meter. Claude Code draws the PR badge itself, so the bar has no PR piece.
@@ -435,24 +452,24 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     if repo:
         icon, colour = REPO_LOOKS[kind]
         repo = short_repo(repo, cells(repo) - repo_shrink) if repo_shrink > 0 else repo
-        out.append((_mark({"repo": icon} if marks is ICONS else marks, "repo", sgr(colour, repo), colour), 0, G_PLACE))
+        out.append(Segment(_mark({"repo": icon} if marks is ICONS else marks, "repo", sgr(colour, repo), colour), 0, G_PLACE))
     if branch_name:
         # The branch icon is the meters' yellow; the name stays white.
-        out.append((_mark(marks, "branch", sgr(WHITE, branch_name), LEVELS["yellow"][0]), 0, G_PLACE))
+        out.append(Segment(_mark(marks, "branch", sgr(WHITE, branch_name), LEVELS["yellow"][0]), 0, G_PLACE))
     if name:
         colour = model_colour(str(name))
-        out.append((_mark(marks, "model", model_text(str(name)), colour), 0, G_MODEL))
+        out.append(Segment(_mark(marks, "model", model_text(str(name)), colour), 0, G_MODEL))
         if effort:
             level = effort_colour(str(effort))
             # The bolt takes the level's colour; the --labels dot stays white.
-            out.append((_mark(marks, "effort", effort_text(str(effort)), level if marks is ICONS else None), 0, G_MODEL))
+            out.append(Segment(_mark(marks, "effort", effort_text(str(effort)), level if marks is ICONS else None), 0, G_MODEL))
 
     window = _dict(data.get("context_window"))
     used = int(_num(window.get("total_input_tokens")))
     size = int(_num(window.get("context_window_size"))) or 200_000
     limit = ceiling(compact_window(str(model.get("id") or ""), size, env, files))
     pct = used / limit * 100 if used > 0 and limit > 0 else 0
-    out.append((_meter_piece(marks, "ctx", pct, 8, f"{fmt_tokens(used)}/{fmt_tokens(max(limit, 0))}"), 0, G_CONTEXT))
+    out.append(Segment(_meter_piece(marks, "ctx", pct, 8, f"{fmt_tokens(used)}/{fmt_tokens(max(limit, 0))}"), 0, G_CONTEXT, "meter:ctx"))
 
     for key, mark, group, meter_priority, reset_priority in (
         ("five_hour", "5h", G_5H, P_5H, P_5H_RESET),
@@ -462,41 +479,45 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
         if not isinstance(usage.get("used_percentage"), (int, float)):
             continue  # no such window for this plan: leave the segment out
         used_pct = usage["used_percentage"]
-        out.append((_meter_piece(marks, mark, used_pct, 8, name=LABELS[mark]), meter_priority, group))
+        out.append(Segment(_meter_piece(marks, mark, used_pct, 8, name=LABELS[mark]), meter_priority, group, f"meter:{mark}"))
         if isinstance(usage.get("resets_at"), (int, float)):
-            out.append((sgr(WHITE, fmt_reset(usage["resets_at"], now)), reset_priority, group))
+            out.append(Segment(sgr(WHITE, fmt_reset(usage["resets_at"], now)), reset_priority, group, f"reset:{mark}"))
 
     cost = _dict(data.get("cost"))
     if isinstance(cost.get("total_cost_usd"), (int, float)):
-        out.append((sgr(GREEN, f"${cost['total_cost_usd']:.2f}"), P_COST, G_COST))
+        out.append(Segment(sgr(GREEN, f"${cost['total_cost_usd']:.2f}"), P_COST, G_COST))
     elapsed = cost.get("total_duration_ms")
     if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) and 0 <= elapsed < float("inf"):
-        out.append((_mark(marks, "time", sgr(VIOLET, fmt_elapsed(elapsed)), VIOLET), P_TIME, G_TIME))
+        out.append(Segment(_mark(marks, "time", sgr(VIOLET, fmt_elapsed(elapsed)), VIOLET), P_TIME, G_TIME))
     return out
 
 
 def _join(segments: list[Segment]) -> str:
     groups: dict[int, list[str]] = {}
-    for text, _, group in segments:
-        groups.setdefault(group, []).append(text)
+    for segment in segments:
+        groups.setdefault(segment.group, []).append(segment.text)
     return SEPARATOR.join(GROUP_JOIN.get(group, "  ").join(texts) for group, texts in groups.items())
 
 
 def layout(segments: list[Segment], width: int) -> tuple[str, list[Segment]]:
     """The line fitted to width cells, and the pieces it left out in display order: drops the
     highest-priority-number piece until the line fits, then puts back, most important first, each dropped piece
-    that still fits, so a wide piece that had to go does not leave room unused. A line whose never-dropped
+    that still fits, so a wide piece that had to go does not leave room unused (a reset time only beside its meter,
+    since the overflow draws a moved reset under its bar). A line whose never-dropped
     pieces are still too wide is returned as it is."""
     kept = list(segments)
     dropped: list[Segment] = []
     while cells(_join(kept)) > width:
-        droppable = [s for s in kept if s[1] > 0]
+        droppable = [s for s in kept if s.priority > 0]
         if not droppable:
             break
-        victim = max(droppable, key=lambda s: s[1])
+        victim = max(droppable, key=lambda s: s.priority)
         kept.remove(victim)
         dropped.append(victim)
-    for candidate in sorted(dropped, key=lambda s: s[1]):
+    for candidate in sorted(dropped, key=lambda s: s.priority):
+        kind, _, window = candidate.role.partition(":")
+        if kind == "reset" and not any(s.role == f"meter:{window}" for s in kept):
+            continue
         trial = [s for s in segments if s in kept or s is candidate]  # display order
         if cells(_join(trial)) <= width:
             kept = trial
@@ -547,10 +568,71 @@ def _add_span(out: list[dict], text: str, colour: str | None, bold: bool, underl
         out.append(span)
 
 
-def overflow_record(dropped: list[Segment], columns: int, now: float) -> dict:
-    """What the overflow file holds: when it was written, the terminal width the line was fitted to, and the
-    dropped pieces as spans, in display order."""
-    return {"written_at": now, "columns": columns, "pieces": [spans(text) for text, _, _ in dropped]}
+def _to_block(text: str) -> int:
+    """Cells of text before its first meter block (all of it when it has none)."""
+    return cells(text.split(BLOCK, 1)[0])
+
+
+def overflow_record(kept: list[Segment], dropped: list[Segment], columns: int, now: float, label: int) -> dict:
+    """What the overflow file holds: when it was written, the terminal width the line was fitted to, the dropped
+    pieces as spans in display order (`pieces`), the mode label's width (`label`), and where the mod draws each one:
+    `under` a kept meter (its reset time without the arrow, at the screen column of the meter's first block),
+    `bars` (a dropped meter with its reset, the first one's first block under the last kept meter's, each next one a
+    separator's width after the one before), or `right` (the rest). bars and right carry their drop priority as rank."""
+    def first_block(meter: Segment) -> int:  # screen column of a kept meter's first block
+        upto = kept[:kept.index(meter) + 1]  # a meter is its group's first piece, so this joined line ends with it
+        return STATUS_X + cells(_join(upto)) - cells(meter.text) + _to_block(meter.text)
+
+    meters = {s.role.partition(":")[2]: s for s in kept if s.role.startswith("meter:")}
+    last = next((s for s in reversed(kept) if s.role.startswith("meter:")), None)
+    resets = {s.role.partition(":")[2]: s for s in dropped if s.role.startswith("reset:")}
+    under: list[dict] = []
+    bars: list[dict] = []
+    widths: list[int] = []
+    right: list[dict] = []
+    for s in dropped:
+        kind, _, window = s.role.partition(":")
+        if kind == "reset" and window in meters:
+            under.append({"col": first_block(meters[window]), "spans": spans(re.sub("→ ?", "", s.text, count=1))})
+        elif kind == "meter" and last:
+            text = s.text + ("  " + resets[window].text if window in resets else "")
+            # The first one lines up under the last kept meter, unless that meter's own reset is there: then it
+            # starts a separator after the reset times.
+            clear = max((u["col"] + cells("".join(span["text"] for span in u["spans"])) + 3 for u in under), default=0)
+            col = bars[-1]["col"] + widths[-1] + 3 if bars else max(first_block(last) - _to_block(s.text), clear)
+            bars.append({"col": col, "rank": s.priority, "spans": spans(text)})
+            widths.append(cells(text))
+        elif kind == "reset" and last:
+            continue  # drawn after its meter in bars
+        else:
+            right.append({"rank": s.priority, "spans": spans(s.text)})
+    return {"written_at": now, "columns": columns, "pieces": [spans(s.text) for s in dropped], "label": label,
+            "under": under, "bars": bars, "right": right}
+
+
+def mode_label_cells(transcript_path: str | None) -> int:
+    """Cells of the permission-mode label Claude Code draws before its hint (`⏵⏵ bypass permissions on · `), for the
+    mode in the last `permission-mode` entry of the transcript's last LABEL_TAIL bytes. With no transcript, no such
+    entry or a mode it does not know, the bypass width."""
+    mode = None
+    try:
+        with open(transcript_path, "rb") as f:  # type: ignore[arg-type]  # None raises TypeError, caught below
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - LABEL_TAIL))
+            tail = f.read().decode("utf-8", "replace")
+        for line in reversed(tail.splitlines()):
+            if "permission-mode" not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue  # the line the tail cut, or one half written
+            if isinstance(entry, dict) and entry.get("type") == "permission-mode":
+                mode = entry.get("permissionMode")
+                break
+    except (OSError, TypeError, ValueError):
+        pass
+    return LABEL_CELLS[mode] if isinstance(mode, str) and mode in LABEL_CELLS else LABEL_CELLS["bypassPermissions"]
 
 
 def prune_overflow(folder: str, now: float) -> None:
@@ -590,8 +672,8 @@ def _read_json(path: str) -> dict:
         return {}
 
 
-def compose(data: dict, env: dict, now: float, icons: bool = True) -> tuple[str, list[Segment], int]:
-    """The fitted line, the pieces it left out, and the terminal width it was fitted for."""
+def compose(data: dict, env: dict, now: float, icons: bool = True) -> tuple[str, list[Segment], list[Segment], int]:
+    """The fitted line, the pieces it kept and those it left out, and the terminal width it was fitted for."""
     workspace = _dict(data.get("workspace"))
     current = workspace.get("current_dir") or os.getcwd()
     project = workspace.get("project_dir") or current
@@ -605,10 +687,12 @@ def compose(data: dict, env: dict, now: float, icons: bool = True) -> tuple[str,
     except ValueError:
         columns = DEFAULT_COLUMNS
     width = max(columns - MARGIN, 1)
-    line, dropped = layout(segments(data, env, now, files, branch_name, icons), width)
+    row = segments(data, env, now, files, branch_name, icons)
+    line, dropped = layout(row, width)
     if cells(line) > width:  # the never-dropped pieces alone are too wide: the repo gives up the difference
-        line, dropped = layout(segments(data, env, now, files, branch_name, icons, cells(line) - width), width)
-    return line, dropped, columns
+        row = segments(data, env, now, files, branch_name, icons, cells(line) - width)
+        line, dropped = layout(row, width)
+    return line, [s for s in row if s not in dropped], dropped, columns
 
 
 def render(data: dict, env: dict, now: float, icons: bool = True) -> str:
@@ -659,12 +743,13 @@ def main(argv: list[str]) -> int:
         else:
             data = _dict(json.loads(sys.stdin.read()))
             now = time.time()
-            line, dropped, columns = compose(data, os.environ, now, icons)
+            line, kept, dropped, columns = compose(data, os.environ, now, icons)
             print(line)
             session_id = data.get("session_id")
             if isinstance(session_id, str) and session_id:
                 try:
-                    write_overflow(os.path.expanduser("~"), session_id, overflow_record(dropped, columns, now))
+                    label = mode_label_cells(data.get("transcript_path"))
+                    write_overflow(os.path.expanduser("~"), session_id, overflow_record(kept, dropped, columns, now, label))
                 except Exception:  # the line is already printed; a lost overflow file costs nothing visible
                     pass
     except Exception as error:  # the bar must never crash Claude Code's UI
