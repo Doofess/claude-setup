@@ -1128,6 +1128,7 @@ class CodexSkillStaticTest(unittest.TestCase):
         text = read("skills", "codex", "SKILL.md")
         self.assertIn("codex update", text)
         self.assertIn("not Git Bash", text)
+        self.assertIn("codex app-server daemon update", text)
 
     def test_global_rules_point_at_it(self):
         self.assertIn("`codex` skill", read("global", "CLAUDE.md"))
