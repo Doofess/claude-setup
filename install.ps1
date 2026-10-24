@@ -17,7 +17,9 @@
      on the default profile itself
   8. Sets the Windows Terminal default colour scheme to terminal/profile.json's (Campbell) and drops a colorScheme
      set on the default profile itself, so the default applies
-  9. Sets the Windows Terminal start folder, and adds a PowerShell 7 profile block that leaves System32 for C:\dev
+  9. Sets the Windows Terminal start folder, adds a profile block that leaves System32 for C:\dev to both the PowerShell 7
+     and the Windows PowerShell 5.1 profile, and sets the 5.1 execution policy to RemoteSigned for this user when it is
+     stricter and no group policy pins it
  10. Runs the status bar command from the installed settings.json on sample data and fails when its line is wrong
  11. Checks the session-cards mod is in CLAUDE_CODE_PLUGIN_DIRS and passes `claude plugin validate`
  12. Prints the `Same experience` table (font, colour scheme, Claude Code theme, status line, mod folder, tool
@@ -533,9 +535,9 @@ function Backup-TerminalSettings([string]$path) {
   if (-not (Test-Path $copy)) { Copy-Item $path $copy }
 }
 
-# PowerShell 7 started from Start or the taskbar opens in System32 (Windows Terminal's startingDirectory never
-# applies there), and Claude Code started there loads the wrong project. The profile gets one block between these
-# markers; a re-run replaces it, and the rest of the profile is left alone.
+# PowerShell 7 and Windows PowerShell 5.1 started from Start or the taskbar open in System32 (Windows Terminal's
+# startingDirectory never applies there), and Claude Code started there loads the wrong project. Each of the two
+# profiles gets one block between these markers; a re-run replaces it, and the rest of the profile is left alone.
 $profileStart = '# >>> claude-setup'
 $profileEnd = '# <<< claude-setup'
 function Set-ProfileBlock([string]$text, [string]$body) {
@@ -544,6 +546,48 @@ function Set-ProfileBlock([string]$text, [string]$body) {
   if ($text -match $pattern) { return [regex]::Replace($text, $pattern, { param($m) $block }) }
   if ($text -and -not $text.EndsWith("`n")) { $text += "`r`n" }
   return $text + $block + "`r`n"
+}
+
+# The two profile files that run in a terminal, both under the (possibly OneDrive-redirected) Documents folder:
+# PowerShell 7 reads PowerShell\, Windows PowerShell 5.1 reads WindowsPowerShell\.
+function Get-PowerShellProfiles {
+  $docs = [Environment]::GetFolderPath('MyDocuments')
+  [string[]]@(
+    (Join-Path $docs 'PowerShell\Microsoft.PowerShell_profile.ps1'),
+    (Join-Path $docs 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
+  )
+}
+
+# Windows PowerShell 5.1 ships with Restricted, which refuses the profile block and this script itself. Set-ExecutionPolicy
+# from pwsh changes pwsh's own config, so the 5.1 per-user value is written in the registry. A group policy that pins a
+# stricter value wins over it and is only reported ('pinned by MachinePolicy' / 'pinned by UserPolicy', nothing written);
+# RemoteSigned, Unrestricted and Bypass are left alone. -DryRun returns the same word and writes nothing.
+function Set-WindowsPowerShellPolicy(
+  [string]$regPath = 'HKCU:\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell',
+  [string[]]$policyPaths = @('HKLM:\Software\Policies\Microsoft\Windows\PowerShell', 'HKCU:\Software\Policies\Microsoft\Windows\PowerShell'),
+  [switch]$DryRun
+) {
+  function Get-PolicyValue([string]$path) {
+    try {
+      $item = Get-ItemProperty -Path $path -Name ExecutionPolicy -ErrorAction SilentlyContinue
+      if ($item -and $item.ExecutionPolicy) { return [string]$item.ExecutionPolicy }
+    } catch { }
+    return ''
+  }
+  $loose = @('RemoteSigned', 'Unrestricted', 'Bypass')
+  $scopes = @('MachinePolicy', 'UserPolicy')
+  for ($i = 0; $i -lt $policyPaths.Count; $i++) {
+    $pinned = Get-PolicyValue $policyPaths[$i]
+    if (-not $pinned) { continue }
+    if ($loose -contains $pinned) { return 'already set' }
+    if (@('Restricted', 'AllSigned') -contains $pinned) { return "pinned by $($scopes[[Math]::Min($i, 1)])" }
+  }
+  if ($loose -contains (Get-PolicyValue $regPath)) { return 'already set' }
+  if (-not $DryRun) {
+    if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+    Set-ItemProperty -Path $regPath -Name ExecutionPolicy -Value 'RemoteSigned' -Type String
+  }
+  return 'set'
 }
 
 # Hooks this repo used to install. The merge keeps machine hooks it doesn't know, so a retired one would live on
@@ -841,7 +885,8 @@ if (-not $Check) {
     if (@($wtSettings).Count -eq 0) { Write-Color '    Windows Terminal not found; set the colour scheme to Campbell by hand' 228 }
   }
 
-  # 4e. Start folder (independent of the font): Windows Terminal's default, and the PowerShell 7 profile block.
+  # 4e. Start folder (independent of the font): Windows Terminal's default, the profile block in both the PowerShell 7
+  # and the Windows PowerShell 5.1 profile, and RemoteSigned for 5.1 so that profile can load.
   Write-Step 'Terminal start folder'
   foreach ($wt in $wtSettings) {
     Backup-TerminalSettings $wt
@@ -849,15 +894,29 @@ if (-not $Check) {
     $msg = switch ($r) { 'set' { "start folder set to C:\dev in $wt" } 'kept' { "a start folder is already set in $wt; left as is" } default { "no defaults block in $wt; set the start folder by hand" } }
     Write-Host "    $msg"
   }
-  $ps7Profile = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Microsoft.PowerShell_profile.ps1'
-  $old = if (Test-Path $ps7Profile) { [IO.File]::ReadAllText($ps7Profile) } else { '' }
-  if ($old) { Copy-Item $ps7Profile (Join-Path $backup 'Microsoft.PowerShell_profile.ps1') }
-  $new = Set-ProfileBlock $old 'if ((Get-Location).Path -eq "$env:SystemRoot\System32") { Set-Location C:\dev }'
-  if ($new -ne $old) {
-    New-Item -ItemType Directory -Force (Split-Path $ps7Profile) | Out-Null
-    Write-Utf8NoBom $ps7Profile $new
+  foreach ($profilePath in Get-PowerShellProfiles) {
+    $exists = Test-Path $profilePath
+    $old = if ($exists) { Read-Utf8 $profilePath } else { '' }
+    # Read-Utf8 drops the BOM; keep it when the file had one. Windows PowerShell 5.1 reads a BOM-less .ps1 in the ANSI
+    # code page, so its profile is always written with a BOM.
+    $hadBom = $false
+    if ($exists) { $head = [IO.File]::ReadAllBytes($profilePath); $hadBom = ($head.Length -ge 3 -and $head[0] -eq 0xEF -and $head[1] -eq 0xBB -and $head[2] -eq 0xBF) }
+    if ($exists) { Copy-Item $profilePath (Join-Path $backup ((Split-Path (Split-Path $profilePath) -Leaf) + '.' + (Split-Path $profilePath -Leaf))) -Force }
+    $new = Set-ProfileBlock $old 'if ((Get-Location).Path -eq "$env:SystemRoot\System32") { Set-Location C:\dev }'
+    if ($new -ne $old) {
+      New-Item -ItemType Directory -Force (Split-Path $profilePath) | Out-Null
+      if ($hadBom -or (Split-Path (Split-Path $profilePath) -Leaf) -eq 'WindowsPowerShell') { [IO.File]::WriteAllText($profilePath, $new, [Text.UTF8Encoding]::new($true)) }
+      else { Write-Utf8NoBom $profilePath $new }
+    }
+    $label = if ((Split-Path (Split-Path $profilePath) -Leaf) -eq 'WindowsPowerShell') { 'Windows PowerShell profile' } else { 'PowerShell 7 profile' }
+    Write-Host "    ${label}: $profilePath"
   }
-  Write-Host "    PowerShell 7 profile: $ps7Profile"
+  $policyReg = 'HKCU:\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell'
+  $oldPolicy = [string](Get-ItemProperty -Path $policyReg -Name ExecutionPolicy -ErrorAction SilentlyContinue).ExecutionPolicy
+  $r = Set-WindowsPowerShellPolicy
+  if ($r -like 'pinned by *') { Write-Color "    Windows PowerShell execution policy is $r; scripts stay blocked until that policy changes" 228 }
+  elseif ($r -eq 'set') { Write-Host "    Windows PowerShell execution policy set to RemoteSigned for this user (was: $(if ($oldPolicy) { $oldPolicy } else { 'not set' }))" }
+  else { Write-Host '    Windows PowerShell execution policy is already RemoteSigned or looser' }
 }
 
 # 5. Verify

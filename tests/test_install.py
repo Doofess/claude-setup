@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import uuid
+import winreg
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -378,6 +380,114 @@ if __name__ == "__main__":
 
 
 per_engine(TerminalHelpersBase, globals())
+
+
+def policy_helpers():
+    source = read("install.ps1").replace("\r\n", "\n")
+    out = []
+    for name in ("Get-PowerShellProfiles", "Set-WindowsPowerShellPolicy"):
+        m = re.search(r"^function %s.*?^}" % name, source, re.DOTALL | re.MULTILINE)
+        assert m is not None, name
+        out.append(m.group(0))
+    return "\n".join(out)
+
+
+POLICY_DRIVER = """param([string]$RegPath, [string]$Policies, [string]$Dry)
+$ErrorActionPreference = 'Stop'
+{HELPERS}
+$p = @($Policies -split ';' | Where-Object { $_ })
+if ($Dry -eq '1') { Set-WindowsPowerShellPolicy $RegPath $p -DryRun } else { Set-WindowsPowerShellPolicy $RegPath $p }
+"""
+POLICY_ROOT = "Software\\claude-setup-test"
+
+
+class PolicyBase:
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.script = os.path.join(cls.tmp, "policy.ps1")
+        with open(cls.script, "w", encoding="utf-8") as f:
+            f.write(POLICY_DRIVER.replace("{HELPERS}", policy_helpers()))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def setUp(self):
+        self.key = POLICY_ROOT + "\\" + uuid.uuid4().hex
+        self.addCleanup(self.drop_keys)
+        # the value the function writes lives under .../target; the policy test keys are .../pin0 and .../pin1
+        self.target = self.key + "\\target"
+        self.pins = [self.key + "\\pin0", self.key + "\\pin1"]
+
+    def drop_keys(self):
+        subprocess.run(["reg", "delete", "HKCU\\" + self.key, "/f"], capture_output=True)
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, POLICY_ROOT)   # only succeeds when no sibling test key is left
+        except OSError:
+            pass
+
+    def put(self, path, value):
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as k:
+            winreg.SetValueEx(k, "ExecutionPolicy", 0, winreg.REG_SZ, value)
+
+    def get(self, path):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
+                return winreg.QueryValueEx(k, "ExecutionPolicy")[0]
+        except FileNotFoundError:
+            return None
+
+    def run_policy(self, dry=False):
+        paths = ";".join("HKCU:\\" + p for p in self.pins)
+        r = run_engine(self.engine, self.script, "HKCU:\\" + self.target, paths, "1" if dry else "0")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r.stdout.strip().splitlines()[-1]
+
+    def test_policy_set_when_missing(self):
+        self.assertEqual(self.run_policy(), "set")
+        self.assertEqual(self.get(self.target), "RemoteSigned")
+        self.assertEqual(self.run_policy(), "already set")
+
+    def test_policy_left_when_looser(self):
+        self.put(self.target, "Unrestricted")
+        self.assertEqual(self.run_policy(), "already set")
+        self.assertEqual(self.get(self.target), "Unrestricted")
+
+    def test_policy_replaces_all_signed(self):
+        for old in ("AllSigned", "Restricted", "Undefined"):
+            self.put(self.target, old)
+            self.assertEqual(self.run_policy(), "set", old)
+            self.assertEqual(self.get(self.target), "RemoteSigned", old)
+
+    def test_policy_reports_pin(self):
+        for index, scope in enumerate(("MachinePolicy", "UserPolicy")):
+            for strict in ("Restricted", "AllSigned"):
+                self.put(self.pins[index], strict)
+                self.assertEqual(self.run_policy(), "pinned by " + scope)
+                self.assertIsNone(self.get(self.target))
+            subprocess.run(["reg", "delete", "HKCU\\" + self.pins[index], "/f"], capture_output=True)
+
+    def test_policy_loose_pin_is_already_set(self):
+        for loose in ("RemoteSigned", "Unrestricted", "Bypass"):
+            self.put(self.pins[0], loose)
+            self.assertEqual(self.run_policy(), "already set", loose)
+            self.assertIsNone(self.get(self.target))
+
+    def test_policy_dry_run_writes_nothing(self):
+        self.assertEqual(self.run_policy(dry=True), "set")
+        self.assertIsNone(self.get(self.target))
+
+    def test_profiles_come_from_my_documents(self):
+        body = re.search(r"^function Get-PowerShellProfiles.*?^}", read("install.ps1").replace("\r\n", "\n"), re.DOTALL | re.MULTILINE)
+        self.assertIsNotNone(body)
+        self.assertIn("GetFolderPath('MyDocuments')", body.group(0))
+        self.assertIn("'PowerShell\\Microsoft.PowerShell_profile.ps1'", body.group(0))
+        self.assertIn("'WindowsPowerShell\\Microsoft.PowerShell_profile.ps1'", body.group(0))
+        self.assertNotIn("$HOME", body.group(0))
+
+
+per_engine(PolicyBase, globals())
 
 
 MERGE_FIXTURE = os.path.join(ROOT, "tests", "fixtures", "settings", "current.json")
