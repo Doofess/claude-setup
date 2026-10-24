@@ -645,7 +645,7 @@ export const register: Register = on => {
       const fixed =
         ` ${row.verb} ${row.type}`.length +
         (row.model === undefined ? 0 : ` · ${row.model}`.length) +
-        (row.effort === undefined ? 0 : ` · ${row.effort}`.length) +
+        (row.effort === undefined ? 0 : `  ${row.effort}`.length) +
         2 +
         mark.length +
         tail.length
@@ -661,8 +661,8 @@ export const register: Register = on => {
           {row.model !== undefined && <Text color={modelColour(row.model) ?? 'text'} {...modelStyle}>
               {row.model}
             </Text>}
-          {row.effort !== undefined && <Text color="text">{' · '}</Text>}
-          {row.effort !== undefined && <Text color={effortColour(row.effort) ?? 'text'}>{row.effort}</Text>}
+          {/* The bolt between model and effort takes the level's colour, as on the status bar. */}
+          {row.effort !== undefined && <Text color={effortColour(row.effort) ?? 'text'}>{`  ${row.effort}`}</Text>}
           <Text color="text">{`  ${cut(row.action, columns - fixed)}`}</Text>
           {mark === ' ✗' && <Text color="error">{mark}</Text>}
           {mark === ' (stopped)' && <Text color="text">{mark}</Text>}

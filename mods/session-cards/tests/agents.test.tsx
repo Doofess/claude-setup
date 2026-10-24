@@ -134,17 +134,17 @@ test('test_agent_row_shows_type_model_effort_and_action', async ($, on) => {
   await time.advance(48_000)
 
   const ui = await $.ui.mount(ROW(TU))
-  expect(await line(ui)).toBe('\uf0c0 Running worker · Sonnet · high  Searching cwd in reference.md   48s · 72k')
+  expect(await line(ui)).toBe('\uf0c0 Running worker · Sonnet  high  Searching cwd in reference.md   48s · 72k')
   expect((await ui.find({ type: 'Box' }))?.props.flexDirection).toBe('row')
 
   const verb = await ui.find({ type: 'Text', text: /^Running$/ })
   expect(verb?.props.bold).toBe(true)
   expect(verb?.props.color).toBe('text')
   expect((await ui.find({ type: 'Text', text: /Sonnet/ }))?.props.color).toBe('blue')
-  expect((await ui.find({ type: 'Text', text: /^high$/ }))?.props.color).toBe('error')
+  expect((await ui.find({ type: 'Text', text: /^  high$/ }))?.props.color).toBe('error')
 
   for (const t of await ui.findAll({ type: 'Text' })) {
-    if (!/^(Sonnet|high)$/.test(t.text)) {
+    if (!/^(Sonnet|  high)$/.test(t.text)) {
       expect(t.props.color).toBe('text')
     }
   }
@@ -179,17 +179,17 @@ test('test_finished_agent_row', async ($, on) => {
   await time.advance(30_000)
 
   const done = await $.ui.mount(ROW(TU, { isRunning: false }))
-  expect(await line(done)).toBe('\uf0c0 Ran worker · Sonnet · high  done   48s · 72k')
+  expect(await line(done)).toBe('\uf0c0 Ran worker · Sonnet  high  done   48s · 72k')
   expect((await done.find({ type: 'Text', text: /^Ran$/ }))?.props.bold).toBe(true)
   await done.unmount()
 
   const failed = await $.ui.mount(ROW(TU, { isRunning: false, isErrored: true }))
-  expect(await line(failed)).toBe('\uf0c0 Ran worker · Sonnet · high  done ✗   48s · 72k')
+  expect(await line(failed)).toBe('\uf0c0 Ran worker · Sonnet  high  done ✗   48s · 72k')
   expect((await failed.find({ type: 'Text', text: /✗/ }))?.props.color).toBe('error')
   await failed.unmount()
 
   const stopped = await $.ui.mount(ROW(TU, { isRunning: false, isInterrupted: true }))
-  expect(await line(stopped)).toBe('\uf0c0 Ran worker · Sonnet · high  done (stopped)   48s · 72k')
+  expect(await line(stopped)).toBe('\uf0c0 Ran worker · Sonnet  high  done (stopped)   48s · 72k')
   expect((await stopped.find({ type: 'Text', text: /stopped/ }))?.props.color).toBe('text')
   await stopped.unmount()
 })
@@ -392,7 +392,7 @@ test('a step without usage or tool uses leaves the row as it was', async ($, on)
   await step($, agentId as string)
 
   const ui = await $.ui.mount(ROW(TU))
-  expect(await line(ui)).toBe(' Running worker · Sonnet · high  Implement Task 1   0s · 0')
+  expect(await line(ui)).toBe(' Running worker · Sonnet  high  Implement Task 1   0s · 0')
   await ui.unmount()
 })
 
