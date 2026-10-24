@@ -17,9 +17,11 @@ green below 50%, yellow from 50, orange from 70, red from 90. Nothing is grey.
 
 Width fitting: the line may use COLUMNS minus a small margin that Claude Code keeps for itself. Each
 piece (a segment) has a priority. While the line is too wide, the piece with the highest priority
-number is dropped: cost first, then the 7-day and 5-hour reset times, the PR number, the repo, the
-effort, then the 7-day and 5-hour meters; the branch, the model and the context meter always stay. Once
+number is dropped: cost first, then the 7-day and 5-hour reset times, the PR number, the effort, then
+the 7-day and 5-hour meters; the repo, the branch, the model and the context meter always stay. Once
 the line fits, dropped pieces that still fit come back, most important first, so no room is left unused.
+When even the pieces that always stay are too wide, the repo gives up the difference: its owner goes
+first, then its name is cut with an ellipsis.
 
 The 33k headroom: the context meter does not run to the full context window but to the point where
 Claude Code auto-compacts. That point is the auto-compact window (from the environment or the
@@ -282,8 +284,9 @@ SEPARATOR = sgr(WHITE, " │ ")  # separators, icons and labels are explicit whi
 # (text with colours, priority, group): priority 0 never drops, a higher number drops sooner;
 # segments of one group sit together and groups are joined by a separator.
 Segment = tuple[str, int, int]
-# Drop order, least important first (the user's call: cost, then reset times, then the rest).
-P_COST, P_7D_RESET, P_5H_RESET, P_PR, P_REPO, P_EFFORT, P_7D, P_5H = 8, 7, 6, 5, 4, 3, 2, 1
+# Drop order, least important first (the user's call: cost, then reset times, then the rest). The repo never drops:
+# it always opens the line, like the branch, model and context meter.
+P_COST, P_7D_RESET, P_5H_RESET, P_PR, P_EFFORT, P_7D, P_5H = 7, 6, 5, 4, 3, 2, 1
 G_PLACE, G_MODEL, G_CONTEXT, G_5H, G_7D, G_COST = range(6)
 GROUP_JOIN = {G_MODEL: sgr(WHITE, " · ")}  # "Opus · high"; every other group joins its pieces with two spaces
 
@@ -335,6 +338,16 @@ def _repo_name(repo) -> str | None:
     return repo if isinstance(repo, str) and repo else None
 
 
+def short_repo(repo: str, room: int) -> str:
+    """repo in at most room cells: whole, then without its owner, then cut with an ellipsis (one letter at least)."""
+    if cells(repo) <= room:
+        return repo
+    name = repo.rsplit("/", 1)[-1]
+    if cells(name) <= room:
+        return name
+    return name[:max(room - 1, 1)] + "…"
+
+
 def _meter_piece(marks: dict, key: str, pct: float, cells: int, detail: str = "", name: str = "") -> str:
     """icon, bar and figures of one meter, the icon and figures in the bar's level colour.
 
@@ -346,8 +359,10 @@ def _meter_piece(marks: dict, key: str, pct: float, cells: int, detail: str = ""
     return _mark(marks, key, bar, fill) + sgr(fill, figures)
 
 
-def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: str | None, icons: bool = True) -> list[Segment]:
-    """The whole line as segments, in display order; icons=False uses the text labels."""
+def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: str | None, icons: bool = True,
+             repo_shrink: int = 0) -> list[Segment]:
+    """The whole line as segments, in display order; icons=False uses the text labels.
+    repo_shrink: cells the repo must give up (see short_repo), for a terminal too narrow for the never-dropped pieces."""
     out: list[Segment] = []
     marks = ICONS if icons else LABELS
     workspace = _dict(data.get("workspace"))
@@ -361,7 +376,8 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     effort = _dict(data.get("effort")).get("level")
     if repo:
         icon, colour = REPO_LOOKS[kind]
-        out.append((_mark({"repo": icon} if marks is ICONS else marks, "repo", sgr(colour, repo), colour), P_REPO, G_PLACE))
+        repo = short_repo(repo, cells(repo) - repo_shrink) if repo_shrink > 0 else repo
+        out.append((_mark({"repo": icon} if marks is ICONS else marks, "repo", sgr(colour, repo), colour), 0, G_PLACE))
     if branch_name:
         out.append((_mark(marks, "branch", sgr(WHITE, branch_name)), 0, G_PLACE))
     if number:
@@ -524,6 +540,8 @@ def compose(data: dict, env: dict, now: float, icons: bool = True) -> tuple[str,
         columns = DEFAULT_COLUMNS
     width = max(columns - MARGIN, 1)
     line, dropped = layout(segments(data, env, now, files, branch_name, icons), width)
+    if cells(line) > width:  # the never-dropped pieces alone are too wide: the repo gives up the difference
+        line, dropped = layout(segments(data, env, now, files, branch_name, icons, cells(line) - width), width)
     return line, dropped, columns
 
 

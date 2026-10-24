@@ -194,7 +194,7 @@ class OriginRemoteTest(unittest.TestCase):
 class RowTest(unittest.TestCase):
     NOW = 1_700_000_000
     MARKERS = {  # what to look for in the plain row, in the order the pieces should disappear when the terminal narrows
-        "cost": "$1.23", "7d reset": "→ 3d4h", "5h reset": "→ 2h10m", "PR": "#12", "repo": "Doofess",
+        "cost": "$1.23", "7d reset": "→ 3d4h", "5h reset": "→ 2h10m", "PR": "#12",
         "effort": "high", "7d meter": "41%", "5h meter": "23%",
     }
 
@@ -224,21 +224,25 @@ class RowTest(unittest.TestCase):
         self.assertEqual(statusbar.plain(row).count("5H"), 1)  # the word once, in icon mode as in --labels
 
     def test_refills_leftover_space_with_smaller_pieces(self):
-        # At 113 cells the repo (24 cells with its join) cannot fit, but the PR number and the 5-hour reset can,
-        # so they come back after the repo goes: the line uses the width rather than leaving a gap. The 7-day
-        # reset is one cell too many and stays out.
-        row = statusbar.plain(statusbar.fit(self.demo_row(), 113))
-        self.assertLessEqual(len(row), 113)
-        self.assertNotIn("Doofess", row)
+        # At 129 cells the 7-day reset drops before the 5-hour one, but once the 5-hour reset (one cell wider)
+        # has gone too, the 7-day reset fits again and comes back: the line uses the width rather than leaving a gap.
+        row = statusbar.plain(statusbar.fit(self.demo_row(), 129))
+        self.assertEqual(len(row), 129)
         self.assertNotIn("$1.23", row)
-        self.assertNotIn("→ 3d4h", row)
-        for marker in ("#12", "→ 2h10m", "high"):
+        self.assertNotIn("→ 2h10m", row)
+        for marker in ("Doofess/claude-setup", "#12", "high", "→ 3d4h"):
             self.assertIn(marker, row)
+
+    def test_short_repo(self):
+        self.assertEqual(statusbar.short_repo("Doofess/claude-setup", 20), "Doofess/claude-setup")
+        self.assertEqual(statusbar.short_repo("Doofess/claude-setup", 19), "claude-setup")
+        self.assertEqual(statusbar.short_repo("Doofess/claude-setup", 9), "claude-s…")
+        self.assertEqual(statusbar.short_repo("Doofess/claude-setup", 0), "c…")
 
     def test_layout_lists_the_dropped_pieces_in_display_order(self):
         line, dropped = statusbar.layout(self.demo_row(), 113)
         self.assertEqual(line, statusbar.fit(self.demo_row(), 113))
-        self.assertEqual([statusbar.plain(t).strip() for t, _, _ in dropped], ["Doofess/claude-setup", "→ 3d4h", "$1.23"])
+        self.assertEqual([statusbar.plain(t).strip() for t, _, _ in dropped], ["#12", "high", "→ 2h10m", "→ 3d4h", "$1.23"])
         self.assertEqual(statusbar.layout(self.demo_row(), 200)[1], [])
 
     def test_overflow_record(self):
@@ -246,8 +250,8 @@ class RowTest(unittest.TestCase):
         record = statusbar.overflow_record(dropped, 110, self.NOW)
         self.assertEqual(record["columns"], 110)
         self.assertEqual(record["written_at"], self.NOW)
-        self.assertEqual(len(record["pieces"]), 3)
-        self.assertEqual(record["pieces"][2], [{"text": "$1.23", "colour": "green", "bold": False}])
+        self.assertEqual(len(record["pieces"]), 5)
+        self.assertEqual(record["pieces"][4], [{"text": "$1.23", "colour": "green", "bold": False}])
 
     def test_lines_changed_are_not_shown(self):
         self.assertNotIn("+156", statusbar.plain(statusbar.fit(self.demo_row(), 200)))
@@ -259,8 +263,9 @@ class RowTest(unittest.TestCase):
             for name, marker in self.MARKERS.items():
                 if marker not in row:
                     gone_at.setdefault(name, width)
-            for marker in ("main", "Opus", "42%", "112k/267k"):
+            for marker in ("Doofess/claude-setup", "main", "Opus", "42%", "112k/267k"):
                 self.assertIn(marker, row, f"{marker} dropped at width {width}")
+            self.assertTrue(row.lstrip(" " + statusbar.ICONS["repo"]).startswith("Doofess/claude-setup"), f"repo not first at width {width}")
         self.assertEqual(list(gone_at), list(self.MARKERS))
         self.assertGreater(len(set(gone_at.values())), 1)
 
@@ -367,6 +372,7 @@ class ProgramTest(unittest.TestCase):
         self.assertIn("Opus", row)
         self.assertIn("main", row)
         self.assertIn("42%", row)
+        self.assertTrue(row.lstrip().startswith("claude-s…"), row)  # the repo gives up its owner, then letters
 
     def run_bar_at_home(self, data, home, columns="60"):
         env = dict(os.environ, COLUMNS=columns, CLAUDE_CODE_AUTO_COMPACT_WINDOW="300000", HOME=home, USERPROFILE=home)
