@@ -36,5 +36,11 @@ It runs in the background while you keep working. Its answer is a lead, not evid
 
 ## Edits
 
-Only in a git worktree you made for the task: `-C "<worktree>"` without `-s read-only`. Review its diff and run the
-tests yourself before anything leaves the worktree.
+Only in a git worktree you made for the task: `-s workspace-write -C "<worktree>"`. `-C` only sets the folder;
+`workspace-write` is what keeps its writes inside it (and the temp folders), checked on this PC. Tell it not to
+commit; review its diff, run the tests and commit yourself.
+
+## Updating Codex
+
+`codex update`, run with the PowerShell tool, not Git Bash: from Git Bash the updater's bare `tar` is Git's GNU tar,
+which can't extract to a `C:\` path, and it fails with "did not contain the expected package layout".

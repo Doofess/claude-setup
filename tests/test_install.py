@@ -1118,5 +1118,16 @@ class CodexSkillStaticTest(unittest.TestCase):
             self.assertIn(word, text)
         self.assertLess(len(text.splitlines()), 80)
 
+    def test_edits_are_sandboxed_to_the_worktree(self):
+        # codex-setup gives Codex full disk access by default; -C only sets the folder, -s workspace-write fences it.
+        text = read("skills", "codex", "SKILL.md")
+        edits = text[text.index("## Edits"):]
+        self.assertIn('-s workspace-write -C "<worktree>"', edits)
+
+    def test_update_runs_from_powershell(self):
+        text = read("skills", "codex", "SKILL.md")
+        self.assertIn("codex update", text)
+        self.assertIn("not Git Bash", text)
+
     def test_global_rules_point_at_it(self):
         self.assertIn("`codex` skill", read("global", "CLAUDE.md"))
