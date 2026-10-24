@@ -285,6 +285,76 @@ if ($Mode -eq 'apply') {
 per_engine(FontCheckBase, globals())
 
 
+ROW_DRIVER = """param([string]$ListPath, [string]$FontKept, [string]$KeepScheme)
+$ErrorActionPreference = 'Stop'
+{HELPERS}
+$list = [string[]][IO.File]::ReadAllLines($ListPath)
+Get-OverridesRow $list ($FontKept -eq '1') ($KeepScheme -eq '1') | ConvertTo-Json -Compress
+"""
+
+
+class OverridesRowBase:
+    """The `Terminal profile overrides` row: -KeepFont/-SkipFont excuse font overrides, -KeepScheme colorScheme ones."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.script = os.path.join(cls.tmp, "row.ps1")
+        with open(cls.script, "w", encoding="utf-8") as f:
+            f.write(ROW_DRIVER.replace("{HELPERS}", installer_helpers()))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def row(self, overrides, font_kept=False, keep_scheme=False):
+        path = os.path.join(self.tmp, "list.txt")
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write("".join(o + "\n" for o in overrides))
+        r = run_engine(self.engine, self.script, path, "1" if font_kept else "0", "1" if keep_scheme else "0")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return json.loads(r.stdout)
+
+    def test_nothing_set_is_ok(self):
+        row = self.row([])
+        self.assertEqual((row["Ok"], row["Kept"], row["Actual"]), (True, False, "none"))
+
+    def test_nothing_set_is_ok_even_with_keep_flags(self):
+        row = self.row([], True, True)
+        self.assertEqual((row["Ok"], row["Kept"]), (True, False))
+
+    def test_scheme_override_with_keep_scheme_is_kept_not_fail(self):
+        row = self.row(["Command Prompt: colorScheme Vintage"], keep_scheme=True)
+        self.assertEqual((row["Ok"], row["Kept"]), (False, True))
+
+    def test_scheme_override_without_the_flag_fails(self):
+        row = self.row(["Command Prompt: colorScheme Vintage"], font_kept=True)
+        self.assertEqual((row["Ok"], row["Kept"]), (False, False))
+        self.assertIn("Command Prompt: colorScheme Vintage", row["Actual"])
+
+    def test_font_overrides_are_excused_by_font_kept_only(self):
+        both = ["PowerShell: face Cascadia Code", "Ubuntu: cellHeight 1.5"]
+        row = self.row(both, font_kept=True)
+        self.assertEqual((row["Ok"], row["Kept"]), (False, True))
+        row = self.row(both, keep_scheme=True)
+        self.assertEqual((row["Ok"], row["Kept"]), (False, False))
+
+    def test_mixed_overrides_fail_with_only_the_unexcused_ones_named(self):
+        row = self.row(["PowerShell: face Cascadia Code", "Ubuntu: colorScheme Vintage"], font_kept=True)
+        self.assertEqual((row["Ok"], row["Kept"]), (False, False))
+        self.assertIn("Ubuntu: colorScheme Vintage", row["Actual"])
+        self.assertNotIn("Cascadia", row["Actual"])
+
+    def test_profile_name_with_a_colon_is_parsed_by_its_key(self):
+        row = self.row(["Dev: face tools: colorScheme Vintage"], keep_scheme=True)
+        self.assertEqual((row["Ok"], row["Kept"]), (False, True))
+        row = self.row(["Dev: colorScheme tools: face Mono"], font_kept=True)
+        self.assertEqual((row["Ok"], row["Kept"]), (False, True))
+
+
+per_engine(OverridesRowBase, globals())
+
+
 class TerminalHelpersBase:
     @classmethod
     def setUpClass(cls):
@@ -903,6 +973,23 @@ class SetupCheckStaticTest(unittest.TestCase):
             self.assertIn(word, text)
         self.assertLess(len(text.splitlines()), 80)
 
+    def steps(self):
+        text = read("skills", "setup-check", "SKILL.md")
+        return {n: text[text.index("\n%d. " % n):text.index("\n%d. " % (n + 1))] for n in (4, 5)}
+
+    def test_matrix_path_is_quoted_and_long_steps_get_a_long_timeout(self):
+        steps = self.steps()
+        self.assertIn('python -I "<repo>\\shell_matrix.py"', steps[4])
+        for n in (4, 5):
+            self.assertIn("600000", steps[n])
+
+    def test_repair_runs_the_installer_with_the_recorded_flags(self):
+        text = read("skills", "setup-check", "SKILL.md")
+        self.assertRegex(text, r"\)\.flags")
+        step5 = self.steps()[5]
+        for word in ("flags", "-KeepFont", "-KeepScheme", "-SkipFont"):
+            self.assertIn(word, step5)
+
     def test_installer_records_repo_inside_the_write_block(self):
         text = read("install.ps1").replace("\r\n", "\n")
         start = text.index("if (-not $Check) {")
@@ -911,16 +998,28 @@ class SetupCheckStaticTest(unittest.TestCase):
         self.assertRegex(block, r"(?m)^\s*Set-StateRepo\b.*\$repo")
         self.assertLess(block.index("mcp_off.py"), block.index("Set-StateRepo"))
 
+    def test_installer_passes_the_keep_flags_to_the_state_file(self):
+        text = read("install.ps1")
+        self.assertRegex(text, r"(?m)^\s*Set-StateRepo\b.*\$repo \$ranWith")
+        for flag in ("-KeepFont", "-KeepScheme", "-SkipFont"):
+            self.assertIn("$ranWith += '%s'" % flag, text)
+
+    def test_overrides_row_uses_the_pure_function(self):
+        row = next(l for l in read("install.ps1").splitlines() if l.startswith("Add-SameRow 'Terminal profile overrides'"))
+        self.assertIn("$overridesRow", row)
+        self.assertNotIn("($fontKept -and $KeepScheme)", row)
+
     def test_docs(self):
         self.assertIn("/setup-check", read("README.md"))
         self.assertIn("Check a machine", read("README.md"))
         self.assertIn("- After install.ps1 or on a new PC: `/setup-check`.", read("global", "CLAUDE.md"))
 
 
-STATE_DRIVER = """param([string]$State, [string]$Repo)
+STATE_DRIVER = """param([string]$State, [string]$Repo, [string]$Flags = '')
 $ErrorActionPreference = 'Stop'
 {HELPERS}
-Set-StateRepo $State $Repo
+$list = [string[]]@($Flags -split ',' | Where-Object { $_ } | ForEach-Object { "-$_" })
+Set-StateRepo $State $Repo $list
 """
 
 
@@ -969,7 +1068,42 @@ class StateRepoBase:
         r = run_engine(self.engine, self.script, path, "C:\\r")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         with open(path, encoding="utf-8") as f:
-            self.assertEqual(json.load(f), {"repo": "C:\\r"})
+            self.assertEqual(json.load(f), {"repo": "C:\\r", "flags": []})
+
+    def state(self, path):
+        with open(path, "rb") as f:
+            raw = f.read()
+        return raw, json.loads(raw.decode("utf-8"))
+
+    def test_records_the_flags_as_a_list_even_for_one_or_none(self):
+        path = os.path.join(self.tmp, "flags.json")
+        for flags, want in (("", []), ("KeepFont", ["-KeepFont"]), ("KeepFont,SkipFont", ["-KeepFont", "-SkipFont"]), ("", [])):
+            r = run_engine(self.engine, self.script, path, "C:\\r", flags)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            raw, data = self.state(path)
+            self.assertEqual(data["flags"], want)
+            self.assertEqual(data["repo"], "C:\\r")
+
+    def test_flags_only_write_when_changed(self):
+        path = os.path.join(self.tmp, "same.json")
+        raws = []
+        for _run in range(2):
+            r = run_engine(self.engine, self.script, path, "C:\\r", "KeepScheme")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            raws.append(self.state(path))
+        (first, _), (second, data) = raws
+        self.assertEqual(first, second)
+        self.assertEqual(data["flags"], ["-KeepScheme"])
+
+    def test_old_state_without_flags_gets_them(self):
+        path = os.path.join(self.tmp, "old.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"repo": "C:\\\\r", "claude.ai Adobe": ["C:/x"]}')
+        r = run_engine(self.engine, self.script, path, "C:\\r", "KeepFont")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        _raw, data = self.state(path)
+        self.assertEqual(data["flags"], ["-KeepFont"])
+        self.assertEqual(data["claude.ai Adobe"], ["C:/x"])
 
 
 per_engine(StateRepoBase, globals())

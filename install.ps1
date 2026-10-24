@@ -76,13 +76,18 @@ function Write-Utf8NoBom($path, $text) {
   [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
 }
 
-function Set-StateRepo([string]$statePath, [string]$repoDir) {
-  # Records the clone in the state file (the /setup-check skill reads it). Keeps every other key; writes only on change.
+function Set-StateRepo([string]$statePath, [string]$repoDir, [string[]]$flags = @()) {
+  # Records the clone and the keep flags this install ran with (-KeepFont, -KeepScheme, -SkipFont; /setup-check and
+  # shell_matrix.py read them so a check or repair respects them) in the state file. Keeps every other key; writes
+  # only on change. `flags` is always written as a JSON array, [] when empty.
   $state = $null
   if (Test-Path $statePath) { $state = Read-Utf8 $statePath | ConvertFrom-Json }
   if ($null -eq $state) { $state = [pscustomobject]@{} }
-  if ($state.PSObject.Properties['repo'] -and $state.repo -ceq $repoDir) { return }
+  $flagList = [string[]]@($flags | Where-Object { $_ })
+  $same = $state.PSObject.Properties['repo'] -and $state.repo -ceq $repoDir -and $state.PSObject.Properties['flags'] -and ((@($state.flags) -join ' ') -ceq ($flagList -join ' '))
+  if ($same) { return }
   $state | Add-Member -NotePropertyName repo -NotePropertyValue $repoDir -Force
+  $state | Add-Member -NotePropertyName flags -NotePropertyValue $flagList -Force
   Write-Utf8NoBom $statePath (($state | ConvertTo-Json -Depth 20) + "`n")
 }
 
@@ -430,6 +435,24 @@ function Read-TerminalLook([string]$path) {
     $x = Find-JsoncKey $t $l.Profile 'colorScheme'; if ($x) { $r.ProfileScheme = Get-JsoncString $t $x }
   }
   return $r
+}
+
+# The `Terminal profile overrides` row, from Read-TerminalLook's Overrides ("<profile name>: <key> <value>"). A font
+# override (face, cellHeight) is the machine's own choice under -KeepFont / -SkipFont ($fontKept) and a colorScheme
+# one under -KeepScheme, so those are set aside; any other must be gone. Ok: nothing left and nothing set aside.
+# Kept: nothing left but something set aside. Neither: Actual names what is left. The key is the last ": <key> " in
+# the string, since a profile name may itself contain ': '.
+function Get-OverridesRow([string[]]$overrides, [bool]$fontKept, [bool]$keepScheme) {
+  $left = @()
+  $aside = @()
+  foreach ($o in @($overrides)) {
+    if (-not $o) { continue }
+    $m = [regex]::Match([string]$o, '(?s)^.*: (face|cellHeight|colorScheme) ')
+    $key = if ($m.Success) { $m.Groups[1].Value } else { '' }
+    if (($key -eq 'colorScheme' -and $keepScheme) -or (($key -eq 'face' -or $key -eq 'cellHeight') -and $fontKept)) { $aside += $o } else { $left += $o }
+  }
+  $actual = if ($left.Count) { $left -join '; ' } elseif ($aside.Count) { 'kept: ' + ($aside -join '; ') } else { 'none' }
+  return [pscustomobject]@{ Actual = $actual; Ok = (($left.Count -eq 0) -and ($aside.Count -eq 0)); Kept = (($left.Count -eq 0) -and ($aside.Count -gt 0)) }
 }
 
 # Sets profiles.defaults.font to the repo's face and cellHeight (other font keys, such as size, stay) and drops face and
@@ -1070,7 +1093,11 @@ if (-not $Check) {
   if (Test-Path $claudeJson) { Copy-Item $claudeJson (Join-Path $backup 'claude.json') }
   & python -S (Join-Path $repo 'mcp_off.py') $claudeJson (Join-Path $claudeDir 'claude-setup-state.json') 'claude.ai Adobe'
   if ($LASTEXITCODE -ne 0) { $failures += 'mcp_off.py failed' }
-  Set-StateRepo (Join-Path $claudeDir 'claude-setup-state.json') $repo
+  $ranWith = @()
+  if ($KeepFont) { $ranWith += '-KeepFont' }
+  if ($KeepScheme) { $ranWith += '-KeepScheme' }
+  if ($SkipFont) { $ranWith += '-SkipFont' }
+  Set-StateRepo (Join-Path $claudeDir 'claude-setup-state.json') $repo $ranWith
 
   # 4d. Nerd Font. Best effort: a failure here warns and never fails the install.
   if (-not $SkipFont) {
@@ -1301,8 +1328,8 @@ $havePy = [regex]::Match((& python --version 2>&1 | Out-String), '\d+\.\d+(\.\d+
 Add-SameRow 'Python version' '>= 3.10' $(if ($havePy) { $havePy } else { 'unknown' }) ([bool]($havePy -and [version]$havePy -ge [version]'3.10'))
 $gitBash = Get-GitBash
 Add-SameRow 'Git Bash' 'bash.exe found' $(if (Test-Path $gitBash) { $gitBash } else { 'not found' }) (Test-Path $gitBash)
-$wtOverrides = if ($wtLook) { @($wtLook.Overrides) } else { @() }
-Add-SameRow 'Terminal profile overrides' 'none' $(if (-not $wtLook) { 'no Windows Terminal settings' } elseif ($wtOverrides.Count) { $wtOverrides -join '; ' } else { 'none' }) ([bool]($wtLook -and $wtOverrides.Count -eq 0)) ([bool]($fontKept -and $KeepScheme))
+$overridesRow = Get-OverridesRow $(if ($wtLook) { [string[]]@($wtLook.Overrides) } else { [string[]]@() }) $fontKept ([bool]$KeepScheme)
+Add-SameRow 'Terminal profile overrides' 'none' $(if (-not $wtLook) { 'no Windows Terminal settings' } else { $overridesRow.Actual }) ([bool]($wtLook -and $overridesRow.Ok)) ([bool]($(if ($wtLook) { $overridesRow.Kept } else { $fontKept -and $KeepScheme })))
 $defActual = if (-not $wtLook) { 'no Windows Terminal settings' } elseif ($wtLook.DefaultName) { $wtLook.DefaultName } elseif ($wtLook.DefaultGuid) { $wtLook.DefaultGuid } else { 'not set' }
 Add-SameRow 'Terminal default profile' 'PowerShell 7' $defActual ([bool]($wtLook -and $wtLook.DefaultGuid -eq $ps7Guid))
 $gbActual = 'no Windows Terminal settings'

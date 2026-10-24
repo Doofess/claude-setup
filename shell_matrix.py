@@ -81,16 +81,36 @@ def _fwd(path):
     return str(path).replace("\\", "/")
 
 
-def commands(shell):
-    """The command strings run inside the shell: install check, claude, python, status bar child."""
+KEEP_FLAGS = ("-KeepFont", "-KeepScheme", "-SkipFont")
+STATE_FILE = Path.home() / ".claude" / "claude-setup-state.json"
+
+
+def known_flags(flags):
+    """Only the installer flags that decide what a check expects; anything else in the state file is ignored."""
+    return [f for f in KEEP_FLAGS if isinstance(flags, (list, tuple)) and f in flags]
+
+
+def recorded_flags(path=None):
+    """The flags the last install ran with, from the state file's `flags` key ([] when absent or unreadable)."""
+    try:
+        doc = json.loads(Path(path or STATE_FILE).read_text(encoding="utf-8-sig"))
+        return known_flags(doc.get("flags", []))
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def commands(shell, flags=()):
+    """The command strings run inside the shell: install check, claude, python, status bar child.
+    `flags` (the recorded keep flags) are appended to the installer's check so it expects what the install did."""
     repo = str(REPO)
+    tail = "".join(" " + f for f in known_flags(list(flags)))
     me = _fwd(REPO / "shell_matrix.py")
     if shell == "git-bash":
-        install = f'cd "{_fwd(repo)}" && ./install.sh -Check -Json'
+        install = f'cd "{_fwd(repo)}" && ./install.sh -Check -Json{tail}'
     elif shell == "cmd":
-        install = f'"{repo}\\install.cmd" -Check -Json'
+        install = f'"{repo}\\install.cmd" -Check -Json{tail}'
     else:
-        install = f'& "{repo}\\install.cmd" -Check -Json'
+        install = f'& "{repo}\\install.cmd" -Check -Json{tail}'
     return {
         "install": install,
         "claude": "claude --version",
@@ -108,10 +128,34 @@ def build_argv(shell, command):
     return prefix + [command]
 
 
-def run_in(shell, command):
-    proc = subprocess.run(build_argv(shell, command), capture_output=True, encoding="utf-8",
-                          errors="replace", timeout=TIMEOUT, env=_env(shell), cwd=str(REPO))
-    return proc.returncode, proc.stdout or "", proc.stderr or ""
+def _kill_tree(proc):
+    """Kills the shell and everything it started. subprocess's own kill() leaves grandchildren alive on Windows,
+    and they keep the output pipes open, so communicate() would wait for them forever."""
+    try:
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def run_in(shell, command, timeout=TIMEOUT):
+    proc = subprocess.Popen(build_argv(shell, command), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, encoding="utf-8", errors="replace", env=_env(shell),
+                            cwd=str(REPO))
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+        raise
+    return proc.returncode, out or "", err or ""
 
 
 def last_json(text):
@@ -125,12 +169,22 @@ def last_json(text):
     return None
 
 
-def probe(shell):
-    """Runs the checks inside one shell and returns its result dict ({'missing': True} if not installed)."""
+def _reason(stdout, stderr):
+    """The last non-empty stderr line (stdout's when stderr is empty), trimmed: why a command printed no JSON."""
+    for text in (stderr, stdout):
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        if lines:
+            return lines[-1][:200]
+    return ""
+
+
+def probe(shell, flags=None):
+    """Runs the checks inside one shell and returns its result dict ({'missing': True} if not installed).
+    `flags`: the install flags to check with; the state file's recorded ones by default."""
     if not SHELLS.get(shell):
         return {"missing": True}
-    cmds = commands(shell)
-    res = {"missing": False, "exit": -1, "rows": [], "claude": "", "python": "", "bar_text": "", "bar_sgr": [], "errors": []}
+    cmds = commands(shell, recorded_flags() if flags is None else flags)
+    res = {"missing": False, "exit": -1, "rows": [], "failures": [], "claude": "", "python": "", "bar_text": "", "bar_sgr": [], "errors": []}
 
     def attempt(label, command):
         try:
@@ -144,9 +198,11 @@ def probe(shell):
         res["exit"] = out[0]
         doc = last_json(out[1])
         if doc is None:
-            res["errors"].append("install check: no JSON line in the output")
+            why = _reason(out[1], out[2])
+            res["errors"].append("install check: no JSON line in the output" + (f": {why}" if why else ""))
         else:
             res["rows"] = doc.get("rows", [])
+            res["failures"] = doc.get("failures", [])
     out = attempt("claude", cmds["claude"])
     if out:
         res["claude"] = out[1].strip()
@@ -174,7 +230,8 @@ def bar_child():
     out = {"ok": False}
     try:
         sample = subprocess.run([sys.executable, "-I", str(REPO / "statusbar.py"), "--demo-json"],
-                                capture_output=True, encoding="utf-8", errors="replace", timeout=TIMEOUT).stdout
+                                capture_output=True, encoding="utf-8", errors="replace", timeout=TIMEOUT,
+                                stdin=subprocess.DEVNULL).stdout
         settings = json.loads((Path.home() / ".claude" / "settings.json").read_text(encoding="utf-8-sig"))
         command = settings["statusLine"]["command"]
         bash = find_git_bash() or "bash"
@@ -206,6 +263,19 @@ def compare(results):
     for shell, r in here.items():
         for err in r.get("errors", []):
             lines.append(f"{shell}: {err}")
+    # Failures the table has no row for (the status bar check, `claude plugin validate`, mcp_off.py). The
+    # "same experience:" ones are rows already.
+    seen = {}
+    for shell, r in here.items():
+        for f in r.get("failures", []):
+            if not f.startswith("same experience:"):
+                seen.setdefault(f, []).append(shell)
+    for f, shells in seen.items():
+        lines.append(f"install check failed: {f} (in {', '.join(shells)})")
+    for shell, r in here.items():
+        if (r.get("exit", 0) > 0 and r.get("rows") and not r.get("failures")
+                and not any(rw["status"] == "FAIL" for rw in r["rows"])):
+            lines.append(f"{shell}: install check exited {r['exit']} with no failing row")
     names = []
     for r in here.values():
         for rw in r.get("rows", []):
