@@ -237,10 +237,12 @@ const overflowTick = atom({ plugin: 'session-cards', key: 'overflowTick' } as co
 const SEPARATOR = ' │ '
 
 /**
- * Cells of the mode label the engine draws in front of the hint on the same row, the widest one
- * (`⏵⏵ bypass permissions on `). The hint text leaves the label out, but starts `(shift+tab to cycle)` when one is shown.
+ * Cells of the mode label the engine draws in front of the hint on the same row, the widest one with its
+ * separator (`⏵⏵ bypass permissions on · `). The hint text leaves the label out and the mode is not on the event,
+ * so it is reserved in front of every hint but the default mode's own (`? for shortcuts`), which has no label:
+ * a background shell's hint is `1 shell` in any mode.
  */
-const MODE_LABEL = 25
+const MODE_LABEL = 27
 
 function isSpan(value: unknown): value is Span {
   return typeof field(value, 'text') === 'string'
@@ -717,8 +719,8 @@ export const register: Register = on => {
     }
 
     const { hint } = e.props
-    const label = hint.startsWith('(shift+tab') ? MODE_LABEL : 0
-    const fits = pieces === null ? [] : fitPieces(pieces, label + hint.length, (e.viewport?.columns ?? 80) - 4)
+    const label = hint.startsWith('? for shortcuts') ? 0 : MODE_LABEL
+    const fits = pieces === null ? [] : fitPieces(pieces, label + [...hint].length, (e.viewport?.columns ?? 80) - 4)
 
     if (fits.length === 0) {
       return next(e)

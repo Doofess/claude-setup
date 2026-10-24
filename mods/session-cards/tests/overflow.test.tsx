@@ -83,7 +83,8 @@ test('an underlined span stays underlined, and only that one', async ($, on) => 
 })
 
 test('test_overflow_is_cut_to_the_room', async ($, on) => {
-  const hint = 'h'.repeat(30)
+  // `? for shortcuts` is the default mode's hint: no mode label in front of it.
+  const hint = `${HINT}${'h'.repeat(15)}`
   const pieces = [[span('a'.repeat(10), 'green')], [span('b'.repeat(10), 'green')]]
   engine(on, JSON.stringify({ written_at: 1, columns: 50, pieces }))
 
@@ -100,14 +101,14 @@ test('test_overflow_is_cut_to_the_room', async ($, on) => {
 })
 
 test('a mode label in front of the hint is counted, and the row is cut rather than wrapped', async ($, on) => {
-  // Logged live at 169 columns while a subagent ran: the hint text leaves out the `⏵⏵ bypass permissions on `
+  // Logged live at 169 columns while a subagent ran: the hint text leaves out the `⏵⏵ bypass permissions on · `
   // the engine draws before it on the same row, so the mod reserves that label's cells.
   const hint = '(shift+tab to cycle) · /tasks to see subagents'
   const pieces = [[span('a'.repeat(10), 'green')], [span('b'.repeat(10), 'green')]]
   engine(on, JSON.stringify({ written_at: 1, columns: 80, pieces }))
 
-  // At 99 columns the room is 95: 25 + 46 + 2 + 10 = 83 fits, and the second piece would make 83 + 3 + 10 = 96.
-  const ui = await $.ui.mount(HINT_ROW(hint, 99))
+  // At 101 columns the room is 97: 27 + 46 + 2 + 10 = 85 fits, and the second piece would make 85 + 3 + 10 = 98.
+  const ui = await $.ui.mount(HINT_ROW(hint, 101))
   expect(await line(ui)).toBe(`${hint}  ${'a'.repeat(10)}`)
   await ui.unmount()
 
@@ -115,6 +116,27 @@ test('a mode label in front of the hint is counted, and the row is cut rather th
   const row = await $.ui.mount(HINT_ROW(hint, 120))
   expect((await row.find({ type: 'Text', text: /shift\+tab/ }))?.props.wrap).toBe('truncate-end')
   await row.unmount()
+})
+
+test('any hint but the default mode\'s may have a mode label in front', async ($, on) => {
+  // Logged live with a background shell running: the hint was `1 shell`, the engine drew
+  // `⏵⏵ bypass permissions on · ` before it, and a row 27 cells too wide squeezed that ` · ` onto a line of its own.
+  const pieces = [[span('a'.repeat(10), 'green')]]
+  engine(on, JSON.stringify({ written_at: 1, columns: 80, pieces }))
+
+  // 27 + 7 + 2 + 10 = 46 is one more than the room of 49 - 4.
+  const tight = await $.ui.mount(HINT_ROW('1 shell', 49))
+  expect(await line(tight)).toBe('engine')
+  await tight.unmount()
+
+  const room = await $.ui.mount(HINT_ROW('1 shell', 50))
+  expect(await line(room)).toBe(`1 shell  ${'a'.repeat(10)}`)
+  await room.unmount()
+
+  // The default mode's hint has no label: 15 + 2 + 10 = 27 fits 31 - 4.
+  const plain = await $.ui.mount(HINT_ROW(HINT, 31))
+  expect(await line(plain)).toBe(`${HINT}  ${'a'.repeat(10)}`)
+  await plain.unmount()
 })
 
 test('a Nerd Font glyph counts as one cell and no viewport means 80 columns', async ($, on) => {
