@@ -62,6 +62,13 @@ class InstallerTest(unittest.TestCase):
         for line in lines:
             self.assertIn("--scope user", line)
 
+    def test_json_files_are_read_as_utf8(self):
+        # Windows PowerShell 5.1's Get-Content reads a BOM-less file in the ANSI code page, so on a PC whose code
+        # page is 1252 (not 65001, as on this one) a non-ASCII value in settings.json is garbled and written back.
+        text = read("install.ps1")
+        self.assertNotRegex(text, r"Get-Content [^\n|]*-Raw")
+        self.assertIn("[IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)", text)
+
     def test_status_bar_check_finds_each_piece_in_the_demo_bar(self):
         # The installer runs the demo sample through the bar and looks for these strings in the raw, coloured output.
         line = next(l for l in read("install.ps1").splitlines() if l.strip().startswith("$missing = @("))

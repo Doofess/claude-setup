@@ -62,6 +62,9 @@ $quiet = [bool]$Json   # -Json: stdout carries the JSON document only, so nothin
 # The 16 Write-Host console colours have no orange, so these are ANSI escapes ([char]27: `e needs PS 6+).
 function Write-Color($msg, [int]$color) { if ($quiet) { return }; Write-Host "$([char]27)[38;5;${color}m$msg$([char]27)[0m" }
 function Write-Step($msg) { Write-Color "==> $msg" 208 }
+# Windows PowerShell 5.1's Get-Content reads a BOM-less file in the ANSI code page (1252 on most PCs), which garbles
+# any non-ASCII value in the JSON this script writes back, so every read names UTF-8.
+function Read-Utf8($path) { [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8) }
 function Write-Utf8NoBom($path, $text) {
   [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
 }
@@ -194,9 +197,9 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
 
 # ---- Nerd Font (kept for a later visual rebuild) ----
 $nerdFontId = 'DEVCOM.JetBrainsMonoNerdFont'
-$terminalLook = Get-Content (Join-Path $repo 'terminal\profile.json') -Raw | ConvertFrom-Json   # this PC's measured look
+$terminalLook = Read-Utf8 (Join-Path $repo 'terminal\profile.json') | ConvertFrom-Json   # this PC's measured look
 $nerdFontFace = $terminalLook.font.face
-$template = Get-Content (Join-Path $repo 'settings.json') -Raw | ConvertFrom-Json
+$template = Read-Utf8 (Join-Path $repo 'settings.json') | ConvertFrom-Json
 function Get-NerdFontFiles {
   foreach ($d in "$env:LOCALAPPDATA\Microsoft\Windows\Fonts", "$env:WINDIR\Fonts") {
     Get-ChildItem $d -Filter '*Nerd*Font*' -ErrorAction SilentlyContinue
@@ -690,7 +693,7 @@ if (-not $Check) {
   }
   # 3. Merge settings.json
   Write-Step 'Merging settings.json'
-  $current = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
+  $current = if (Test-Path $settingsPath) { Read-Utf8 $settingsPath | ConvertFrom-Json } else { [pscustomobject]@{} }
 
   # Per-key rules (enabledPlugins, env, permissions, hooks merge; the rest is replaced) live in Merge-ClaudeSettings.
   $current = Merge-ClaudeSettings $current $template $repo
@@ -750,7 +753,7 @@ if (-not $Check) {
   # Step 1 backed up settings.json, statusline.py and keybindings.json; Windows Terminal settings are backed up below.
   Write-Step 'Removing the retired visual setup'
   $removed = 0
-  $cur = Get-Content $settingsPath -Raw | ConvertFrom-Json
+  $cur = Read-Utf8 $settingsPath | ConvertFrom-Json
   $done = Remove-VisualSettings $cur
   if ($done.Count -gt 0) {
     Write-Utf8NoBom $settingsPath (($cur | ConvertTo-Json -Depth 20) + "`n")
@@ -767,7 +770,7 @@ if (-not $Check) {
   if ($gone.Count -gt 0) { Write-Host "    deleted: $($gone -join ', ')"; $removed++ }
   $kbPath = Join-Path $claudeDir 'keybindings.json'
   if (Test-Path $kbPath) {
-    $kb = Get-Content $kbPath -Raw | ConvertFrom-Json
+    $kb = Read-Utf8 $kbPath | ConvertFrom-Json
     $done = Remove-VisualKeybinding $kb
     if ($done.Count -gt 0) {
       Write-Utf8NoBom $kbPath (($kb | ConvertTo-Json -Depth 10) + "`n")
@@ -869,7 +872,7 @@ $py = & python -c "import sys;print(sys.version_info[:2]>=(3,10))" 2>&1
 if (("$py").Trim() -ne 'True') {
   $failures += "status bar: python is not Python 3.10+ (the Windows Store alias?): $py"
 } else {
-  $installed = Get-Content $settingsPath -Raw | ConvertFrom-Json
+  $installed = Read-Utf8 $settingsPath | ConvertFrom-Json
   $slProp = $installed.PSObject.Properties['statusLine']
   $barCommand = if ($slProp -and $slProp.Value) { [string]$slProp.Value.command } else { '' }
   if (-not $barCommand) {
@@ -890,7 +893,7 @@ if (("$py").Trim() -ne 'True') {
 # <repo>/mods/session-cards there). Prove the variable names this clone's folder and that Claude Code accepts the folder.
 Write-Step 'Session cards mod'
 $modDir = ($repo -replace '\\', '/') + '/mods/session-cards'
-$installed = Get-Content $settingsPath -Raw | ConvertFrom-Json
+$installed = Read-Utf8 $settingsPath | ConvertFrom-Json
 $pdEnv = if ($installed.PSObject.Properties['env'] -and $installed.env) { $installed.env.PSObject.Properties['CLAUDE_CODE_PLUGIN_DIRS'] } else { $null }
 $modListed = $pdEnv -and (@(([string]$pdEnv.Value).Split(';') | ForEach-Object { Format-DirKey $_ }) -contains (Format-DirKey $modDir))
 $claudeVersionText = (& claude --version 2>&1 | Out-String).Trim()
