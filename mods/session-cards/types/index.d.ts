@@ -1,8 +1,11 @@
 /** Prompt text -> the times (ms since the epoch) prompt.submit saw it, oldest first. */
 export type PromptTimes = Record<string, number[]>
 
-/** One finished main-loop turn: how long it ran, when it ended (ms since the epoch) and how many background shells still ran then. */
-export type TurnRecord = { durationMs: number; endedAt: number; shells: number }
+/**
+ * One finished main-loop turn: its number (counting from the session's first), how long it ran, when it ended (ms since
+ * the epoch) and how many background shells the mod knew to run then.
+ */
+export type TurnRecord = { seq: number; durationMs: number; endedAt: number; shells: number }
 
 declare module 'claude-code' {
   interface PluginState {

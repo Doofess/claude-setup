@@ -213,13 +213,12 @@ export function agentRow(a: AgentRecord, now: number) {
   }
 }
 
-/** The words of a turn-end line: the duration, the time it ended as `12:34 PM`, and the running shells (null when none). */
-export function turnLine(r: TurnRecord): { duration: string; done: string; shells: string | null } {
+/** The words of a turn-end line: the duration and the time it ended as `12:34 PM`. */
+export function turnLine(r: TurnRecord): { duration: string; done: string } {
   return {
     duration: fmtElapsed(r.durationMs),
     // Newer ICU puts a narrow no-break space before PM; the engine's line has a plain one.
     done: new Date(r.endedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(/ /g, ' '),
-    shells: r.shells > 0 ? `${r.shells} ${r.shells === 1 ? 'shell' : 'shells'} still running` : null,
   }
 }
 
@@ -266,7 +265,8 @@ function parseOverflow(text: string): Span[][] | null {
   return pieces.map(piece => (Array.isArray(piece) ? piece.filter(isSpan) : []))
 }
 
-const widthOf = (piece: Span[]): number => piece.reduce((sum, span) => sum + span.text.length, 0)
+// By code point: a Nerd Font icon past U+FFFF (the clock, the robot) is two UTF-16 units but one cell.
+const widthOf = (piece: Span[]): number => piece.reduce((sum, span) => sum + [...span.text].length, 0)
 
 /** The leading pieces whose line (`hint`, two spaces, the pieces joined) fits in `room` cells. */
 export function fitPieces(pieces: Span[][], hintWidth: number, room: number): Span[][] {
@@ -409,10 +409,9 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       const key = { plugin: 'session-cards', key: 'turns' } as const
       const { value = [] } = await $.state.get(key)
-      const all = [...value, { durationMs: e.durationMs, endedAt: await $.clock.now(), shells: shells.size }]
-      const kept = all.slice(-TURNS_KEPT)
-      trimmed += all.length - kept.length
-      await $.state.set(key, kept)
+      const seq = (value.at(-1)?.seq ?? -1) + 1
+      const all = [...value, { seq, durationMs: e.durationMs, endedAt: await $.clock.now(), shells: shells.size }]
+      await $.state.set(key, all.slice(-TURNS_KEPT))
     }
 
     const record = known(e.agentId)
@@ -427,8 +426,9 @@ export const register: Register = on => {
 
   // Background shells that run now, by the id the Bash/PowerShell result gave.
   // A ui.render hook may not write $.state but may write the module, so the
-  // task-notification row can end one. The turn-end line only needs the count
-  // as it stood when the turn ended, which turn.complete snapshots into `turns`.
+  // task-notification row can end one. That row can come after the turn ended
+  // (a shell that finished during the final answer), so the count is only ever
+  // too high: a turn that ended with one counted keeps the engine's line.
   const shells = new Set<string>()
 
   for (const tool of ['Bash', 'PowerShell'] as const) {
@@ -457,11 +457,10 @@ export const register: Register = on => {
   })
 
   // Rows of the turn-end line pair with `turns` the way prompts pair with their times:
-  // `claimed` pins a row (e.requestId) to its record, by absolute position (`trimmed`
-  // counts the records the cap has dropped), so each row keeps its own record on every redraw.
+  // `claimedTurns` pins a row (e.requestId) to its record's `seq`, so each row keeps
+  // its own record on every redraw, and as the cap drops the oldest.
   const TURNS_KEPT = 200
   const claimedTurns = new Map<string, number>()
-  let trimmed = 0
 
   on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
     const { word, durationMs, isExpanded, waitingFor } = e.props
@@ -475,19 +474,24 @@ export const register: Register = on => {
 
     if (at === undefined) {
       const used = new Set(claimedTurns.values())
-      const index = value.findIndex((r, i) => r.durationMs === durationMs && !used.has(i + trimmed))
+      const found = value.find(r => r.durationMs === durationMs && !used.has(r.seq))
 
-      if (index < 0) {
+      if (found === undefined) {
         return next(e)
       }
 
-      at = index + trimmed
+      at = found.seq
       claimedTurns.set(e.requestId, at)
     }
 
-    const record = value[at - trimmed]
+    const record = value.find(r => r.seq === at)
 
-    if (record === undefined) {
+    // A shell or a background agent still ran when the turn ended: the engine's line says
+    // so (`Waiting for 1 background agent to finish`), and only it knows when they end.
+    const waiting = (r: TurnRecord) =>
+      r.shells > 0 || [...agents.values()].some(a => a.background && a.finishedAt === undefined && a.startedAt <= r.endedAt)
+
+    if (record === undefined || waiting(record)) {
       return next(e)
     }
 
@@ -505,7 +509,6 @@ export const register: Register = on => {
           {line.duration}
         </Text>
         <Text color="success">{` · done ${line.done}`}</Text>
-        {line.shells !== null && <Text color="warning">{` · ${line.shells}`}</Text>}
       </Box>
     )
   })

@@ -450,8 +450,9 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     cost = _dict(data.get("cost"))
     if isinstance(cost.get("total_cost_usd"), (int, float)):
         out.append((sgr(GREEN, f"${cost['total_cost_usd']:.2f}"), P_COST, G_COST))
-    if isinstance(cost.get("total_duration_ms"), (int, float)):
-        out.append((_mark(marks, "time", sgr(BLUE, fmt_elapsed(cost["total_duration_ms"])), BLUE), P_TIME, G_TIME))
+    elapsed = cost.get("total_duration_ms")
+    if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) and 0 <= elapsed < float("inf"):
+        out.append((_mark(marks, "time", sgr(BLUE, fmt_elapsed(elapsed)), BLUE), P_TIME, G_TIME))
     return out
 
 

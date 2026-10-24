@@ -127,6 +127,17 @@ test('a Nerd Font glyph counts as one cell and no viewport means 80 columns', as
   await ui.unmount()
 })
 
+test('an icon past U+FFFF counts as one cell too', async ($, on) => {
+  // The status bar's clock (U+F0150) and robot (U+F06A9) are two UTF-16 units each.
+  const piece = [span('\u{F0150} 1h 33m')]
+  engine(on, JSON.stringify({ written_at: 1, columns: 80, pieces: [piece] }))
+
+  // 15 + 2 + 8 = 25 fills the room of 29 - 4 exactly.
+  const ui = await $.ui.mount(HINT_ROW(HINT, 29))
+  expect(await line(ui)).toBe(`${HINT}  \u{F0150} 1h 33m`)
+  await ui.unmount()
+})
+
 test('test_no_overflow_file_passes_to_the_engine', async ($, on) => {
   engine(on, null)
 

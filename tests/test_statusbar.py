@@ -14,6 +14,19 @@ sys.path.insert(0, ROOT)
 import statusbar  # noqa: E402
 
 
+def hue_family(code):
+    """Which of the six hues an SGR colour is (0 red, 1 yellow, 2 green, 3 cyan, 4 blue, 5 magenta): 31/91 and 33/93
+    look alike in most schemes, and a 24-bit colour counts as the hue it is nearest."""
+    if isinstance(code, int):
+        return [None, 0, 2, 1, 4, 5, 3][code % 10]
+    r, g, b = (int(x) / 255 for x in code.split(";")[2:])
+    hi, lo = max(r, g, b), min(r, g, b)
+    if hi == lo:
+        return None
+    h = (g - b) / (hi - lo) % 6 if hi == r else (b - r) / (hi - lo) + 2 if hi == g else (r - g) / (hi - lo) + 4
+    return round(h) % 6
+
+
 class FormatTest(unittest.TestCase):
     def test_tokens(self):
         for n, s in [(950, "950"), (12_345, "12k"), (135_000, "135k"), (267_000, "267k"), (1_000_000, "1M"), (1_234_567, "1.2M")]:
@@ -271,6 +284,13 @@ class RowTest(unittest.TestCase):
         for ms, text in [(0, "0m"), (59_000, "0m"), (12 * 60_000, "12m"), (5_580_000, "1h 33m"), (26 * 3_600_000 + 60_000, "1d 2h")]:
             self.assertEqual(statusbar.fmt_elapsed(ms), text, ms)
 
+    def test_a_duration_that_is_not_a_time_is_left_out(self):
+        # The line must survive it: int() of infinity or NaN raises, and a negative time means nothing.
+        for ms in [float("inf"), float("nan"), -1, True]:
+            row = statusbar.plain(statusbar.fit(self.demo_row(cost={"total_cost_usd": 1.23, "total_duration_ms": ms}), 200))
+            self.assertIn("$1.23", row, ms)
+            self.assertFalse(row.rstrip().endswith("m") or row.rstrip().endswith("h"), (ms, row[-20:]))
+
     def test_lines_changed_are_not_shown(self):
         self.assertNotIn("+156", statusbar.plain(statusbar.fit(self.demo_row(), 200)))
 
@@ -329,7 +349,7 @@ class RowTest(unittest.TestCase):
         # every model its own colour, and no two of them the same hue (35 and 95 look alike in most schemes)
         codes = list(statusbar.MODEL_COLOURS.values())
         self.assertEqual(len(codes), len(set(codes)))
-        self.assertEqual(len({c % 60 for c in codes if isinstance(c, int)}), len([c for c in codes if isinstance(c, int)]))
+        self.assertEqual(len({hue_family(c) for c in codes}), len(codes))
         self.assertEqual(statusbar.spans(statusbar.sgr(statusbar.MODEL_COLOURS["opus"], "Opus"))[0]["colour"], "#d77757")
 
     def test_fable_is_a_gold_gradient(self):

@@ -75,29 +75,36 @@ test('a finished turn is coloured', async ($, on) => {
   await ui.unmount()
 })
 
-test('one shell running', async ($, on) => {
+test("a turn that ended with a shell running is the engine's line", async ($, on) => {
+  // The mod only learns a shell ended when its notification row is drawn, which can come after the turn:
+  // the engine knows the real count, so its line stands.
   mock.clock(on, { now: AT })
   engine(on)
   await background($, 'b1')
   await finish($, 5_000)
 
   const ui = await $.ui.mount(ROW('r1', { durationMs: 5_000 }))
-  const shells = await ui.find({ type: 'Text', text: /still running/ })
-  expect(shells?.text).toBe(' · 1 shell still running')
-  expect(shells?.props.color).toBe('warning')
+  expect(await line(ui)).toBe('engine')
   await ui.unmount()
 })
 
-test('two shells running', async ($, on) => {
+test("a turn that ended while a background agent ran is the engine's line", async ($, on) => {
+  // The engine draws `Waiting for 1 background agent to finish` there, and leaves waitingFor out when its counts differ.
   mock.clock(on, { now: AT })
   engine(on)
-  await background($, 'b1')
-  await background($, 'b2')
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  await $.agent.spawn({ prompt: 'p', description: 'd', subagentType: 'worker', tool_use_id: 'tu-a', background: true } as never)
   await finish($, 5_000)
 
-  const ui = await $.ui.mount(ROW('r1', { durationMs: 5_000 }))
-  expect((await ui.find({ type: 'Text', text: /still running/ }))?.text).toBe(' · 2 shells still running')
-  await ui.unmount()
+  const waiting = await $.ui.mount(ROW('r1', { durationMs: 5_000 }))
+  expect(await line(waiting)).toBe('engine')
+  await waiting.unmount()
+
+  // Once it has finished, the line is the mod's again.
+  await finish($, 6_000, 'a1')
+  const done = await $.ui.mount(ROW('r1', { durationMs: 5_000 }))
+  expect(await line(done)).toBe('✻Brewed for 5s · done 12:34 PM')
+  await done.unmount()
 })
 
 test('no record falls back', async ($, on) => {
@@ -130,17 +137,16 @@ test('expanded and waiting fall back', async ($, on) => {
 test("a subagent's end stores nothing", async ($, on) => {
   mock.clock(on, { now: AT })
   engine(on)
-  await background($, 'b1')
   await finish($, 1_016_000, 'a1')
 
   const ui = await $.ui.mount(ROW('r1'))
   expect(await line(ui)).toBe('engine')
   await ui.unmount()
 
-  // And it did not bump the shell snapshot: the main loop's own record says one shell.
+  // The main loop's own end of the same length is the one the row draws.
   await finish($, 1_016_000)
   const again = await $.ui.mount(ROW('r2'))
-  expect(await line(again)).toBe('✻Brewed for 16m 56s · done 12:34 PM · 1 shell still running')
+  expect(await line(again)).toBe('✻Brewed for 16m 56s · done 12:34 PM')
   await again.unmount()
 })
 
@@ -212,14 +218,14 @@ test('a call that did not go to the background is not a running shell', async ($
   await ui.unmount()
 })
 
-test('a call that went to the background by ctrl+b is counted', async ($, on) => {
+test('a call that went to the background by ctrl+b is a running shell', async ($, on) => {
   mock.clock(on, { now: AT })
   engine(on, { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b9', backgroundedByUser: true })
   await $.tool.call({ tool: 'Bash', tool_use_id: 'tu-c', command: 'sleep 120' } as never)
   await finish($, 4000)
 
   const ui = await $.ui.mount(ROW('r1', { durationMs: 4000 }))
-  expect(await line(ui)).toBe('✻Brewed for 4s · done 12:34 PM · 1 shell still running')
+  expect(await line(ui)).toBe('engine')
   await ui.unmount()
 })
 
@@ -254,7 +260,5 @@ test('only the last 200 records are kept, and a row keeps its record when the ol
 })
 
 test('turnLine holds the words', () => {
-  expect(turnLine({ durationMs: 1_016_000, endedAt: AT, shells: 0 })).toEqual({ duration: fmtElapsed(1_016_000), done: '12:34 PM', shells: null })
-  expect(turnLine({ durationMs: 3000, endedAt: AT, shells: 1 }).shells).toBe('1 shell still running')
-  expect(turnLine({ durationMs: 3000, endedAt: AT, shells: 3 }).shells).toBe('3 shells still running')
+  expect(turnLine({ seq: 0, durationMs: 1_016_000, endedAt: AT, shells: 0 })).toEqual({ duration: fmtElapsed(1_016_000), done: '12:34 PM' })
 })
