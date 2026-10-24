@@ -893,3 +893,83 @@ class CheckModeTest(unittest.TestCase):
         self.assertIsNotNone(end)
         self.assertTrue(start < text.index("Write-Step 'Merging settings.json'") < end)
         self.assertGreater(text.index("Write-Step 'Same experience'"), end)
+
+
+class SetupCheckStaticTest(unittest.TestCase):
+    def test_skill_exists_with_name_and_references(self):
+        text = read("skills", "setup-check", "SKILL.md")
+        self.assertRegex(text, r"\A---\n(?:.*\n)*?name: setup-check\n(?:.*\n)*?---\n")
+        for word in ("shell_matrix.py", "install.cmd", "claude-setup-state.json"):
+            self.assertIn(word, text)
+        self.assertLess(len(text.splitlines()), 80)
+
+    def test_installer_records_repo_inside_the_write_block(self):
+        text = read("install.ps1").replace("\r\n", "\n")
+        start = text.index("if (-not $Check) {")
+        end = text.index("# 4d.")
+        block = text[start:end]
+        self.assertRegex(block, r"(?m)^\s*Set-StateRepo\b.*\$repo")
+        self.assertLess(block.index("mcp_off.py"), block.index("Set-StateRepo"))
+
+    def test_docs(self):
+        self.assertIn("/setup-check", read("README.md"))
+        self.assertIn("Check a machine", read("README.md"))
+        self.assertIn("- After install.ps1 or on a new PC: `/setup-check`.", read("global", "CLAUDE.md"))
+
+
+STATE_DRIVER = """param([string]$State, [string]$Repo)
+$ErrorActionPreference = 'Stop'
+{HELPERS}
+Set-StateRepo $State $Repo
+"""
+
+
+def state_helpers():
+    source = read("install.ps1").replace("\r\n", "\n")
+    out = []
+    for name in ("Read-Utf8", "Write-Utf8NoBom", "Set-StateRepo"):
+        m = re.search(r"^function %s.*?^}" % name, source, re.DOTALL | re.MULTILINE)
+        assert m is not None, name
+        out.append(m.group(0))
+    return "\n".join(out)
+
+
+class StateRepoBase:
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.script = os.path.join(cls.tmp, "state.ps1")
+        with open(cls.script, "w", encoding="utf-8") as f:
+            f.write(STATE_DRIVER.replace("{HELPERS}", state_helpers()))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_sets_repo_keeps_one_element_list_and_is_idempotent(self):
+        path = os.path.join(self.tmp, "state.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"claude.ai Adobe": ["C:/x"]}')
+        repo = "C:\\dev\\claude-setup"
+        r = run_engine(self.engine, self.script, path, repo)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(path, "rb") as f:
+            first = f.read()
+        data = json.loads(first.decode("utf-8"))
+        self.assertEqual(data["claude.ai Adobe"], ["C:/x"])
+        self.assertEqual(data["repo"], repo)
+        self.assertFalse(first.startswith(b"\xef\xbb\xbf"))
+        r = run_engine(self.engine, self.script, path, repo)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), first)
+
+    def test_missing_file_is_created(self):
+        path = os.path.join(self.tmp, "new.json")
+        r = run_engine(self.engine, self.script, path, "C:\\r")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"repo": "C:\\r"})
+
+
+per_engine(StateRepoBase, globals())

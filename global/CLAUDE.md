@@ -35,3 +35,4 @@ When compacting, keep decisions, file paths, open todos and failing test names.
 - The claude.ai Adobe connector is off by default (about 5k tokens a turn); turn it on per project with `/mcp` for Express, Acrobat or Firefly work.
 - MCP servers for one project go in that repo's `.mcp.json` (start from `mcp-presets/` in the setup repo), never in user settings.
 - Setup lives in `C:/dev/claude-setup` (repo `Doofess/claude-setup`); change config there and run `install.ps1`, so the desktop stays identical.
+- After install.ps1 or on a new PC: `/setup-check`.

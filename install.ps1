@@ -76,6 +76,16 @@ function Write-Utf8NoBom($path, $text) {
   [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
 }
 
+function Set-StateRepo([string]$statePath, [string]$repoDir) {
+  # Records the clone in the state file (the /setup-check skill reads it). Keeps every other key; writes only on change.
+  $state = $null
+  if (Test-Path $statePath) { $state = Read-Utf8 $statePath | ConvertFrom-Json }
+  if ($null -eq $state) { $state = [pscustomobject]@{} }
+  if ($state.PSObject.Properties['repo'] -and $state.repo -ceq $repoDir) { return }
+  $state | Add-Member -NotePropertyName repo -NotePropertyValue $repoDir -Force
+  Write-Utf8NoBom $statePath (($state | ConvertTo-Json -Depth 20) + "`n")
+}
+
 # ---- settings.json merge helpers (pure functions on parsed JSON, so they can be tested without a machine) ----
 function Test-IsObject($v) { $v -is [System.Management.Automation.PSCustomObject] }
 function Test-IsArray($v) { $v -is [System.Array] }
@@ -1060,6 +1070,7 @@ if (-not $Check) {
   if (Test-Path $claudeJson) { Copy-Item $claudeJson (Join-Path $backup 'claude.json') }
   & python -S (Join-Path $repo 'mcp_off.py') $claudeJson (Join-Path $claudeDir 'claude-setup-state.json') 'claude.ai Adobe'
   if ($LASTEXITCODE -ne 0) { $failures += 'mcp_off.py failed' }
+  Set-StateRepo (Join-Path $claudeDir 'claude-setup-state.json') $repo
 
   # 4d. Nerd Font. Best effort: a failure here warns and never fails the install.
   if (-not $SkipFont) {

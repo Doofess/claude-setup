@@ -119,6 +119,14 @@ font and colour scheme, and removes hooks this repo has retired. Options:
 
 It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` on every run.
 
+### Check a machine
+
+After installing, or on a new PC, run `/setup-check` in Claude Code. It finds the clone through
+`~/.claude/claude-setup-state.json`, checks the clone is up to date, runs `shell_matrix.py` to compare every shell,
+repairs any difference with `install.cmd`, and runs the matrix again. It is done when the matrix exits 0. It asks
+before pulling, and it never edits the repo. What the installer can't do (a group-policy pin, a shell winget couldn't
+install, signing in to `claude` and `gh`) it hands to you with the exact command.
+
 ### Same screen on every PC
 
 After installing, the installer prints a `Same experience` table (`name  expected  actual  ok|FAIL`) and fails if any
