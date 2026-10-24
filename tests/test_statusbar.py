@@ -299,7 +299,7 @@ class RowTest(unittest.TestCase):
     def test_cost_model_and_effort_are_coloured(self):
         raw = statusbar.fit(self.demo_row(), 200)
         self.assertIn("\x1b[32m$1.23", raw)
-        self.assertIn("\x1b[95mOpus", raw)
+        self.assertIn("\x1b[1m\x1b[38;2;215;119;87mOpus", raw)
         self.assertIn("\x1b[91mhigh", raw)
 
     def test_repo_icon_is_violet_like_the_repo(self):
@@ -308,17 +308,18 @@ class RowTest(unittest.TestCase):
 
     def test_model_icon_takes_the_model_colour(self):
         raw = statusbar.fit(self.demo_row(), 200)
-        self.assertIn(statusbar.sgr(95, statusbar.ICONS["model"] + " "), raw)
+        self.assertIn(statusbar.sgr(statusbar.CLAUDE_ORANGE, statusbar.ICONS["model"] + " "), raw)
         raw = statusbar.fit(self.demo_row(model={"id": "x", "display_name": "Other"}), 200)
         self.assertIn(statusbar.sgr(statusbar.WHITE, statusbar.ICONS["model"] + " "), raw)  # unknown model: white
 
     def test_model_colours(self):
-        for name, code in [("Opus", 95), ("claude-sonnet-5-5", 94), ("Haiku", 36), ("Fable 5.1", 93), ("Mythos", 92), ("Other", None)]:
+        for name, code in [("Opus", "38;2;215;119;87"), ("claude-sonnet-5-5", 94), ("Haiku", 36), ("Fable 5.1", 93), ("Mythos", 92), ("Other", None)]:
             self.assertEqual(statusbar.model_colour(name), code, name)
         # every model its own colour, and no two of them the same hue (35 and 95 look alike in most schemes)
         codes = list(statusbar.MODEL_COLOURS.values())
         self.assertEqual(len(codes), len(set(codes)))
-        self.assertEqual(len({c % 60 for c in codes}), len(codes))
+        self.assertEqual(len({c % 60 for c in codes if isinstance(c, int)}), len([c for c in codes if isinstance(c, int)]))
+        self.assertEqual(statusbar.spans(statusbar.sgr(statusbar.MODEL_COLOURS["opus"], "Opus"))[0]["colour"], "#d77757")
 
     def test_effort_colours(self):
         for level, code in [("low", 32), ("medium", 33), ("high", 91), ("xhigh", 95), ("max", 97), ("odd", None)]:
@@ -361,7 +362,7 @@ class RowTest(unittest.TestCase):
     def test_colours_are_the_sixteen_or_the_named_ones(self):
         # The terminal's 16, plus the repo's violet (Claude Code's exact theme colour) and the meter levels (24-bit).
         text = statusbar.fit(self.demo_row(), 200)
-        allowed = {"0", "1", "4", statusbar.VIOLET, statusbar.WHITE} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
+        allowed = {"0", "1", "4", statusbar.VIOLET, statusbar.WHITE, "38;2;215;119;87"} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
         allowed |= {code for pair in statusbar.LEVELS.values() for code in pair}
         self.assertEqual(set(re.findall(r"\x1b\[([0-9;]+)m", text)) - allowed, set())
 

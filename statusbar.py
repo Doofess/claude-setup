@@ -8,7 +8,7 @@ meter with tokens used out of the auto-compact point │ the 5-hour and 7-day pl
 time until each resets, each named 5H or 7D beside its icon │ cost │ how long the session has run. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
 short words (ctx, 5H, 7D, session) so the bar also reads in a font without the glyphs (the installer adds the flag
 on a machine with no Nerd Font). Colours are the terminal's own 16-colour palette, so the bar follows the
-terminal's scheme: cost green, the PR number yellow and underlined, the session time bright blue, each model and each effort level its own colour. Everything else is sent as
+terminal's scheme: cost green, the PR number yellow and underlined, the session time bright blue, each model (Opus in Claude orange) and each effort level its own colour. Everything else is sent as
 exact 24-bit colours, never the terminal's default foreground (a light grey in most schemes): the chrome
 (separators, the place and model icons, branch, reset times) in pure white; the repo name in the
 violet Claude Code highlights with (its dark theme's `permission` colour, rgb 177,185,249); and the three
@@ -54,9 +54,11 @@ UNDERLINE = 4
 VIOLET = "38;2;177;185;249"
 # The chrome: pure white, 24-bit, because the terminal's default foreground is a light grey in most schemes.
 WHITE = "38;2;255;255;255"
-# One colour per model family and per effort level, from the terminal's 16. Magenta, blue and red are their bright
+# Opus is Claude orange (the dark theme's `claude` token), 24-bit so it matches exactly.
+CLAUDE_ORANGE = "38;2;215;119;87"
+# One colour per model family and per effort level, from the terminal's 16 (Opus aside). Magenta, blue and red are their bright
 # variants: the plain ones are too dark to read on a black background (Campbell's blue is #0037DA).
-MODEL_COLOURS = {"opus": 95, "sonnet": 94, "haiku": 36, "fable": 93, "mythos": 92}  # bright magenta, bright blue, cyan, gold, bright green
+MODEL_COLOURS = {"opus": CLAUDE_ORANGE, "sonnet": 94, "haiku": 36, "fable": 93, "mythos": 92}  # Claude orange, bright blue, cyan, gold, bright green
 EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": 91, "xhigh": 95, "max": 97}  # a heat ramp: green, yellow, bright red, bright magenta, white-hot
 BLOCK = "█"
 # Meter levels: (filled colour, unfilled colour) as 24-bit SGR parameters. The unfilled part is the same hue at
@@ -332,7 +334,7 @@ def _mark(markers: dict, key: str, text: str, colour: int | str | None = None) -
     return sgr(colour or WHITE, marker + " ") + text
 
 
-def model_colour(name: str) -> int | None:
+def model_colour(name: str) -> int | str | None:
     """SGR colour for a model display name or id (Opus, claude-sonnet-5-5, Fable 5.1); None when unknown."""
     lowered = name.lower()
     return next((code for family, code in MODEL_COLOURS.items() if family in lowered), None)
@@ -342,7 +344,7 @@ def effort_colour(level: str) -> int | None:
     return EFFORT_COLOURS.get(level.lower())
 
 
-def _coloured(text: str, colour: int | None) -> str:
+def _coloured(text: str, colour: int | str | None) -> str:
     return sgr(colour, text) if colour else text
 
 

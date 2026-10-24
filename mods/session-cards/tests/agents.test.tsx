@@ -5,7 +5,7 @@ import { effortColour, fmtElapsed, fmtTokens, modelColour } from '../hooks/regis
 type On = Parameters<Parameters<typeof test>[1]>[1]
 
 test('modelColour names the family colour', () => {
-  expect(modelColour('claude-opus-5-5')).toBe('magenta')
+  expect(modelColour('claude-opus-5-5')).toBe('claude')
   expect(modelColour('Sonnet')).toBe('blue')
   expect(modelColour('haiku')).toBe('cyan')
   expect(modelColour('claude-fable-5-1')).toBe('yellowBright')

@@ -123,7 +123,7 @@ export function rowText(d: Described, state: RowState, width: number): string {
 
 const FAMILIES = ['opus', 'sonnet', 'haiku', 'fable', 'mythos'] as const
 const FAMILY_COLOURS: Record<(typeof FAMILIES)[number], string> = {
-  opus: 'magenta',
+  opus: 'claude',
   sonnet: 'blue',
   haiku: 'cyan',
   fable: 'yellowBright',
