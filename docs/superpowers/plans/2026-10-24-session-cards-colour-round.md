@@ -136,6 +136,27 @@ Claude Code's status line JSON carries `workspace.repo` only for GitHub ("GitHub
 - [ ] **Step 4:** Run `python -m unittest tests.test_statusbar -q`. Expected: all pass.
 - [ ] **Step 5:** Commit `statusbar: GitLab repos get GitLab's icon and orange, read from the origin remote`.
 
+### Task 8: Fable in neon
+
+The effect is chalk-animation's `neon` (MIT, chalk-animation 2.0.3), ported because a mod can't import npm packages and the library prints ANSI on its own timer. Its algorithm: frame `n` every 500 ms; even frames `dim`, odd frames `bold`. Its colours (rgb 88,80,85 and 213,70,242) are replaced by Fable's gold: even frames dim `yellowBright`, odd frames bold `yellowBright`.
+
+**Files:**
+- Create: `mods/session-cards/hooks/neon.ts`, crediting chalk-animation in a comment
+- Modify: `mods/session-cards/hooks/register.tsx` (the agent row's model Text), `types/index.d.ts` (a `neonTick: number` state key)
+- Modify: `statusbar.py` (the model piece for Fable), `tests/test_statusbar.py`
+- Test: `mods/session-cards/tests/agents.test.tsx`
+
+**Interfaces:**
+- Produces: `export function neon(frame: number): { color: string; bold: boolean; dimColor: boolean }`, where frame is even → `{ color: 'yellowBright', bold: false, dimColor: true }` and odd → `{ color: 'yellowBright', bold: true, dimColor: false }`. `export const NEON_MS = 500`.
+- The mod animates only a running Fable agent's row: a `$.clock.every(NEON_MS, …)` bumps `neonTick` while any running record's model is Fable, and the row reads `neonTick` as the frame. A finished Fable row is plain bold `yellowBright`. Every other family is unchanged.
+- Status bar, still: the Fable model name drawn as a per-letter gradient from `38;2;255;215;0` (#FFD700) to `38;2;255;140;0` (#FF8C00), first letter to last, linear in RGB. The icon in the first colour. The overflow span colour is `#FFD700`.
+
+- [ ] **Step 1: Write the failing tests:** `neon(0)` and `neon(1)` give the two styles above; a running Fable row's model Text is dim at neonTick 0 and bold at neonTick 1; a finished Fable row is bold, not dim, whatever the tick; an Opus row is unaffected. In Python: `model_piece` for `Fable 5.1` holds `\x1b[38;2;255;215;0mF` and `\x1b[38;2;255;140;0m1`, the last character.
+- [ ] **Step 2:** Run `claude plugin test mods/session-cards` and `python -m unittest tests.test_statusbar -q`. Expected: the new tests FAIL.
+- [ ] **Step 3:** Implement it.
+- [ ] **Step 4:** Run both. Expected: all pass.
+- [ ] **Step 5:** Commit `session-cards, statusbar: Fable in neon (chalk-animation's effect) and a gold gradient`.
+
 ### Task 6: Merge and install (inline)
 
 - [ ] Run all suites: `python -m unittest discover tests -q`, `claude plugin test mods/session-cards`, `claude plugin validate mods/session-cards`, `tsc -p mods/session-cards`.
