@@ -377,8 +377,8 @@ def gradient(text: str, start: tuple[int, int, int], end: tuple[int, int, int]) 
     parts = []
     for i, char in enumerate(text):
         r, g, b = (round(a + (z - a) * i / last) for a, z in zip(start, end))
-        parts.append(f"[38;2;{r};{g};{b}m{char}")
-    return "".join(parts) + "[0m"
+        parts.append(f"\x1b[38;2;{r};{g};{b}m{char}")
+    return "".join(parts) + "\x1b[0m"
 
 
 def model_text(name: str) -> str:

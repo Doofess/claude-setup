@@ -3,3 +3,4 @@ backups/
 __pycache__/
 .claude/worktrees/
 mods/session-cards/tsconfig.json
+node_modules/

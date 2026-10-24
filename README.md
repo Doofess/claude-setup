@@ -68,7 +68,7 @@ The icons come from a Nerd Font. On a machine without one, the installer switche
 
 Nothing to look at here, but it shapes every session:
 
-- **`CLAUDE.md`**: global rules for how Claude plans, delegates, verifies and uses git.
+- **`global/CLAUDE.md`**: global rules for how Claude plans, delegates, verifies and uses git.
 - **Two agents**: `Explore` (Haiku, read-only search, replaces the built-in one) and `worker` (Sonnet at medium effort,
   for implementation briefs).
 - **Plugins and connectors**: a short always-on list, with everything project-specific kept per project (see
@@ -86,7 +86,10 @@ Nothing to look at here, but it shapes every session:
    ```powershell
    winget install Anthropic.ClaudeCode Git.Git GitHub.cli OpenJS.NodeJS Python.Python.3.14
    npm i -g pnpm
+   winget install --id astral-sh.ruff -e
    ```
+
+   Then run `npm install` at the repo root (installs the pinned Biome for the mod lint hook).
 
 2. Run `claude` once and sign in, then `gh auth login`.
 3. Clone and install:
@@ -145,7 +148,7 @@ git -C C:/dev/claude-setup pull && powershell -ExecutionPolicy Bypass -File C:/d
 
 | In this repo | On the machine |
 | --- | --- |
-| `CLAUDE.md` | `~/.claude/CLAUDE.md` |
+| `global/CLAUDE.md` | `~/.claude/CLAUDE.md` |
 | `settings.json` | merged into `~/.claude/settings.json` (plugins, model and effort, skill overrides; see the merge rules below) |
 | `agents/*.md` | `~/.claude/agents/` |
 | `themes/*.json` | `~/.claude/themes/`; `custom:clear` is Claude Code's `dark` with `userMessageBackground` set to Campbell's background `#0c0c0c`, so the sticky prompt line at the top (the last prompt, once it scrolls away) has no grey bar. A typed `/command`'s echo row and the selected row in the background-tasks list lose their grey too. Its text stays the dim `subtle` grey and it has no border: Claude Code draws that one-row line itself, with no mod hook |

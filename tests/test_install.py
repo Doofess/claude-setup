@@ -72,10 +72,17 @@ class InstallerTest(unittest.TestCase):
 
     def test_installer_copies_the_themes_and_checks_the_file(self):
         text = read("install.ps1")
-        self.assertIn("Copy-Item (Join-Path $repo 'themes\*.json') $themesDir -Force", text)
+        self.assertIn(r"Copy-Item (Join-Path $repo 'themes\*.json') $themesDir -Force", text)
         row = [l for l in text.splitlines() if l.startswith("Add-SameRow 'Claude Code theme'")]
         self.assertEqual(len(row), 1)
         self.assertIn("$themeFileOk", row[0])
+
+    def test_installer_copies_the_global_rules_from_global_folder(self):
+        text = read("install.ps1")
+        self.assertIn(r"Join-Path $repo 'global\CLAUDE.md'", text)
+        self.assertNotIn("Join-Path $repo 'CLAUDE.md'", text)
+        self.assertTrue(read("global", "CLAUDE.md").startswith("# Global rules"))
+        self.assertFalse(read("CLAUDE.md").startswith("# Global rules"))
 
     def test_font_rows_require_no_font_on_the_default_profile(self):
         rows = [l for l in read("install.ps1").splitlines()
@@ -135,7 +142,7 @@ def installer_helpers():
     block = "\n".join(lines[start:end])
     for name in ("Find-JsoncKey", "Set-TerminalFont", "Set-TerminalScheme", "Read-TerminalLook"):
         assert "function %s" % name in block, name
-    m = re.search(r"^function Write-Utf8NoBom.*?^}", source, re.S | re.M)
+    m = re.search(r"^function Write-Utf8NoBom.*?^}", source, re.DOTALL | re.MULTILINE)
     assert m is not None, "Write-Utf8NoBom"
     writer = m.group(0)
     return writer + "\n" + block
@@ -148,7 +155,7 @@ def font_helpers():
     source = read("install.ps1").replace("\r\n", "\n")
     out = []
     for name in ("Get-NerdFontFiles", "Get-PrimaryFace", "Get-FaceFiles"):
-        m = re.search(r"^function %s.*?^}" % name, source, re.S | re.M)
+        m = re.search(r"^function %s.*?^}" % name, source, re.DOTALL | re.MULTILINE)
         assert m is not None, name
         out.append(m.group(0))
     return "\n".join(out)
@@ -335,7 +342,7 @@ class UserAdvisorTest(unittest.TestCase):
 
     def run_remove(self, settings):
         source = read("install.ps1").replace("\r\n", "\n")
-        m = re.search(r"^function Remove-UserAdvisor.*?^}", source, re.S | re.M)
+        m = re.search(r"^function Remove-UserAdvisor.*?^}", source, re.DOTALL | re.MULTILINE)
         self.assertIsNotNone(m, "Remove-UserAdvisor")
         with tempfile.TemporaryDirectory() as tmp:
             script = os.path.join(tmp, "remove.ps1")

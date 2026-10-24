@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusbar.py,statusline.py,keybindings.json} to ~/.claude/backups/claude-setup-<stamp>/
-  2. Copies CLAUDE.md, statusbar.py, themes/, skills/ and agents/ into ~/.claude
+  2. Copies global/CLAUDE.md, statusbar.py, themes/, skills/ and agents/ into ~/.claude
   3. Merges settings.json keys into the existing file (machine-local keys survive)
   4. Adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in enabledPlugins,
      updates them, then disables every plugin marked false
@@ -660,7 +660,7 @@ foreach ($f in 'CLAUDE.md', 'settings.json', 'statusbar.py', 'statusline.py', 'k
 
 # 2. Copy files
 Write-Step 'Copying CLAUDE.md, statusbar.py, themes/, skills/, agents/'
-Copy-Item (Join-Path $repo 'CLAUDE.md') $claudeDir -Force
+Copy-Item (Join-Path $repo 'global\CLAUDE.md') $claudeDir -Force
 Copy-Item (Join-Path $repo 'statusbar.py') $claudeDir -Force
 # Themes: settings.json selects custom:clear, which Claude Code reads from ~/.claude/themes/clear.json.
 $themesDir = Join-Path $claudeDir 'themes'

@@ -1,0 +1,7 @@
+{
+  "name": "claude-setup",
+  "private": true,
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3"
+  }
+}
