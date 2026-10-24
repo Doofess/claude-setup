@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { TurnRecord } from '../types'
+import { neon, NEON_MS } from './neon'
 
 export type { TurnRecord }
 
@@ -228,6 +229,9 @@ const agentTick = atom({ plugin: 'session-cards', key: 'agentTick' } as const, 0
 /** One run of the status bar's overflow: `colour` is a colour name, a hex string, or null for the default. */
 type Span = { text: string; colour: string | null; bold: boolean; underline?: boolean }
 
+/** Bumped every NEON_MS while a Fable subagent runs: the frame of chalk-animation's neon on its row. */
+const neonTick = atom({ plugin: 'session-cards', key: 'neonTick' } as const, 0)
+
 /** Bumped every minute so the hint line reads the overflow file again. */
 const overflowTick = atom({ plugin: 'session-cards', key: 'overflowTick' } as const, 0)
 
@@ -287,6 +291,13 @@ export const register: Register = on => {
     $.clock.every(1000, () => {
       if ([...agents.values()].some(a => a.finishedAt === undefined)) {
         return update($, agentTick, n => n + 1)
+      }
+    })
+
+    // A running Fable agent's row pulses (neon): one tick per frame.
+    $.clock.every(NEON_MS, () => {
+      if ([...agents.values()].some(a => a.finishedAt === undefined && familyOf(a.model ?? '') === 'fable')) {
+        return update($, neonTick, n => n + 1)
       }
     })
 
@@ -621,6 +632,9 @@ export const register: Register = on => {
       }
 
       const row = agentRow(record, now)
+      const pulsing = row.verb === 'Running' && familyOf(row.model ?? '') === 'fable'
+      const frame = pulsing ? await read($, neonTick) : 0
+      const modelStyle = pulsing ? neon(frame) : familyOf(row.model ?? '') === 'fable' ? { color: 'yellowBright', bold: true } : {}
       const mark = isInterrupted ? ' (stopped)' : isErrored ? ' ✗' : ''
       const tail = `   ${row.elapsed} · ${row.tokens}`
       const fixed =
@@ -639,7 +653,9 @@ export const register: Register = on => {
           </Text>
           <Text color="text">{` ${row.type}`}</Text>
           {row.model !== undefined && <Text color="text">{' · '}</Text>}
-          {row.model !== undefined && <Text color={modelColour(row.model) ?? 'text'}>{row.model}</Text>}
+          {row.model !== undefined && <Text color={modelColour(row.model) ?? 'text'} {...modelStyle}>
+              {row.model}
+            </Text>}
           {row.effort !== undefined && <Text color="text">{' · '}</Text>}
           {row.effort !== undefined && <Text color={effortColour(row.effort) ?? 'text'}>{row.effort}</Text>}
           <Text color="text">{`  ${cut(row.action, columns - fixed)}`}</Text>

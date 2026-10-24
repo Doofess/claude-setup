@@ -8,7 +8,7 @@ meter with tokens used out of the auto-compact point │ the 5-hour and 7-day pl
 time until each resets, each named 5H or 7D beside its icon │ cost │ how long the session has run. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
 short words (ctx, 5H, 7D, session) so the bar also reads in a font without the glyphs (the installer adds the flag
 on a machine with no Nerd Font). Colours are the terminal's own 16-colour palette, so the bar follows the
-terminal's scheme: cost green, the PR number yellow and underlined, the session time bright blue, each model (Opus in Claude orange) and each effort level its own colour. Everything else is sent as
+terminal's scheme: cost green, the PR number yellow and underlined, the session time bright blue, each model (Opus in Claude orange, Fable a gold gradient) and each effort level its own colour. Everything else is sent as
 exact 24-bit colours, never the terminal's default foreground (a light grey in most schemes): the chrome
 (separators, the place and model icons, branch, reset times) in pure white; the repo name in the
 violet Claude Code highlights with (its dark theme's `permission` colour, rgb 177,185,249); and the three
@@ -56,9 +56,13 @@ VIOLET = "38;2;177;185;249"
 WHITE = "38;2;255;255;255"
 # Opus is Claude orange (the dark theme's `claude` token), 24-bit so it matches exactly.
 CLAUDE_ORANGE = "38;2;215;119;87"
+# Fable is a gold gradient across its name, first letter to last (linear in RGB); the icon takes the first colour.
+FABLE_FROM = (255, 215, 0)  # #FFD700
+FABLE_TO = (255, 140, 0)  # #FF8C00
+FABLE_GOLD = "38;2;255;215;0"
 # One colour per model family and per effort level, from the terminal's 16 (Opus aside). Magenta, blue and red are their bright
 # variants: the plain ones are too dark to read on a black background (Campbell's blue is #0037DA).
-MODEL_COLOURS = {"opus": CLAUDE_ORANGE, "sonnet": 94, "haiku": 36, "fable": 93, "mythos": 92}  # Claude orange, bright blue, cyan, gold, bright green
+MODEL_COLOURS = {"opus": CLAUDE_ORANGE, "sonnet": 94, "haiku": 36, "fable": FABLE_GOLD, "mythos": 92}  # Claude orange, bright blue, cyan, gold gradient, bright green
 EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": 91, "xhigh": 95, "max": 97}  # a heat ramp: green, yellow, bright red, bright magenta, white-hot
 BLOCK = "█"
 # Meter levels: (filled colour, unfilled colour) as 24-bit SGR parameters. The unfilled part is the same hue at
@@ -340,6 +344,24 @@ def model_colour(name: str) -> int | str | None:
     return next((code for family, code in MODEL_COLOURS.items() if family in lowered), None)
 
 
+def gradient(text: str, start: tuple[int, int, int], end: tuple[int, int, int]) -> str:
+    """text with each character its own 24-bit colour, linear in RGB from start (first) to end (last); one reset at the end."""
+    last = max(len(text) - 1, 1)
+    parts = []
+    for i, char in enumerate(text):
+        r, g, b = (round(a + (z - a) * i / last) for a, z in zip(start, end))
+        parts.append(f"[38;2;{r};{g};{b}m{char}")
+    return "".join(parts) + "[0m"
+
+
+def model_text(name: str) -> str:
+    """The model name in bold, in its family colour: Fable's name as its gold gradient."""
+    colour = model_colour(name)
+    if colour == FABLE_GOLD:
+        return sgr(BOLD, gradient(name, FABLE_FROM, FABLE_TO))
+    return sgr(BOLD, _coloured(name, colour))
+
+
 def effort_colour(level: str) -> int | None:
     return EFFORT_COLOURS.get(level.lower())
 
@@ -400,7 +422,7 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
         out.append((_mark(marks, "pr", sgr(UNDERLINE, sgr(YELLOW, f"#{number}")), YELLOW), P_PR, G_PLACE))
     if name:
         colour = model_colour(str(name))
-        out.append((_mark(marks, "model", sgr(BOLD, _coloured(str(name), colour)), colour), 0, G_MODEL))
+        out.append((_mark(marks, "model", model_text(str(name)), colour), 0, G_MODEL))
         if effort:
             out.append((_coloured(str(effort), effort_colour(str(effort))), P_EFFORT, G_MODEL))
 

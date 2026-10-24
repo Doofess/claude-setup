@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
+import { neon, NEON_MS } from '../hooks/neon'
 import { effortColour, fmtElapsed, fmtTokens, modelColour } from '../hooks/register'
 
 type On = Parameters<Parameters<typeof test>[1]>[1]
@@ -62,10 +63,11 @@ const engine = (
   on: On,
   stepResult: { toolUses?: { name: string; input: unknown }[]; usage?: object | null } = {},
   agentResult: object = { status: 'completed' },
+  model = 'claude-sonnet-5-5',
 ) => {
   on('session.cwd', () => ({ value: 'C:/dev' }))
   on('tool.call', { tool: 'Agent' }, () => ({ ref: 'r', text: '', result: agentResult }) as never)
-  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('agent.spawn', () => ({ model, agentId: 'a1' }))
   on('turn.step', async function* () {
     return {
       turnId: 'u1',
@@ -392,4 +394,62 @@ test('a step without usage or tool uses leaves the row as it was', async ($, on)
   const ui = await $.ui.mount(ROW(TU))
   expect(await line(ui)).toBe(' Running worker · Sonnet · high  Implement Task 1   0s · 0')
   await ui.unmount()
+})
+
+test('neon is the chalk-animation neon effect in Fable gold', () => {
+  expect(NEON_MS).toBe(500)
+  expect(neon(0)).toEqual({ color: 'yellowBright', bold: false, dimColor: true })
+  expect(neon(1)).toEqual({ color: 'yellowBright', bold: true, dimColor: false })
+  expect(neon(2)).toEqual(neon(0))
+})
+
+const modelText = async (ui: Awaited<ReturnType<Raise['ui']['mount']>>, name: RegExp) => (await ui.find({ type: 'Text', text: name }))?.props
+
+test('a running Fable row pulses dim and bold, a finished one is plain bold, Opus is unaffected', async ($, on) => {
+  const time = mock.clock(on)
+  engine(on, {}, { status: 'completed' }, 'claude-fable-5-1')
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  const { agentId } = await spawn($)
+  await step($, agentId as string)
+
+  const at0 = await $.ui.mount(ROW(TU))
+  expect(await modelText(at0, /Fable/)).toMatchObject({ color: 'yellowBright', dimColor: true })
+  await at0.unmount()
+
+  await time.advance(NEON_MS)
+  const at1 = await $.ui.mount(ROW(TU))
+  expect(await modelText(at1, /Fable/)).toMatchObject({ color: 'yellowBright', bold: true })
+  expect((await modelText(at1, /Fable/))?.dimColor).toBeFalsy()
+  await at1.unmount()
+
+  await finish($, agentId as string)
+  for (let i = 0; i < 2; i++) {
+    await time.advance(NEON_MS)
+    const done = await $.ui.mount(ROW(TU, { isRunning: false }))
+    const props = await modelText(done, /Fable/)
+    expect(props).toMatchObject({ color: 'yellowBright', bold: true })
+    expect(props?.dimColor).toBeFalsy()
+    await done.unmount()
+  }
+})
+
+test('an Opus row does not pulse', async ($, on) => {
+  const time = mock.clock(on)
+  engine(on, {}, { status: 'completed' }, 'claude-opus-5-5')
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  const { agentId } = await spawn($)
+  await step($, agentId as string)
+  for (const n of [0, 1]) {
+    if (n) await time.advance(NEON_MS)
+    const ui = await $.ui.mount(ROW(TU))
+    const props = await modelText(ui, /Opus/)
+    expect(props?.color).toBe('claude')
+    expect(props?.dimColor).toBeFalsy()
+    expect(props?.bold).toBeFalsy()
+    await ui.unmount()
+  }
 })

@@ -14,7 +14,7 @@ The line along the bottom of Claude Code, read left to right:
 
 - **Where you are**: the repo (GitHub in violet, GitLab in its orange with its own icon, read from the origin remote), the branch, and the open PR's number, if there is one, yellow and underlined.
 - **Who is working**: the model and the effort level. Each model and each effort level has its own colour, so you can
-  tell at a glance whether you're on Opus (Claude orange) or Sonnet, at high or medium.
+  tell at a glance whether you're on Opus (Claude orange) or Sonnet, at high or medium. Fable's name is a gold gradient, and a running Fable subagent's row pulses.
 - **How full the context is**: a meter that reaches 100% at the auto-compact point (about 267k of the 300k window), not
   at the end of the window. When it's full, it's time to `/clear`.
 - **How much plan is left**: the 5-hour and 7-day usage meters, each with the time until it resets.
