@@ -4,7 +4,7 @@ My Claude Code setup, kept in git so every PC I use looks and behaves the same. 
 Windows machine: global rules, agents, plugins, a custom status bar, a mod that tidies the conversation view, and the
 terminal's font and colours.
 
-![The status bar: repo, branch, PR, model and effort, context meter, 5-hour and 7-day plan meters, cost](docs/images/statusbar.png)
+![The status bar: repo, branch, PR, model and effort, context meter, 5-hour and 7-day plan meters, cost, session time](docs/images/statusbar.png)
 
 ## What you see
 
@@ -31,12 +31,12 @@ the plan meters. Repo, branch, model and context always stay; on a very narrow w
 letters of its name. Once the line fits, any dropped piece that still fits comes back, so
 no room is wasted:
 
-<img src="docs/images/statusbar-narrow.png" width="364" alt="The bar at 60 columns: only branch, model, effort and context remain">
+<img src="docs/images/statusbar-narrow.png" width="380" alt="The bar at 60 columns: the repo cut to claude-s…, then branch, model and context">
 
 Dropped pieces aren't lost. The session-cards mod (below) moves them onto Claude Code's hint line, beside the
 permissions text, so a piece only disappears once both lines are full:
 
-![At 104 columns the bar keeps branch, model, context and plan meters; the repo, the 5-hour reset and the cost move onto the hint line](docs/images/hint-overflow.png)
+![At 104 columns the bar keeps repo, branch, model, effort, context and the 5-hour meter; the 5-hour reset, the 7-day meter and the cost move onto the hint line](docs/images/hint-overflow.png)
 
 The icons come from a Nerd Font. On a machine without one, the installer switches the bar to short words instead
 (`ctx`, `5H`, `7D`), so it reads fine in any monospace font. To see the bar without starting Claude Code, run
@@ -48,6 +48,8 @@ The icons come from a Nerd Font. On a machine without one, the installer switche
 
 - **Your prompts** become a coloured card headed with the time you sent them, so you can find your own messages again.
 - **Slash-command output** gets a violet card of its own.
+- **The end of each turn** is a coloured line with how long it took and when it finished (`✻ Baked for 1s · done 4:20 PM`).
+  While a background shell or agent still runs, Claude Code's own line stays, since only it knows when they end.
 - **Tool calls** shrink to one short row each: an icon and a few words. Runs of reads, searches and shell commands
   keep Claude Code's own one-line summary ("Searched for 1 pattern, read 1 file…"), as in the picture below.
 - **Agents** get a row showing the agent type, its model and effort (in the same colours as the status bar), what it's
