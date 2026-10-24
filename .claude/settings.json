@@ -20,5 +20,19 @@
     "computer-use": "off",
     "underwater-photoshop": "off",
     "claude-api": "off"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_edit.py\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
   }
 }
