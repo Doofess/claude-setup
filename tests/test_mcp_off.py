@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import mcp_off  # noqa: E402
+import mcp_off
 
 ADOBE = "claude.ai Adobe"
 

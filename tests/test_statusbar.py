@@ -11,7 +11,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-import statusbar  # noqa: E402
+import statusbar
 
 
 def hue_family(code):
@@ -499,8 +499,8 @@ class RowTest(unittest.TestCase):
     def test_fable_is_a_gold_gradient(self):
         raw = statusbar.fit(self.demo_row(model={"id": "claude-fable-5-1", "display_name": "Fable 5.1"}), 200)
         self.assertIn(statusbar.sgr("38;2;255;215;0", statusbar.ICONS["model"] + " "), raw)
-        self.assertIn("[38;2;255;215;0mF", raw)
-        self.assertIn("[38;2;255;140;0m1", raw)
+        self.assertIn("\x1b[38;2;255;215;0mF", raw)
+        self.assertIn("\x1b[38;2;255;140;0m1", raw)
         self.assertEqual(statusbar.plain(raw).count("Fable 5.1"), 1)
         self.assertEqual(statusbar.spans(statusbar.model_text("Fable 5.1"))[0]["colour"], "#ffd700")
         self.assertTrue(all(span["bold"] for span in statusbar.spans(statusbar.model_text("Fable 5.1"))))
@@ -566,7 +566,7 @@ class RowTest(unittest.TestCase):
         text = statusbar.fit(self.demo_row(), 200)
         allowed = {"0", "1", "4", statusbar.VIOLET, statusbar.WHITE, statusbar.ERROR_RED, "38;2;215;119;87"} | {str(c) for c in range(30, 38)} | {str(c) for c in range(90, 98)}
         allowed |= {code for pair in statusbar.LEVELS.values() for code in pair}
-        allowed |= set(re.findall(r"\[([0-9;]+)m", statusbar.model_text("Fable 5.1")))
+        allowed |= set(re.findall(r"\x1b\[([0-9;]+)m", statusbar.model_text("Fable 5.1")))
         self.assertEqual(set(re.findall(r"\x1b\[([0-9;]+)m", text)) - allowed, set())
 
 

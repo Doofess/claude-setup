@@ -86,7 +86,10 @@ Nothing to look at here, but it shapes every session:
    ```powershell
    winget install Anthropic.ClaudeCode Git.Git GitHub.cli OpenJS.NodeJS Python.Python.3.14
    npm i -g pnpm
+   winget install --id astral-sh.ruff -e
    ```
+
+   Then run `npm install` at the repo root (installs the pinned Biome for the mod lint hook).
 
 2. Run `claude` once and sign in, then `gh auth login`.
 3. Clone and install:

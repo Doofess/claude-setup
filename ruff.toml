@@ -1,0 +1,25 @@
+line-length = 120
+target-version = "py313"
+
+[lint]
+ignore = [
+    "PLW1510",  # subprocess.run without check=: callers read returncode themselves; adding check would change behaviour
+    "UP031",    # percent formatting in the installer tests; rewriting is churn, not a bug
+    "BLE001",   # blind except in statusbar.py is deliberate (the status line must never crash)
+    "S110",     # try/except/pass in statusbar.py is deliberate for the same reason
+    "RUF012",   # mutable class attribute in a test fixture; changing it risks shared-state behaviour
+    "RUF059",   # unused unpacked variable in a test; the unpacking documents the tuple shape
+    "TRY004",   # advisor.py raises ValueError by design; TypeError would change what callers catch
+]
+
+[lint.per-file-ignores]
+# Paid-work scripts: config ignores only, no edits allowed there.
+"skills/underwater-photoshop/**" = [
+    "B023",   # loop-variable closure; fixing would change code
+    "C408",   # dict() calls
+    "F401",   # unused import
+    "F811",   # duplicate import
+    "I001",   # import order
+    "RUF017", # list summation
+    "SIM115", # open() without context manager
+]
