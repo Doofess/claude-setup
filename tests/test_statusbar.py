@@ -56,6 +56,8 @@ class FormatTest(unittest.TestCase):
         self.assertEqual(statusbar.level_colours(50), statusbar.LEVELS["yellow"])
         self.assertEqual(statusbar.level_colours(70), statusbar.LEVELS["orange"])
         self.assertEqual(statusbar.level_colours(90), statusbar.LEVELS["red"])
+        # the orange level is Opus's Claude orange, its track a third as bright
+        self.assertEqual(statusbar.LEVELS["orange"], (statusbar.CLAUDE_ORANGE, "38;2;72;40;29"))
         self.assertEqual(len({v for v in statusbar.LEVELS.values()}), 4)
 
     def test_cells_ignores_colour_codes(self):
