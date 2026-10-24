@@ -124,6 +124,73 @@ class BranchTest(unittest.TestCase):
         self.assertIsNone(statusbar.branch(os.path.join(self.tmp, "repo/src"), stop_dir=os.path.join(self.tmp, "repo/src")))
 
 
+class OriginRemoteTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def write(self, rel, text):
+        p = os.path.join(self.tmp, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def remote(self, url, rel="repo"):
+        self.write(rel + "/.git/config", "[core]\n\tbare = false\n[remote \"upstream\"]\n\turl = https://x.org/no/pe\n"
+                   "[remote \"origin\"]\n\turl = " + url + "\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n")
+        return statusbar.origin_remote(os.path.join(self.tmp, rel))
+
+    def test_gitlab_with_subgroups(self):
+        self.assertEqual(self.remote("https://gitlab.com/grp/sub/proj.git"), ("gitlab", "grp/sub/proj"))
+
+    def test_github_scp_style(self):
+        self.assertEqual(self.remote("git@github.com:Doofess/claude-setup.git"), ("github", "Doofess/claude-setup"))
+
+    def test_self_hosted_gitlab(self):
+        self.assertEqual(self.remote("https://gitlab.example.org/a/b"), ("gitlab", "a/b"))
+
+    def test_ssh_url_with_port(self):
+        self.assertEqual(self.remote("ssh://git@gitlab.example.org:2222/a/b.git"), ("gitlab", "a/b"))
+
+    def test_other_host(self):
+        self.assertEqual(self.remote("https://bitbucket.org/a/b"), ("other", "a/b"))
+
+    def test_linked_worktree_resolves_through_commondir(self):
+        self.remote("https://gitlab.com/a/b.git", "main")
+        self.write("main/.git/worktrees/wt/commondir", "../..\n")
+        self.write("wt/.git", "gitdir: " + os.path.join(self.tmp, "main/.git/worktrees/wt") + "\n")
+        os.makedirs(os.path.join(self.tmp, "wt/src"))
+        self.assertEqual(statusbar.origin_remote(os.path.join(self.tmp, "wt/src")), ("gitlab", "a/b"))
+
+    def test_no_repo(self):
+        os.makedirs(os.path.join(self.tmp, "empty"))
+        self.assertIsNone(statusbar.origin_remote(os.path.join(self.tmp, "empty/none"), stop_dir=os.path.join(self.tmp, "empty")))
+
+    def test_repo_without_origin(self):
+        self.write("repo/.git/config", "[core]\n\tbare = false\n")
+        self.assertIsNone(statusbar.origin_remote(os.path.join(self.tmp, "repo")))
+
+    def test_gitlab_repo_renders_with_gitlab_icon_and_orange(self):
+        self.remote("https://gitlab.com/grp/proj.git")
+        data = {"workspace": {"current_dir": os.path.join(self.tmp, "repo")}}
+        raw = statusbar.fit(statusbar.segments(data, {}, 0, [], None), 200)
+        orange = "38;2;252;109;38"
+        self.assertIn(statusbar.sgr(orange, "\uf296 "), raw)
+        self.assertIn(statusbar.sgr(orange, "grp/proj"), raw)
+        self.assertEqual([span["colour"] for span in statusbar.spans(raw) if "grp/proj" in span["text"]], ["#fc6d26"])
+
+    def test_workspace_repo_with_a_gitlab_origin_takes_the_gitlab_look(self):
+        self.remote("https://gitlab.com/grp/proj.git")
+        data = {"workspace": {"current_dir": os.path.join(self.tmp, "repo"), "repo": "me/other"}}
+        raw = statusbar.fit(statusbar.segments(data, {}, 0, [], None), 200)
+        self.assertIn(statusbar.sgr("38;2;252;109;38", "me/other"), raw)
+
+    def test_labels_keep_the_bare_name(self):
+        self.remote("https://gitlab.com/grp/proj.git")
+        data = {"workspace": {"current_dir": os.path.join(self.tmp, "repo")}}
+        self.assertTrue(statusbar.plain(statusbar.fit(statusbar.segments(data, {}, 0, [], None, icons=False), 200)).startswith("grp/proj "))
+
+
 class RowTest(unittest.TestCase):
     NOW = 1_700_000_000
     MARKERS = {  # what to look for in the plain row, in the order the pieces should disappear when the terminal narrows

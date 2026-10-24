@@ -12,7 +12,7 @@ terminal's font and colours.
 
 The line along the bottom of Claude Code, read left to right:
 
-- **Where you are**: the GitHub repo, the branch, and the open PR, if there is one.
+- **Where you are**: the repo (GitHub in violet, GitLab in its orange with its own icon, read from the origin remote), the branch, and the open PR, if there is one.
 - **Who is working**: the model and the effort level. Each model and each effort level has its own colour, so you can
   tell at a glance whether you're on Opus or Sonnet, at high or medium.
 - **How full the context is**: a meter that reaches 100% at the auto-compact point (about 267k of the 300k window), not

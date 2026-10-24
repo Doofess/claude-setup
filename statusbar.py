@@ -223,6 +223,58 @@ def branch(start_dir: str, stop_dir: str | None = None) -> str | None:
     return head[:7]
 
 
+def _remote_url(config_text: str) -> str | None:
+    """The url of [remote "origin"] in a git config file's text (a line parser: configparser chokes on subsections)."""
+    in_origin = False
+    for line in config_text.splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            in_origin = re.fullmatch(r'\[\s*remote\s+"origin"\s*\]', line) is not None
+        elif in_origin:
+            key, _, value = line.partition("=")
+            if key.strip().lower() == "url" and value.strip():
+                return value.strip()
+    return None
+
+
+def origin_remote(cwd: str, stop_dir: str | None = None) -> tuple[str, str] | None:
+    """(host kind, "owner/name") of the origin remote, read from the git config without git; None on any failure.
+
+    host kind is "github", "gitlab" (gitlab.com or a host with "gitlab" in its name) or "other". A linked worktree's
+    .git file leads to its gitdir and that gitdir's commondir, which holds the config. stop_dir ends the walk up
+    from cwd after looking there (tests use it)."""
+    try:
+        here = os.path.abspath(cwd)
+        stop = os.path.abspath(stop_dir) if stop_dir else None
+        while not os.path.exists(os.path.join(here, ".git")):
+            parent = os.path.dirname(here)
+            if parent == here or here == stop:
+                return None
+            here = parent
+        git = os.path.join(here, ".git")
+        if os.path.isfile(git):
+            pointer = _read_small(git) or ""
+            if not pointer.startswith("gitdir:"):
+                return None
+            git = os.path.join(here, pointer[len("gitdir:"):].strip())
+            common = _read_small(os.path.join(git, "commondir"))
+            if common:
+                git = os.path.join(git, common)
+        with open(os.path.join(git, "config"), encoding="utf-8", errors="replace") as f:
+            url = _remote_url(f.read())
+        match = url and (re.fullmatch(r"[\w+.-]+://(?:[^@/]*@)?([^/:]+)(?::\d+)?/(.+)", url)
+                         or re.fullmatch(r"(?:[^@/:]+@)?([^/:]+):(?!//)(.+)", url))
+        if not match:
+            return None
+        host, path = match.group(1).lower(), match.group(2).strip("/").removesuffix(".git")
+        if not path:
+            return None
+        kind = "github" if host == "github.com" else "gitlab" if host == "gitlab.com" or "gitlab" in host else "other"
+        return kind, path
+    except (OSError, ValueError):
+        return None
+
+
 MARGIN = 4  # cells Claude Code keeps for its own spacing around the status line
 DEFAULT_COLUMNS = 120
 SEPARATOR = sgr(WHITE, " │ ")  # separators, icons and labels are explicit white: no grey text
@@ -240,7 +292,10 @@ GROUP_JOIN = {G_MODEL: sgr(WHITE, " · ")}  # "Opus · high"; every other group 
 # by a space because the non-Mono Nerd Font variants draw it wider than one cell and it would overlap the text.
 ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "pr": "\uf407", "model": "\uf2db", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073"}
 LABELS = {"ctx": "ctx", "5h": "5H", "7d": "7D"}
-ICONS_RE = re.compile("[" + "".join(ICONS.values()) + "]")
+GITLAB = "38;2;252;109;38"  # #FC6D26, GitLab's orange
+# The repo piece's icon and colour by host kind (origin_remote): GitHub, GitLab, and the plain git glyph for the rest.
+REPO_LOOKS = {"github": (ICONS["repo"], VIOLET), "gitlab": ("", GITLAB), "other": ("", VIOLET)}
+ICONS_RE = re.compile("[" + "".join(ICONS.values()) + "".join(icon for icon, _ in REPO_LOOKS.values()) + "]")
 
 
 def _dict(value) -> dict:
@@ -295,13 +350,18 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     """The whole line as segments, in display order; icons=False uses the text labels."""
     out: list[Segment] = []
     marks = ICONS if icons else LABELS
-    repo = _repo_name(_dict(data.get("workspace")).get("repo"))
+    workspace = _dict(data.get("workspace"))
+    repo = _repo_name(workspace.get("repo"))
+    remote = origin_remote(str(workspace.get("current_dir") or os.getcwd()))
+    repo = repo or (remote[1] if remote else None)
+    kind = remote[0] if remote else "github"  # Claude Code fills workspace.repo for GitHub only
     number = _dict(data.get("pr")).get("number")
     model = _dict(data.get("model"))
     name = model.get("display_name") or model.get("id")
     effort = _dict(data.get("effort")).get("level")
     if repo:
-        out.append((_mark(marks, "repo", sgr(VIOLET, repo), VIOLET), P_REPO, G_PLACE))
+        icon, colour = REPO_LOOKS[kind]
+        out.append((_mark({"repo": icon} if marks is ICONS else marks, "repo", sgr(colour, repo), colour), P_REPO, G_PLACE))
     if branch_name:
         out.append((_mark(marks, "branch", sgr(WHITE, branch_name)), 0, G_PLACE))
     if number:
