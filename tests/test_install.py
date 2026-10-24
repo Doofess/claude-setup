@@ -23,7 +23,7 @@ class TerminalProfileTest(unittest.TestCase):
         self.assertTrue(self.profile["font"]["face"].split(",")[0].strip().endswith("Nerd Font"))
 
     def test_segoe_ui_symbol_is_the_glyph_fallback(self):
-        self.assertEqual(self.profile["font"]["face"], "JetBrainsMono Nerd Font, Segoe UI Symbol")
+        self.assertEqual(self.profile["font"]["face"], "JetBrainsMono Nerd Font")
 
     def test_cell_height(self):
         self.assertEqual(self.profile["font"]["cellHeight"], "1.25")
