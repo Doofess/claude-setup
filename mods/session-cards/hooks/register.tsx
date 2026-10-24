@@ -15,10 +15,6 @@ export function promptText(text: string): string {
   return text.replace(WRAPPER, '')
 }
 
-/** A prompt that runs a slash command: `/name` first, then a space or the end. A path such as `/c/dev …` is not one. */
-export function isSlashCommand(text: string): boolean {
-  return /^\/[A-Za-z0-9:_-]+(\s|$)/.test(promptText(text).trimStart())
-}
 
 /** `HH:MM`, 24-hour, in the machine's local time. */
 export function clock(ms: number): string {
@@ -500,8 +496,9 @@ export const register: Register = on => {
     const line = turnLine(record)
     const { Box, Text } = $.ui.resolve(e)
 
+    // The engine's line keeps a blank line above it; the row it replaces is that whole line.
     return (
-      <Box flexDirection="row" width="100%">
+      <Box flexDirection="row" width="100%" marginTop={1}>
         <Box minWidth={2}>
           <Text color="claude">✻</Text>
         </Box>
@@ -560,14 +557,11 @@ export const register: Register = on => {
       }
     }
 
-    // A slash command is a card of its own, in the permission violet.
-    const command = isSlashCommand(text)
-    const colour = command ? 'permission' : 'claude'
-    const header = `  ${command ? 'You ran' : 'You prompted'}${at === null ? '' : ` · ${clock(at)}`}`
+    const header = `  You prompted${at === null ? '' : ` · ${clock(at)}`}`
 
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={colour} paddingX={1}>
-        <Text color={colour} bold>
+      <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
+        <Text color="claude" bold>
           {header}
         </Text>
         <Text>{promptText(text)}</Text>

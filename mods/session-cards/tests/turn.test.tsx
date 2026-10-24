@@ -70,8 +70,9 @@ test('a finished turn is coloured', async ($, on) => {
   expect(parts[3]?.props.color).toBe('success')
   expect(await ui.find({ type: 'Text', text: /still running/ })).toBeUndefined()
 
-  // The ✻ sits in a cell two wide, in a row, as the engine lays it out.
+  // The ✻ sits in a cell two wide, in a row a blank line below the reply, as the engine lays it out.
   expect((await ui.find({ type: 'Box' }))?.props.flexDirection).toBe('row')
+  expect((await ui.find({ type: 'Box' }))?.props.marginTop).toBe(1)
   await ui.unmount()
 })
 
