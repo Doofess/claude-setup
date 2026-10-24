@@ -8,9 +8,10 @@ meter with tokens used out of the auto-compact point │ the 5-hour and 7-day pl
 time until each resets, each named 5H or 7D beside its icon │ cost │ how long the session has run. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
 short words (ctx, 5H, 7D, session) so the bar also reads in a font without the glyphs (the installer adds the flag
 on a machine with no Nerd Font). Colours are the terminal's own 16-colour palette, so the bar follows the
-terminal's scheme: cost green, the session time bright blue, each model (Opus in Claude orange, Fable a gold gradient) and each effort level its own colour. Everything else is sent as
+terminal's scheme: cost green, the session time bright blue, each model (Opus in Claude orange, Fable a gold gradient) and each effort level its own colour (xhigh and max
+held still as the /effort picker animates them: a violet shimmer and a rainbow). Everything else is sent as
 exact 24-bit colours, never the terminal's default foreground (a light grey in most schemes): the chrome
-(separators, the place and model icons, branch, reset times) in pure white; the repo name in the
+(separators, the place and model icons, branch name, reset times) in pure white, the branch icon in the meters' yellow; the repo name in the
 violet Claude Code highlights with (its dark theme's `permission` colour, rgb 177,185,249); and the three
 8-cell meters, whose icon, figures, filled blocks and (darker) unfilled blocks all take the meter's level:
 green below 50%, yellow from 50, orange from 70, red from 90. Nothing is grey.
@@ -65,7 +66,12 @@ FABLE_GOLD = "38;2;255;215;0"
 # One colour per model family and per effort level, from the terminal's 16 (Opus aside). Magenta, blue and red are their bright
 # variants: the plain ones are too dark to read on a black background (Campbell's blue is #0037DA).
 MODEL_COLOURS = {"opus": CLAUDE_ORANGE, "sonnet": 94, "haiku": 36, "fable": FABLE_GOLD, "mythos": 92}  # Claude orange, bright blue, cyan, gold gradient, bright green
-EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": ERROR_RED, "xhigh": 95, "max": 97}  # a heat ramp: green, yellow, Claude's error red, bright magenta, white-hot
+# xhigh and max are still frames of the /effort picker's animations (dark theme, 24-bit): xhigh's autoAccept violet
+# shimmer with the light on its middle letter, and max's rainbow, which starts at the bolt and runs on through the word.
+AUTO_ACCEPT = "38;2;175;135;255"
+SHIMMER = "38;2;208;180;255"
+RAINBOW = ["38;2;235;95;87", "38;2;245;139;87", "38;2;250;195;95", "38;2;145;200;130"]  # red, orange, yellow, green
+EFFORT_COLOURS = {"low": GREEN, "medium": YELLOW, "high": ERROR_RED, "xhigh": AUTO_ACCEPT, "max": RAINBOW[0]}  # the bolt's colour
 BLOCK = "█"
 # Meter levels: (filled colour, unfilled colour) as 24-bit SGR parameters. The unfilled part is the same hue at
 # a third of the brightness, drawn with the same solid block, so the bar reads as one coloured bar with a dark
@@ -371,6 +377,17 @@ def effort_colour(level: str) -> int | str | None:
     return EFFORT_COLOURS.get(level.lower())
 
 
+def effort_text(level: str) -> str:
+    """The effort level in its colour; xhigh and max letter by letter, as the /effort picker draws them, held still."""
+    lowered = level.lower()
+    if lowered == "xhigh":
+        middle = len(level) // 2
+        return "".join(sgr(SHIMMER if i == middle else AUTO_ACCEPT, char) for i, char in enumerate(level))
+    if lowered == "max":
+        return "".join(sgr(RAINBOW[1 + i % 3], char) for i, char in enumerate(level))
+    return _coloured(level, effort_colour(level))
+
+
 def _coloured(text: str, colour: int | str | None) -> str:
     return sgr(colour, text) if colour else text
 
@@ -421,14 +438,15 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
         repo = short_repo(repo, cells(repo) - repo_shrink) if repo_shrink > 0 else repo
         out.append((_mark({"repo": icon} if marks is ICONS else marks, "repo", sgr(colour, repo), colour), 0, G_PLACE))
     if branch_name:
-        out.append((_mark(marks, "branch", sgr(WHITE, branch_name)), 0, G_PLACE))
+        # The branch icon is the meters' yellow; the name stays white.
+        out.append((_mark(marks, "branch", sgr(WHITE, branch_name), LEVELS["yellow"][0]), 0, G_PLACE))
     if name:
         colour = model_colour(str(name))
         out.append((_mark(marks, "model", model_text(str(name)), colour), 0, G_MODEL))
         if effort:
             level = effort_colour(str(effort))
             # The bolt takes the level's colour; the --labels dot stays white.
-            out.append((_mark(marks, "effort", _coloured(str(effort), level), level if marks is ICONS else None), 0, G_MODEL))
+            out.append((_mark(marks, "effort", effort_text(str(effort)), level if marks is ICONS else None), 0, G_MODEL))
 
     window = _dict(data.get("context_window"))
     used = int(_num(window.get("total_input_tokens")))
