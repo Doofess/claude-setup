@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOKS = os.path.join(ROOT, ".claude", "hooks")
@@ -64,6 +65,7 @@ class CheckEditTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="hook test ")
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        git(self.tmp, "init", "-q")
 
     def edit(self, name, text):
         path = write(self.tmp, name, text)
@@ -110,6 +112,39 @@ class CheckEditTest(unittest.TestCase):
         self.assertIn("noDebugger", err)
 
     @unittest.skipUnless(HAS_BIOME, "needs node and Biome")
+    def test_mod_lint_shows_the_errors_not_the_config_notice(self):
+        # Biome's notices and warnings came first and the 30-line cap cut off the errors behind exit 2.
+        mods = os.path.join(ROOT, "mods", "_hook_test_tmp2")
+        self.addCleanup(shutil.rmtree, mods, True)
+        os.makedirs(mods)
+        path = os.path.join(mods, "bad.tsx")
+        with open(path, "w", newline="\n") as f:
+            f.write("const unused: any = 1\ndebugger;\nif (Math.random() == 1) {}\n")
+        code, _, err = run_hook(CHECK_EDIT, {"tool_input": {"file_path": path}, "cwd": ROOT})
+        self.assertEqual(code, 2)
+        self.assertIn("noDebugger", err)
+        self.assertIn("noDoubleEquals", err)
+        self.assertNotIn("deprecated", err)
+
+    @unittest.skipIf(HAS_RUFF is False and HAS_PS is False, "needs ruff or powershell.exe")
+    def test_files_outside_a_git_repo_pass(self):
+        # Scratch scripts (a temp folder, the session scratchpad) are not this repo's code.
+        scratch = tempfile.mkdtemp(prefix="scratch ")
+        self.addCleanup(shutil.rmtree, scratch, True)
+        for name, text in (("s.ps1", "$x ??= 1\n"), ("s.py", "import os\n")):
+            path = write(scratch, name, text)
+            code, _, err = run_hook(CHECK_EDIT, {"tool_input": {"file_path": path}, "cwd": scratch})
+            self.assertEqual((code, err), (0, ""), name)
+
+    def test_tool_output_is_read_as_utf8(self):
+        # Biome's box lines are not in cp1252; a desktop on the default code page would fail to decode them.
+        mod = load(CHECK_EDIT, "check_edit")
+        seen = {}
+        with mock.patch.object(mod.subprocess, "run", lambda *a, **k: seen.update(k)):
+            mod.run(["x"])
+        self.assertEqual((seen.get("encoding"), seen.get("errors")), ("utf-8", "replace"))
+
+    @unittest.skipUnless(HAS_BIOME, "needs node and Biome")
     def test_ts_outside_mods_passes(self):
         code, _, _ = self.edit("x.ts", "debugger;\n")
         self.assertEqual(code, 0)
@@ -131,6 +166,27 @@ class StopTestsTest(unittest.TestCase):
         self.assertEqual(self.mod.fingerprint(self.repo), before)
         write(self.repo, "tests/test_ok.py", "# edited\n")
         self.assertNotEqual(self.mod.fingerprint(self.repo), before)
+
+    def test_fingerprint_sees_the_config_the_tests_read(self):
+        for rel in ("settings.json", "themes/clear.json", "terminal/profile.json", "global/CLAUDE.md", "CLAUDE.md", "ruff.toml"):
+            before = self.mod.fingerprint(self.repo)
+            write(self.repo, rel, "x\n")
+            self.assertNotEqual(self.mod.fingerprint(self.repo), before, rel)
+
+    def test_config_runs_the_python_suite_and_docs_run_nothing(self):
+        for rel in ("settings.json", "global/CLAUDE.md", "themes/clear.json"):
+            self.assertEqual(len(self.mod.suites(self.repo, [rel])), 1, rel)
+            self.assertIn("unittest", self.mod.suites(self.repo, [rel])[0])
+        self.assertEqual([c[1] for c in self.mod.suites(self.repo, ["mods/session-cards/.claude-plugin/plugin.json"])], ["plugin"])
+        self.assertEqual(self.mod.changed_paths(self.repo), [])
+        write(self.repo, "docs/notes.md", "x\n")
+        self.assertEqual(self.mod.changed_paths(self.repo), [])
+
+    def test_suite_output_is_read_as_utf8(self):
+        seen = {}
+        with mock.patch.object(self.mod.subprocess, "run", lambda *a, **k: seen.update(k) or subprocess.CompletedProcess(a, 0, "", "")):
+            self.mod.run_suite(["x"], self.repo)
+        self.assertEqual((seen.get("encoding"), seen.get("errors")), ("utf-8", "replace"))
 
     def test_fingerprint_sees_untracked_code(self):
         before = self.mod.fingerprint(self.repo)

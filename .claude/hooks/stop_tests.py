@@ -10,13 +10,14 @@ import sys
 
 MAX_LINES = 30
 MOD = "mods/session-cards"
-WATCHED = ("*.py", "*.ps1", "mods/*", "tests/*")
+# Code, and the config files the tests read (the global settings template, themes, terminal profile, CLAUDE.md).
+WATCHED = ("*.py", "*.ps1", "*.json", "*.toml", "CLAUDE.md", "global/*", "themes/*", "terminal/*", "mods/*", "tests/*")
 PYTHON_SUITE = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"]
 MOD_SUITE = ["claude", "plugin", "test", MOD]
 
 
 def git(root, *args):
-    p = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
+    p = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
     return p.stdout if p.returncode == 0 else ""
 
 
@@ -51,7 +52,8 @@ def fingerprint(root):
 
 def suites(root, changed):
     out = []
-    if any(c.endswith((".py", ".ps1")) or c.startswith("tests/") for c in changed):
+    changed = [c for c in changed if watched(c)]
+    if any(not c.startswith("mods/") for c in changed):
         out.append(list(PYTHON_SUITE))
     if any(c.startswith("mods/") for c in changed):
         out.append(list(MOD_SUITE))
@@ -61,7 +63,7 @@ def suites(root, changed):
 def run_suite(cmd, root):
     """Return (exit code, combined output). Replaced by tests."""
     try:
-        p = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=540)
+        p = subprocess.run(cmd, cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=540)
     except (OSError, subprocess.SubprocessError) as e:
         return 1, "could not run %s: %s" % (" ".join(cmd[:4]), e)
     return p.returncode, (p.stdout or "") + (p.stderr or "")

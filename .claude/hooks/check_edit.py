@@ -24,7 +24,7 @@ PS_SCRIPT = (
 
 def run(cmd, cwd=None, env=None):
     try:
-        return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=50)
+        return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=50)
     except (OSError, subprocess.SubprocessError):
         return None
 
@@ -33,7 +33,7 @@ def repo_root(path):
     p = run(["git", "-C", os.path.dirname(path), "rev-parse", "--show-toplevel"])
     if p and p.returncode == 0 and p.stdout.strip():
         return os.path.normpath(p.stdout.strip())
-    return os.path.dirname(path)
+    return None
 
 
 def findings(text):
@@ -69,7 +69,8 @@ def check_mod(path, root):
     node = shutil.which("node")
     if not node or not os.path.isfile(biome):
         return 0, ""
-    p = run([node, biome, "lint", path], cwd=root)
+    # Errors only (what makes the exit code), one line each, so the 30-line cap keeps them.
+    p = run([node, biome, "lint", "--diagnostic-level=error", "--reporter=concise", path], cwd=root)
     if p and p.returncode != 0 and (p.stdout.strip() or p.stderr.strip()):
         return 2, findings(p.stdout + p.stderr)
     return 0, ""
@@ -102,7 +103,10 @@ def main():
     if not os.path.isabs(path):
         path = os.path.join(data.get("cwd") or os.getcwd(), path)
     path = os.path.normpath(path)
-    code, text = check(path, repo_root(path))
+    root = repo_root(path)
+    if not root:  # a scratch file outside any git repo is not project code
+        return 0
+    code, text = check(path, root)
     if code:
         print(text, file=sys.stderr)
     return code
