@@ -186,7 +186,7 @@ def installer_helpers():
     while lines[end - 1].startswith("#") or not lines[end - 1].strip():
         end -= 1
     block = "\n".join(lines[start:end])
-    for name in ("Find-JsoncKey", "Set-TerminalFont", "Set-TerminalScheme", "Read-TerminalLook"):
+    for name in ("Find-JsoncKey", "Set-TerminalFont", "Set-TerminalScheme", "Read-TerminalLook", "Set-TerminalDefaultProfile", "Add-GitBashProfile"):
         assert "function %s" % name in block, name
     m = re.search(r"^function Write-Utf8NoBom.*?^}", source, re.DOTALL | re.MULTILINE)
     assert m is not None, "Write-Utf8NoBom"
@@ -236,7 +236,7 @@ class FontCheckBase:
         self.assertIn("$wtLook.Face -eq $nerdFontFace", text)
 
 
-DRIVER = """param([string]$Mode, [string]$Path, [string]$Face, [string]$Height, [string]$Scheme)
+DRIVER = """param([string]$Mode, [string]$Path, [string]$Face, [string]$Height, [string]$Scheme, [string]$Guid, [string]$Bash, [string]$GitRoot, [string]$Frag, [string]$Flags)
 $ErrorActionPreference = 'Stop'
 {HELPERS}
 if ($Mode -eq 'apply') {
@@ -247,6 +247,10 @@ if ($Mode -eq 'apply') {
   Set-TerminalFont $Path $Face $Height | ConvertTo-Json -Depth 5 -Compress
 } elseif ($Mode -eq 'look') {
   Read-TerminalLook $Path | ConvertTo-Json -Depth 5 -Compress
+} elseif ($Mode -eq 'defaultprofile') {
+  Set-TerminalDefaultProfile $Path $Guid ($Flags -match 'ps7') -DryRun:($Flags -match 'dry') | ConvertTo-Json -Compress
+} elseif ($Mode -eq 'gitbash') {
+  Add-GitBashProfile $Path $Bash $GitRoot ([string[]]@($Frag)) -DryRun:($Flags -match 'dry') | ConvertTo-Json -Compress
 }
 """
 
@@ -271,8 +275,8 @@ class TerminalHelpersBase:
         shutil.copyfile(os.path.join(FIXTURES, name + ".json"), dest)
         return dest
 
-    def run_driver(self, mode, path):
-        r = run_engine(self.engine, self.script, mode, path, FACE, HEIGHT, SCHEME)
+    def run_driver(self, mode, path, guid="x", bash="x", root="x", frag="x", flags="x"):
+        r = run_engine(self.engine, self.script, mode, path, FACE, HEIGHT, SCHEME, guid, bash, root, frag, flags)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return json.loads(r.stdout)
 
@@ -308,10 +312,10 @@ class TerminalHelpersBase:
 
     def test_a_comma_list_face_is_written_verbatim(self):
         path = self.fixture_copy("A_realistic")
-        r = run_engine(self.engine, self.script, "font", path, LISTFACE, HEIGHT, SCHEME)
+        r = run_engine(self.engine, self.script, "font", path, LISTFACE, HEIGHT, SCHEME, "x", "x", "x", "x", "x")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(load_jsonc(path)["profiles"]["defaults"]["font"]["face"], LISTFACE)
-        r = run_engine(self.engine, self.script, "font", path, LISTFACE, HEIGHT, SCHEME)
+        r = run_engine(self.engine, self.script, "font", path, LISTFACE, HEIGHT, SCHEME, "x", "x", "x", "x", "x")
         self.assertEqual(json.loads(r.stdout)["Result"], "already set")
 
     def test_a_realistic(self):
@@ -373,6 +377,141 @@ class TerminalHelpersBase:
         look = self.run_driver("look", self.fixture_copy("A_realistic"))
         self.assertEqual(look["ProfileScheme"], "Tango Dark")
         self.assertIsNone(look["ProfileFace"])
+
+    def no_overrides(self, doc):
+        for p in doc["profiles"]["list"]:
+            self.assertNotIn("face", p.get("font", {}), p["name"])
+            self.assertNotIn("cellHeight", p.get("font", {}), p["name"])
+            self.assertNotIn("colorScheme", p, p["name"])
+
+    def test_h_overrides_on_other_profiles(self):
+        path = self.fixture_copy("H_overrides_on_other_profiles")
+        r = self.run_driver("apply", path)
+        self.assertEqual(r["Font"]["Result"], "set")
+        self.assertTrue(any("Ubuntu Mono" in c and "Ubuntu" in c for c in r["Font"]["Changed"]), r["Font"]["Changed"])
+        self.assertTrue(any("Vintage" in c and "Command Prompt" in c for c in r["Scheme"]["Changed"]), r["Scheme"]["Changed"])
+        doc = load_jsonc(path)
+        self.no_overrides(doc)
+        by_name = {p["name"]: p for p in doc["profiles"]["list"]}
+        self.assertEqual(by_name["Ubuntu"]["font"], {"size": 13})
+        self.assertNotIn("font", by_name["PowerShell"])
+        self.assertIn("// classic prompt", self.text(path))
+        self.assertEqual(doc["profiles"]["defaults"]["font"]["face"], FACE)
+        before = self.digest(path)
+        again = self.run_driver("apply", path)
+        self.assertEqual(again["Font"]["Result"], "already set")
+        self.assertEqual(again["Scheme"]["Result"], "already set")
+        self.assertEqual(self.digest(path), before, "a second run changed the file")
+
+    def test_look_lists_overrides(self):
+        look = self.run_driver("look", self.fixture_copy("H_overrides_on_other_profiles"))
+        self.assertEqual(sorted(look["Overrides"]), sorted([
+            "PowerShell: face Cascadia Code", "Command Prompt: colorScheme Vintage", "Ubuntu: face Ubuntu Mono"]))
+        self.assertEqual(look["ProfileFace"], "Cascadia Code")
+        applied = self.fixture_copy("H_overrides_on_other_profiles")
+        self.run_driver("apply", applied)
+        self.assertEqual(list(self.run_driver("look", applied)["Overrides"] or []), [])
+
+    PS7 = "{574e775e-4f2a-5b96-ac1e-a2962a402336}"
+    WINPS = "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}"
+
+    def test_default_profile_set_to_ps7(self):
+        path = self.fixture_copy("A_realistic")
+        self.assertEqual(self.run_driver("defaultprofile", path, guid=self.WINPS), "set")
+        self.assertEqual(load_jsonc(path)["defaultProfile"], self.WINPS)
+        self.assertEqual(self.run_driver("defaultprofile", path, guid=self.PS7), "set")
+        self.assertEqual(load_jsonc(path)["defaultProfile"], self.PS7)
+        self.assertIn("// This file was initially generated", self.text(path))
+        before = self.digest(path)
+        self.assertEqual(self.run_driver("defaultprofile", path, guid=self.PS7), "already set")
+        self.assertEqual(self.digest(path), before)
+
+    def test_default_profile_missing_only_without_ps7(self):
+        path = self.fixture_copy("I_no_git_bash")
+        before = self.digest(path)
+        self.assertEqual(self.run_driver("defaultprofile", path, guid=self.PS7), "missing")
+        self.assertEqual(self.digest(path), before)
+        self.assertEqual(self.run_driver("defaultprofile", path, guid=self.PS7, flags="ps7"), "set")
+        self.assertEqual(load_jsonc(path)["defaultProfile"], self.PS7)
+
+    def test_default_profile_dry_run_writes_nothing(self):
+        path = self.fixture_copy("A_realistic")
+        before = self.digest(path)
+        self.assertEqual(self.run_driver("defaultprofile", path, guid=self.WINPS, flags="dry"), "set")
+        self.assertEqual(self.digest(path), before)
+        self.assertEqual(self.run_driver("defaultprofile", path, guid="{nope}", flags="dry"), "missing")
+        self.assertEqual(self.run_driver("defaultprofile", path, guid=self.PS7, flags="dry"), "already set")
+
+    BASH = "C:\\Program Files\\Git\\bin\\bash.exe"
+    GITROOT = "C:\\Program Files\\Git"
+    GITBASH = "{2ece5bfe-50ed-5f3a-ab87-5cd4baafed2b}"
+
+    def add_git_bash(self, path, flags="x"):
+        frag = os.path.join(self.tmp, "no-fragments")   # a folder that does not exist: this PC's fragments don't matter
+        return self.run_driver("gitbash", path, bash=self.BASH, root=self.GITROOT, frag=frag, flags=flags)
+
+    def git_bash_profiles(self, doc):
+        return [p for p in doc["profiles"]["list"] if p["guid"] == self.GITBASH]
+
+    def rewrite(self, path, text):
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+
+    def test_git_bash_added_once(self):
+        path = self.fixture_copy("I_no_git_bash")
+        self.assertEqual(self.add_git_bash(path), "added")
+        doc = load_jsonc(path)
+        added = self.git_bash_profiles(doc)
+        self.assertEqual(len(added), 1)
+        self.assertEqual(added[0]["name"], "Git Bash")
+        self.assertEqual(added[0]["commandline"], '"C:\\Program Files\\Git\\bin\\bash.exe" -i -l')
+        self.assertEqual(added[0]["icon"], "C:\\Program Files\\Git\\mingw64\\share\\git\\git-for-windows.ico")
+        self.assertIs(added[0]["hidden"], False)
+        self.assertEqual([p["name"] for p in doc["profiles"]["list"]], ["Windows PowerShell", "Command Prompt", "Git Bash"])
+        self.assertIn("// last profile", self.text(path))
+        self.assertIn(r'"commandline": "\"C:\\Program Files\\Git\\bin\\bash.exe\" -i -l"', self.text(path))
+        before = self.digest(path)
+        self.assertEqual(self.add_git_bash(path), "present")
+        self.assertEqual(self.digest(path), before)
+
+    def test_git_bash_after_a_trailing_comma(self):
+        path = self.fixture_copy("I_no_git_bash")
+        self.rewrite(path, self.text(path).replace("} // last profile", "}, // last profile"))
+        self.assertEqual(self.add_git_bash(path), "added")
+        self.assertEqual(len(self.git_bash_profiles(load_jsonc(path))), 1)
+        self.assertIn("// last profile", self.text(path))
+
+    def test_git_bash_in_an_empty_list(self):
+        path = self.fixture_copy("I_no_git_bash")
+        self.rewrite(path, re.sub(r'"list": \[.*?\n        \]', '"list": [ // none yet\n        ]', self.text(path), flags=re.DOTALL))
+        self.assertEqual(load_jsonc(path)["profiles"]["list"], [])
+        self.assertEqual(self.add_git_bash(path), "added")
+        self.assertEqual([p["name"] for p in load_jsonc(path)["profiles"]["list"]], ["Git Bash"])
+        self.assertIn("// none yet", self.text(path))
+
+    def test_git_bash_present_by_name_or_fragment(self):
+        path = self.fixture_copy("I_no_git_bash")
+        self.rewrite(path, self.text(path).replace('"Command Prompt"', '"Git Bash"'))
+        before = self.digest(path)
+        self.assertEqual(self.add_git_bash(path), "present")
+        self.assertEqual(self.digest(path), before)
+        other = self.fixture_copy("I_no_git_bash")
+        frag = os.path.join(self.tmp, "fragments-%s" % self._testMethodName)
+        os.makedirs(os.path.join(frag, "Git"))
+        r = self.run_driver("gitbash", other, bash=self.BASH, root=self.GITROOT, frag=frag)
+        self.assertEqual(r, "present")
+        self.assertEqual(self.digest(other), self.digest(os.path.join(FIXTURES, "I_no_git_bash.json")))
+
+    def test_git_bash_dry_run_writes_nothing(self):
+        path = self.fixture_copy("I_no_git_bash")
+        before = self.digest(path)
+        self.assertEqual(self.add_git_bash(path, flags="dry"), "added")
+        self.assertEqual(self.digest(path), before)
+
+    def test_git_bash_none_without_a_list(self):
+        path = self.fixture_copy("I_no_git_bash")
+        self.rewrite(path, '{ "profiles": { "defaults": {} } }')
+        self.assertEqual(self.add_git_bash(path), "none")
 
 
 if __name__ == "__main__":

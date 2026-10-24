@@ -14,17 +14,20 @@
      Readable scheme) from the machine
   7. Installs a Nerd Font through winget when the machine has none, and sets terminal/profile.json's font (face and
      cellHeight) as the Windows Terminal default font whenever it differs, and drops a font face or cellHeight set
-     on the default profile itself
+     on any profile, so every profile looks the same
   8. Sets the Windows Terminal default colour scheme to terminal/profile.json's (Campbell) and drops a colorScheme
-     set on the default profile itself, so the default applies
+     set on any profile, so the default applies
   9. Sets the Windows Terminal start folder, adds a profile block that leaves System32 for C:\dev to both the PowerShell 7
      and the Windows PowerShell 5.1 profile, and sets the 5.1 execution policy to RemoteSigned for this user when it is
      stricter and no group policy pins it
- 10. Runs the status bar command from the installed settings.json on sample data and fails when its line is wrong
- 11. Checks the session-cards mod is in CLAUDE_CODE_PLUGIN_DIRS and passes `claude plugin validate`
- 12. Prints the `Same experience` table (font, colour scheme, Claude Code theme, status line, mod folder, tool
+ 10. Installs PowerShell 7 through winget when `pwsh` is missing, makes it the Windows Terminal default profile (when
+     its profile is there or PowerShell 7 is installed) and adds a Git Bash profile unless one, or Git for Windows'
+     own Windows Terminal fragment, already exists
+ 11. Runs the status bar command from the installed settings.json on sample data and fails when its line is wrong
+ 12. Checks the session-cards mod is in CLAUDE_CODE_PLUGIN_DIRS and passes `claude plugin validate`
+ 13. Prints the `Same experience` table (font, colour scheme, Claude Code theme, status line, mod folder, tool
      versions) and fails when a row is FAIL
- 13. Lists MCP health
+ 14. Lists MCP health
 
 .PARAMETER SkipPlugins
   Skip the plugin install/update step (faster when only config changed).
@@ -339,9 +342,10 @@ function Remove-JsoncKey([string]$t, [int]$obj, [string]$key) {
   return $t.Substring(0, $a) + $t.Substring($b)
 }
 
-# Where profiles.defaults and the default profile (the one whose guid is defaultProfile) start; -1 when absent.
+# Where profiles.defaults, the profiles.list array, the default profile (the one whose guid is defaultProfile) and every
+# object in profiles.list start; -1 (Profiles: empty) when absent.
 function Get-WtLayout([string]$t) {
-  $l = [pscustomobject]@{ Defaults = -1; Profile = -1 }
+  $l = [pscustomobject]@{ Defaults = -1; Profile = -1; List = -1; Profiles = @() }
   $root = Get-JsoncRoot $t
   if ($root -lt 0) { return $l }
   $profiles = Find-JsoncKey $t $root 'profiles'
@@ -350,22 +354,44 @@ function Get-WtLayout([string]$t) {
   if ($d -and $t[$d.ValueStart] -eq '{') { $l.Defaults = $d.ValueStart }
   $dp = Find-JsoncKey $t $root 'defaultProfile'
   $list = Find-JsoncKey $t $profiles.ValueStart 'list'
-  if ($dp -and $list -and $t[$list.ValueStart] -eq '[') {
-    $guid = Get-JsoncString $t $dp
-    foreach ($o in (Get-JsoncObjects $t $list.ValueStart)) {
-      $g = Find-JsoncKey $t $o 'guid'
-      if ($g -and (Get-JsoncString $t $g) -eq $guid) { $l.Profile = $o; break }
+  if ($list -and $t[$list.ValueStart] -eq '[') {
+    $l.List = $list.ValueStart
+    $l.Profiles = @(Get-JsoncObjects $t $list.ValueStart)
+    if ($dp) {
+      $guid = Get-JsoncString $t $dp
+      foreach ($o in $l.Profiles) {
+        $g = Find-JsoncKey $t $o 'guid'
+        if ($g -and (Get-JsoncString $t $g) -eq $guid) { $l.Profile = $o; break }
+      }
     }
   }
   return $l
 }
 
-# What the file says today: profiles.defaults font face, cellHeight and colorScheme, and the font face, cellHeight and
-# colorScheme set on the default profile itself (each $null when not set).
+# A profile's name for messages: its name, else its guid, else its place in the list.
+function Get-WtProfileName([string]$t, [int]$obj, [int]$n) {
+  foreach ($k in 'name', 'guid') { $kv = Find-JsoncKey $t $obj $k; if ($kv) { return (Get-JsoncString $t $kv) } }
+  return "profile $($n + 1)"
+}
+
+# What the file says today: profiles.defaults font face, cellHeight and colorScheme, the font face, cellHeight and
+# colorScheme set on the default profile itself (each $null when not set), and Overrides: one "<profile name>: <key>
+# <value>" for every profile in the list (the default one included) that sets a face, cellHeight or colorScheme.
 function Read-TerminalLook([string]$path) {
   $t = [IO.File]::ReadAllText($path)
   $l = Get-WtLayout $t
-  $r = [pscustomobject]@{ HasDefaults = ($l.Defaults -ge 0); Face = $null; CellHeight = $null; Scheme = $null; ProfileFace = $null; ProfileCellHeight = $null; ProfileScheme = $null }
+  $r = [pscustomobject]@{ HasDefaults = ($l.Defaults -ge 0); Face = $null; CellHeight = $null; Scheme = $null; ProfileFace = $null; ProfileCellHeight = $null; ProfileScheme = $null; Overrides = [string[]]@() }
+  $over = @()
+  for ($n = 0; $n -lt $l.Profiles.Count; $n++) {
+    $o = $l.Profiles[$n]
+    $name = Get-WtProfileName $t $o $n
+    $f = Find-JsoncKey $t $o 'font'
+    if ($f -and $t[$f.ValueStart] -eq '{') {
+      foreach ($k in 'face', 'cellHeight') { $x = Find-JsoncKey $t $f.ValueStart $k; if ($x) { $over += "${name}: $k $(Get-JsoncString $t $x)" } }
+    }
+    $x = Find-JsoncKey $t $o 'colorScheme'; if ($x) { $over += "${name}: colorScheme $(Get-JsoncString $t $x)" }
+  }
+  $r.Overrides = [string[]]@($over)
   if ($l.Defaults -ge 0) {
     $f = Find-JsoncKey $t $l.Defaults 'font'
     if ($f -and $t[$f.ValueStart] -eq '{') {
@@ -386,8 +412,9 @@ function Read-TerminalLook([string]$path) {
 }
 
 # Sets profiles.defaults.font to the repo's face and cellHeight (other font keys, such as size, stay) and drops face and
-# cellHeight from the default profile's own font (it would outrank the default; the whole font goes when nothing else is
-# left in it). Returns the result ('set', 'already set' or 'none': no defaults block) and what changed.
+# cellHeight from the font of every profile in the list (each would outrank the default, so that profile would look
+# different; the whole font goes when nothing else is left in it). Returns the result ('set', 'already set' or 'none':
+# no defaults block) and what changed.
 function Set-TerminalFont([string]$path, [string]$face, [string]$cellHeight) {
   $t = [IO.File]::ReadAllText($path)
   $l = Get-WtLayout $t
@@ -408,26 +435,29 @@ function Set-TerminalFont([string]$path, [string]$face, [string]$cellHeight) {
       }
     }
   }
-  $l = Get-WtLayout $t   # an insert moved everything after it
-  if ($l.Profile -ge 0) {
-    $pf = Find-JsoncKey $t $l.Profile 'font'
-    if ($pf -and $t[$pf.ValueStart] -eq '{') {
-      foreach ($k in 'face', 'cellHeight') {
-        $kv = Find-JsoncKey $t $pf.ValueStart $k
-        if ($kv) {
-          $changed += "removed font $k $(Get-JsoncString $t $kv) from the default profile"
-          $t = Remove-JsoncKey $t $pf.ValueStart $k
-          $pf = Find-JsoncKey $t (Get-WtLayout $t).Profile 'font'
-        }
+  $count = (Get-WtLayout $t).Profiles.Count
+  for ($n = 0; $n -lt $count; $n++) {
+    $l = Get-WtLayout $t   # every edit moved what follows it, so the positions are read again; the count stays
+    $o = $l.Profiles[$n]
+    $pf = Find-JsoncKey $t $o 'font'
+    if (-not $pf -or $t[$pf.ValueStart] -ne '{') { continue }
+    $label = (Get-WtProfileName $t $o $n) + $(if ($o -eq $l.Profile) { ' (default profile)' } else { '' })
+    $removed = $false
+    foreach ($k in 'face', 'cellHeight') {
+      $kv = Find-JsoncKey $t $pf.ValueStart $k
+      if ($kv) {
+        $changed += "removed font $k $(Get-JsoncString $t $kv) from $label"
+        $t = Remove-JsoncKey $t $pf.ValueStart $k   # only text after the font's opening brace moves
+        $removed = $true
       }
-      if ($pf -and (Test-JsoncEmpty $t $pf.ValueStart)) { $t = Remove-JsoncKey $t (Get-WtLayout $t).Profile 'font' }
     }
+    if ($removed -and (Test-JsoncEmpty $t $pf.ValueStart)) { $t = Remove-JsoncKey $t $o 'font' }
   }
   if ($changed.Count -gt 0) { Write-Utf8NoBom $path $t }
   return [pscustomobject]@{ Result = $(if ($changed.Count -gt 0) { 'set' } else { 'already set' }); Changed = $changed }
 }
 
-# Sets profiles.defaults.colorScheme and drops a colorScheme set on the default profile itself (it would outrank the
+# Sets profiles.defaults.colorScheme and drops a colorScheme set on any profile in the list (it would outrank the
 # default). Returns the result ('set', 'already set' or 'none') and what changed.
 function Set-TerminalScheme([string]$path, [string]$scheme) {
   $t = [IO.File]::ReadAllText($path)
@@ -439,17 +469,100 @@ function Set-TerminalScheme([string]$path, [string]$scheme) {
   if ($old -ne $scheme) {
     $t = Set-JsoncString $t $l.Defaults 'colorScheme' $scheme
     $changed += "colorScheme $old -> $scheme"
-    $l = Get-WtLayout $t   # an insert moved everything after it
   }
-  if ($l.Profile -ge 0) {
-    $x = Find-JsoncKey $t $l.Profile 'colorScheme'
+  $count = (Get-WtLayout $t).Profiles.Count
+  for ($n = 0; $n -lt $count; $n++) {
+    $l = Get-WtLayout $t   # every edit moved what follows it, so the positions are read again; the count stays
+    $o = $l.Profiles[$n]
+    $x = Find-JsoncKey $t $o 'colorScheme'
     if ($x) {
-      $changed += "removed colorScheme $(Get-JsoncString $t $x) from the default profile"
-      $t = Remove-JsoncKey $t $l.Profile 'colorScheme'
+      $label = (Get-WtProfileName $t $o $n) + $(if ($o -eq $l.Profile) { ' (default profile)' } else { '' })
+      $changed += "removed colorScheme $(Get-JsoncString $t $x) from $label"
+      $t = Remove-JsoncKey $t $o 'colorScheme'
     }
   }
   if ($changed.Count -gt 0) { Write-Utf8NoBom $path $t }
   return [pscustomobject]@{ Result = $(if ($changed.Count -gt 0) { 'set' } else { 'already set' }); Changed = $changed }
+}
+
+# Windows Terminal's guid for PowerShell 7 (its generated profile always has this one) and Git for Windows' own fragment
+# guid for Git Bash (installer.iss, InstallWindowsTerminalFragment), so a later Git fragment does not duplicate the profile.
+$ps7Guid = '{574e775e-4f2a-5b96-ac1e-a2962a402336}'
+$gitBashGuid = '{2ece5bfe-50ed-5f3a-ab87-5cd4baafed2b}'
+
+# Makes $guid the profile Windows Terminal opens (defaultProfile at the top of the file). Returns 'set', 'already set' or
+# 'missing': no profile in the list has that guid and PowerShell 7 is not installed (Windows Terminal generates its profile
+# with $ps7Guid only once it is there), so nothing is written. With -DryRun the same word comes back and nothing is
+# written; 'set' then means "would change".
+function Set-TerminalDefaultProfile([string]$path, [string]$guid, [bool]$ps7Installed = $false, [switch]$DryRun) {
+  $t = [IO.File]::ReadAllText($path)
+  $root = Get-JsoncRoot $t
+  if ($root -lt 0) { return 'missing' }
+  $dp = Find-JsoncKey $t $root 'defaultProfile'
+  if ($dp -and (Get-JsoncString $t $dp) -eq $guid) { return 'already set' }
+  $known = $false
+  foreach ($o in (Get-WtLayout $t).Profiles) {
+    $g = Find-JsoncKey $t $o 'guid'
+    if ($g -and (Get-JsoncString $t $g) -eq $guid) { $known = $true; break }
+  }
+  if (-not $known -and -not $ps7Installed) { return 'missing' }
+  if (-not $DryRun) { Write-Utf8NoBom $path (Set-JsoncString $t $root 'defaultProfile' $guid) }
+  return 'set'
+}
+
+function ConvertTo-JsonText([string]$s) { '"' + $s.Replace('\', '\\').Replace('"', '\"') + '"' }   # a JSON string literal
+
+# The leading whitespace of the line that holds position $pos.
+function Get-LineIndent([string]$t, [int]$pos) {
+  $s = if ($pos -le 0) { 0 } else { $t.LastIndexOf([char]10, $pos - 1) + 1 }
+  $e = $s
+  while ($e -lt $t.Length -and ($t[$e] -eq ' ' -or $t[$e] -eq "`t")) { $e++ }
+  return $t.Substring($s, $e - $s)
+}
+
+# Adds a Git Bash profile to profiles.list. Returns 'added', 'present' or 'none' (no profiles.list). It is present when a
+# profile in the list has Git for Windows' fragment guid or is named Git Bash, or when a Git folder exists under one of
+# $fragmentDirs (Git for Windows' own Windows Terminal fragment, which Windows Terminal turns into that profile). With
+# -DryRun the same word comes back and nothing is written; 'added' then means "would add".
+function Add-GitBashProfile([string]$path, [string]$bashExe, [string]$gitRoot,
+    [string[]]$fragmentDirs = @("$env:ProgramData\Microsoft\Windows Terminal\Fragments", "$env:LOCALAPPDATA\Microsoft\Windows Terminal\Fragments"),
+    [switch]$DryRun) {
+  $t = [IO.File]::ReadAllText($path)
+  $l = Get-WtLayout $t
+  if ($l.List -lt 0) { return 'none' }
+  foreach ($o in $l.Profiles) {
+    $g = Find-JsoncKey $t $o 'guid'; $nm = Find-JsoncKey $t $o 'name'
+    if (($g -and (Get-JsoncString $t $g) -eq $gitBashGuid) -or ($nm -and (Get-JsoncString $t $nm) -eq 'Git Bash')) { return 'present' }
+  }
+  foreach ($d in $fragmentDirs) { if ($d -and (Test-Path (Join-Path $d 'Git'))) { return 'present' } }
+  if (-not $DryRun) {
+    $raw = '{ "guid": "' + $gitBashGuid + '", "name": "Git Bash", "commandline": ' + (ConvertTo-JsonText ('"' + $bashExe + '" -i -l')) +
+      ', "icon": ' + (ConvertTo-JsonText (Join-Path $gitRoot 'mingw64\share\git\git-for-windows.ico')) + ', "hidden": false }'
+    $nl = if ($t.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $close = Get-JsoncEnd $t $l.List
+    if ($l.Profiles.Count -eq 0) {
+      $at = $l.List + 1
+      $ins = $nl + (Get-LineIndent $t $l.List) + '    ' + $raw
+      # the ] stays on its own line when it already is, else follows the object
+      $t = $t.Insert($at, $ins + $(if ($t.Substring($at, $close - $at) -match '\n') { '' } else { $nl + (Get-LineIndent $t $l.List) }))
+    } else {
+      $last = $l.Profiles[$l.Profiles.Count - 1]
+      $at = (Get-JsoncEnd $t $last) + 1
+      $indent = Get-LineIndent $t $last
+      # a comma already after the last element (a trailing one, comments aside) is reused: the new object goes after it
+      $i = $at; $comma = -1
+      while ($i -lt $close) {
+        if ($t[$i] -eq ',') { $comma = $i; break }
+        if ($t[$i] -eq '/') { $n = Skip-JsoncComment $t $i; if ($n -ne $i) { $i = $n; continue } }
+        if (-not [char]::IsWhiteSpace($t[$i])) { break }
+        $i++
+      }
+      if ($comma -ge 0) { $t = $t.Insert($comma + 1, $nl + $indent + $raw) }
+      else { $t = $t.Insert($at, ',' + $nl + $indent + $raw) }
+    }
+    Write-Utf8NoBom $path $t
+  }
+  return 'added'
 }
 
 # Windows Terminal opens in System32 unless the defaults profile names a folder, and sessions started there load
@@ -678,6 +791,20 @@ function Get-GitBash {
     }
   }
   return 'bash'
+}
+# The Git for Windows folder a bash.exe belongs to: bash.exe sits in <root>\bin (Get-GitBash's choice) or <root>\usr\bin.
+function Get-GitRoot([string]$bashExe) {
+  $dir = Split-Path $bashExe
+  if ((Split-Path $dir -Leaf) -eq 'bin') {
+    $dir = Split-Path $dir
+    if ((Split-Path $dir -Leaf) -eq 'usr') { $dir = Split-Path $dir }
+  }
+  return $dir
+}
+# PowerShell 7 is installed when pwsh is on PATH or in its default folder (PATH changes made by a winget install in this
+# very run are not in this process's PATH yet).
+function Test-Pwsh {
+  return [bool]((Get-Command pwsh -ErrorAction SilentlyContinue) -or (Test-Path "$env:ProgramFiles\PowerShell\7\pwsh.exe"))
 }
 
 # Runs $command (statusLine.command from the installed settings) the way Claude Code does on Windows: Git Bash
@@ -917,6 +1044,49 @@ if (-not $Check) {
   if ($r -like 'pinned by *') { Write-Color "    Windows PowerShell execution policy is $r; scripts stay blocked until that policy changes" 228 }
   elseif ($r -eq 'set') { Write-Host "    Windows PowerShell execution policy set to RemoteSigned for this user (was: $(if ($oldPolicy) { $oldPolicy } else { 'not set' }))" }
   else { Write-Host '    Windows PowerShell execution policy is already RemoteSigned or looser' }
+
+  # 4f. PowerShell 7 (winget; best effort, like the Nerd Font: a failure here warns and never fails the install), then
+  # Windows Terminal opens it by default, and a Git Bash profile is added next to the others.
+  Write-Step 'PowerShell 7'
+  $ps7Installed = Test-Pwsh
+  if ($ps7Installed) {
+    Write-Color '    PowerShell 7 is already installed' 244
+  } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
+    $savedEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    & winget install --id Microsoft.PowerShell -e --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+    $ErrorActionPreference = $savedEap
+    # winget put it on the PATH in the registry; this process still has the old one
+    $env:Path = "$env:Path;" + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+    $ps7Installed = Test-Pwsh
+    if ($ps7Installed) { Write-Host '    installed PowerShell 7' } else { Write-Color '    winget could not install Microsoft.PowerShell; install PowerShell 7 by hand (https://aka.ms/powershell)' 228 }
+  } else {
+    Write-Color '    winget not found; install PowerShell 7 by hand (https://aka.ms/powershell)' 228
+  }
+
+  Write-Step 'Terminal profiles'
+  $wtBash = Get-GitBash
+  $haveGitBash = ($wtBash -ne 'bash') -and (Test-Path $wtBash)
+  foreach ($wt in $wtSettings) {
+    Backup-TerminalSettings $wt
+    $r = Set-TerminalDefaultProfile $wt $ps7Guid $ps7Installed
+    $msg = switch ($r) {
+      'set' { "PowerShell 7 is now the default profile in $wt" }
+      'already set' { "PowerShell 7 is already the default profile in $wt" }
+      default { "PowerShell 7 is not installed and not in $wt; the default profile stays as it is" }
+    }
+    Write-Host "    $msg"
+    if ($haveGitBash) {
+      $r = Add-GitBashProfile $wt $wtBash (Get-GitRoot $wtBash)
+      $msg = switch ($r) {
+        'added' { "Git Bash profile added to $wt" }
+        'present' { "a Git Bash profile is already in $wt" }
+        default { "no profiles list in $wt; add Git Bash by hand" }
+      }
+      Write-Host "    $msg"
+    }
+  }
+  if (@($wtSettings).Count -eq 0) { Write-Color '    Windows Terminal not found; set PowerShell 7 as the default profile and add Git Bash by hand' 228 }
+  elseif (-not $haveGitBash) { Write-Color '    Git Bash not found; no Git Bash profile added' 228 }
 }
 
 # 5. Verify
