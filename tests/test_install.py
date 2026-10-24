@@ -1107,3 +1107,16 @@ class StateRepoBase:
 
 
 per_engine(StateRepoBase, globals())
+
+
+class CodexSkillStaticTest(unittest.TestCase):
+    def test_skill_hands_work_to_codex_read_only_in_the_background(self):
+        text = read("skills", "codex", "SKILL.md")
+        self.assertRegex(text, r"\A---\nname: codex\ndescription: Use when ")
+        for word in ("codex exec -s read-only --skip-git-repo-check --ephemeral", "-o", "scratchpad",
+                     "run_in_background", "verify", "worktree"):
+            self.assertIn(word, text)
+        self.assertLess(len(text.splitlines()), 80)
+
+    def test_global_rules_point_at_it(self):
+        self.assertIn("`codex` skill", read("global", "CLAUDE.md"))
