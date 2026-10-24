@@ -65,6 +65,13 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(len(row), 1)
         self.assertIn("$themeFileOk", row[0])
 
+    def test_installer_copies_the_global_rules_from_global_folder(self):
+        text = read("install.ps1")
+        self.assertIn("Join-Path $repo 'global\CLAUDE.md'", text)
+        self.assertNotIn("Join-Path $repo 'CLAUDE.md'", text)
+        self.assertTrue(read("global", "CLAUDE.md").startswith("# Global rules"))
+        self.assertFalse(read("CLAUDE.md").startswith("# Global rules"))
+
     def test_font_rows_require_no_font_on_the_default_profile(self):
         rows = [l for l in read("install.ps1").splitlines()
                 if l.startswith(("Add-SameRow 'Terminal font face'", "Add-SameRow 'Terminal cellHeight'"))]
