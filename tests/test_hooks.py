@@ -115,5 +115,64 @@ class CheckEditTest(unittest.TestCase):
         self.assertEqual(code, 0)
 
 
+class StopTestsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="stop test ")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.repo = make_repo(self.tmp)
+        self.mod = load(STOP_TESTS, "stop_tests")
+
+    def stop(self, active=False):
+        return run_hook(STOP_TESTS, {"cwd": self.repo, "stop_hook_active": active})
+
+    def test_fingerprint_ignores_docs(self):
+        before = self.mod.fingerprint(self.repo)
+        write(self.repo, "README.md", "changed\n")
+        self.assertEqual(self.mod.fingerprint(self.repo), before)
+        write(self.repo, "tests/test_ok.py", "# edited\n")
+        self.assertNotEqual(self.mod.fingerprint(self.repo), before)
+
+    def test_fingerprint_sees_untracked_code(self):
+        before = self.mod.fingerprint(self.repo)
+        write(self.repo, "new.py", "x = 1\n")
+        self.assertNotEqual(self.mod.fingerprint(self.repo), before)
+
+    def test_suites_pick_the_mod_only_when_it_changed(self):
+        py = self.mod.suites(self.repo, ["statusbar.py"])
+        self.assertEqual(len(py), 1)
+        self.assertIn("unittest", py[0])
+        both = self.mod.suites(self.repo, ["statusbar.py", "mods/session-cards/x.tsx"])
+        self.assertEqual(len(both), 2)
+        mod_only = self.mod.suites(self.repo, ["mods/session-cards/x.tsx"])
+        self.assertEqual(len(mod_only), 1)
+        self.assertIn("plugin", mod_only[0])
+        self.assertEqual(self.mod.suites(self.repo, ["README.md"]), [])
+
+    def test_unchanged_tree_runs_nothing(self):
+        write(self.repo, "a.py", "x = 1\n")
+        self.assertEqual(self.stop()[0], 0)
+        # a failing test added now would fail a rerun; the stamp must prevent one
+        stamp_dir = subprocess.run(["git", "-C", self.repo, "rev-parse", "--absolute-git-dir"],
+                                   capture_output=True, text=True).stdout.strip()
+        self.assertTrue(os.path.isfile(os.path.join(stamp_dir, "claude-stop-tests")))
+        start = time.monotonic()
+        code, out, err = self.stop()
+        self.assertEqual((code, out, err), (0, "", ""))
+        self.assertLess(time.monotonic() - start, 1.5)
+
+    def test_failing_suite_blocks_once(self):
+        write(self.repo, "tests/test_x.py",
+              "import unittest\n\n\nclass X(unittest.TestCase):\n    def test_x(self):\n        self.fail('boom')\n")
+        code, _, err = self.stop()
+        self.assertEqual(code, 2)
+        self.assertIn("test_x", err)
+        self.assertLessEqual(len(err.strip().splitlines()), 30)
+        # fresh change, stop_hook_active true: no block, message to the user
+        write(self.repo, "tests/test_y.py", "# touch\n")
+        code, out, _ = self.stop(active=True)
+        self.assertEqual(code, 0)
+        self.assertIn("test_x", json.loads(out)["systemMessage"])
+
+
 if __name__ == "__main__":
     unittest.main()
