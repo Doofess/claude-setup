@@ -104,6 +104,34 @@ class InstallerTest(unittest.TestCase):
 
 FIXTURES = os.path.join(ROOT, "tests", "fixtures", "terminal")
 PWSH = shutil.which("pwsh")
+POWERSHELL = shutil.which("powershell")
+ENGINE_SPECS = [
+    ("pwsh", PWSH, ["-NoProfile", "-NonInteractive", "-File"]),
+    ("powershell", POWERSHELL, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]),
+]
+# One entry per engine found: (name, command prefix that ends before the script path).
+ENGINES = [(n, [str(path)] + args) for n, path, args in ENGINE_SPECS if path]
+
+
+def engine_env(name):
+    """Child environment for an engine. Windows PowerShell 5.1 loses module autoload when a parent pwsh's PSModulePath leaks in."""
+    env = dict(os.environ)
+    if name == "powershell":
+        env.pop("PSModulePath", None)
+    return env
+
+
+def run_engine(engine, script, *args):
+    name, cmd = engine
+    return subprocess.run(cmd + [script] + list(args), capture_output=True, text=True, encoding="utf-8", env=engine_env(name))
+
+
+def per_engine(base, module_globals):
+    """One TestCase subclass of the mixin `base` per known engine, named <Base>_<engine>; skipped when the engine is missing."""
+    for name, path, args in ENGINE_SPECS:
+        engine = (name, [str(path)] + args) if path else None
+        cls = type("%s_%s" % (base.__name__.replace("Base", "Test"), name), (base, unittest.TestCase), {"engine": engine})
+        module_globals[cls.__name__] = unittest.skipUnless(path, "%s is not on PATH" % name)(cls)
 FACE, HEIGHT, SCHEME = "JetBrainsMono Nerd Font", "1.25", "Campbell"
 
 
@@ -170,8 +198,7 @@ def font_helpers():
     return "\n".join(out)
 
 
-@unittest.skipUnless(PWSH, "pwsh is not on PATH")
-class FontCheckTest(unittest.TestCase):
+class FontCheckBase:
     def run_check(self, face, files):
         with tempfile.TemporaryDirectory() as tmp:
             local = os.path.join(tmp, "local", "Microsoft", "Windows", "Fonts")
@@ -184,8 +211,7 @@ class FontCheckTest(unittest.TestCase):
             with open(script, "w", encoding="utf-8") as f:
                 f.write("param([string]$Face)\n$env:LOCALAPPDATA = '%s'\n$env:WINDIR = '%s'\n%s\n"
                         "@(Get-FaceFiles $Face).Count\n" % (os.path.join(tmp, "local"), os.path.join(tmp, "win"), font_helpers()))
-            r = subprocess.run([str(PWSH), "-NoProfile", "-NonInteractive", "-File", script, face],
-                               capture_output=True, text=True, encoding="utf-8")
+            r = run_engine(self.engine, script, face)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             return int(r.stdout.strip().splitlines()[-1])
 
@@ -216,8 +242,10 @@ if ($Mode -eq 'apply') {
 """
 
 
-@unittest.skipUnless(PWSH, "pwsh is not on PATH")
-class TerminalHelpersTest(unittest.TestCase):
+per_engine(FontCheckBase, globals())
+
+
+class TerminalHelpersBase:
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.mkdtemp()
@@ -235,8 +263,7 @@ class TerminalHelpersTest(unittest.TestCase):
         return dest
 
     def run_driver(self, mode, path):
-        r = subprocess.run([str(PWSH), "-NoProfile", "-NonInteractive", "-File", self.script, mode, path, FACE, HEIGHT, SCHEME],
-                           capture_output=True, text=True, encoding="utf-8")
+        r = run_engine(self.engine, self.script, mode, path, FACE, HEIGHT, SCHEME)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return json.loads(r.stdout)
 
@@ -272,12 +299,10 @@ class TerminalHelpersTest(unittest.TestCase):
 
     def test_a_comma_list_face_is_written_verbatim(self):
         path = self.fixture_copy("A_realistic")
-        r = subprocess.run([str(PWSH), "-NoProfile", "-NonInteractive", "-File", self.script, "font", path, LISTFACE, HEIGHT, SCHEME],
-                           capture_output=True, text=True, encoding="utf-8")
+        r = run_engine(self.engine, self.script, "font", path, LISTFACE, HEIGHT, SCHEME)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(load_jsonc(path)["profiles"]["defaults"]["font"]["face"], LISTFACE)
-        r = subprocess.run([str(PWSH), "-NoProfile", "-NonInteractive", "-File", self.script, "font", path, LISTFACE, HEIGHT, SCHEME],
-                           capture_output=True, text=True, encoding="utf-8")
+        r = run_engine(self.engine, self.script, "font", path, LISTFACE, HEIGHT, SCHEME)
         self.assertEqual(json.loads(r.stdout)["Result"], "already set")
 
     def test_a_realistic(self):
@@ -343,6 +368,54 @@ class TerminalHelpersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+per_engine(TerminalHelpersBase, globals())
+
+
+MERGE_FIXTURE = os.path.join(ROOT, "tests", "fixtures", "settings", "current.json")
+
+
+def merge_helpers():
+    source = read("install.ps1").replace("\r\n", "\n")
+    out = []
+    for name in ("Test-IsObject", "Test-IsArray", "Merge-Json", "Merge-HookEvents", "Format-DirKey", "Merge-PluginDirs", "Merge-ClaudeSettings"):
+        m = re.search(r"^function %s.*?(?:^}|\Z)" % name, source, re.DOTALL | re.MULTILINE)
+        assert m is not None, name
+        out.append(m.group(0))
+    return "\n".join(out)
+
+
+MERGE_DRIVER = """param([string]$Current, [string]$Template, [string]$Repo, [string]$Out)
+$ErrorActionPreference = 'Stop'
+{HELPERS}
+$cur = Get-Content $Current -Raw | ConvertFrom-Json
+$tpl = Get-Content $Template -Raw | ConvertFrom-Json
+$merged = Merge-ClaudeSettings $cur $tpl $Repo
+[IO.File]::WriteAllText($Out, ($merged | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+"""
+
+
+@unittest.skipUnless(ENGINES, "no PowerShell engine on PATH")
+class MergeParityTest(unittest.TestCase):
+    def test_merge_is_the_same_on_both_engines(self):
+        results = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            script = os.path.join(tmp, "merge.ps1")
+            with open(script, "w", encoding="utf-8") as f:
+                f.write(MERGE_DRIVER.replace("{HELPERS}", merge_helpers()))
+            for engine in ENGINES:
+                out = os.path.join(tmp, engine[0] + ".json")
+                r = run_engine(engine, script, MERGE_FIXTURE, os.path.join(ROOT, "settings.json"), ROOT, out)
+                self.assertEqual(r.returncode, 0, engine[0] + ": " + r.stdout + r.stderr)
+                with open(out, encoding="utf-8") as f:
+                    results[engine[0]] = json.loads(f.read())
+        first = next(iter(results.values()))
+        for name, doc in results.items():
+            self.assertEqual(doc, first, name)
+            self.assertIsInstance(doc["permissions"]["allow"], list, name)
+            self.assertIn("Bash(ls:*)", doc["permissions"]["allow"], name)
+            self.assertEqual(doc["env"]["MACHINE_ONLY_KEY"], "Home Office ✔", name)
 
 
 @unittest.skipUnless(PWSH, "pwsh is not on PATH")
