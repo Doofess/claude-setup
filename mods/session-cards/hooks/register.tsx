@@ -237,6 +237,12 @@ const overflowTick = atom({ plugin: 'session-cards', key: 'overflowTick' } as co
 
 const SEPARATOR = ' │ '
 
+/**
+ * Cells of the mode label the engine draws in front of the hint on the same row, the widest one
+ * (`⏵⏵ bypass permissions on `). The hint text leaves the label out, but starts `(shift+tab to cycle)` when one is shown.
+ */
+const MODE_LABEL = 25
+
 function isSpan(value: unknown): value is Span {
   return typeof field(value, 'text') === 'string'
 }
@@ -708,7 +714,8 @@ export const register: Register = on => {
     }
 
     const { hint } = e.props
-    const fits = pieces === null ? [] : fitPieces(pieces, hint.length, (e.viewport?.columns ?? 80) - 4)
+    const label = hint.startsWith('(shift+tab') ? MODE_LABEL : 0
+    const fits = pieces === null ? [] : fitPieces(pieces, label + hint.length, (e.viewport?.columns ?? 80) - 4)
 
     if (fits.length === 0) {
       return next(e)
@@ -716,8 +723,9 @@ export const register: Register = on => {
 
     const { Box, Text } = $.ui.resolve(e)
 
+    // One Text, so a row narrower than the estimate cuts its end instead of wrapping onto a second line.
     return (
-      <Box flexDirection="row">
+      <Text wrap="truncate-end">
         <Text dimColor>{hint}</Text>
         <Text>{'  '}</Text>
         {fits.map((piece, i) => [
@@ -728,7 +736,7 @@ export const register: Register = on => {
             </Text>
           )),
         ])}
-      </Box>
+      </Text>
     )
   })
 }
