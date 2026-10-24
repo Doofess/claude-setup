@@ -153,8 +153,10 @@ Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers)
 - The context meter's end is the auto-compact window minus 33k: 13k that Claude Code keeps free plus 20k reserved for the reply.
 - Each meter has 8 cells: the filled part in the bright level colour, the rest in a dark shade of the same colour; its
   icon and numbers take that colour too.
-- Separators, the other icons, branch and reset times are sent as exact white rather than the terminal's default
-  foreground (light grey in most schemes), so nothing on the line is grey.
+- Separators, the other icons, the branch name and reset times are sent as exact white rather than the terminal's
+  default foreground (light grey in most schemes), so nothing on the line is grey. The branch icon is the meters' yellow.
+- Effort runs green, yellow, the bypass red, then xhigh and max as the `/effort` picker draws them, held still: xhigh in
+  the violet of `accept edits` with its middle letter lit, max a rainbow that starts at the bolt.
 - The pieces dropped on a narrow terminal are written to `~/.claude/statusbar-overflow/<session_id>.json`, as text with
   their colours; files older than a day are removed. The session-cards mod reads them for the hint line. While the hint
   line shows that overflow, its shortcut pills are plain text; with nothing to show, Claude Code's own line stays.

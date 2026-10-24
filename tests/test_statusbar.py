@@ -375,11 +375,29 @@ class RowTest(unittest.TestCase):
         self.assertTrue(all(span["bold"] for span in statusbar.spans(statusbar.model_text("Fable 5.1"))))
 
     def test_effort_colours(self):
-        for level, code in [("low", 32), ("medium", 33), ("high", "38;2;255;107;128"), ("xhigh", 95), ("max", 97), ("odd", None)]:
+        for level, code in [("low", 32), ("medium", 33), ("high", "38;2;255;107;128"), ("xhigh", "38;2;175;135;255"),
+                            ("max", "38;2;235;95;87"), ("odd", None)]:
             self.assertEqual(statusbar.effort_colour(level), code, level)
-        # every level its own colour, no two of them the same hue (31 and 91 look alike in most schemes)
-        hues = [hue_family(c) for c in statusbar.EFFORT_COLOURS.values() if c != 97]  # white-hot max has no hue
+        # every level its own colour, no two of them the same hue (31 and 91 look alike in most schemes); max is a
+        # rainbow whose bolt is its red
+        hues = [hue_family(c) for level, c in statusbar.EFFORT_COLOURS.items() if level != "max"]
         self.assertEqual(len(set(hues)), len(hues))
+
+    def test_branch_icon_is_the_meters_yellow(self):
+        raw = statusbar.fit(self.demo_row(), 200)
+        self.assertIn(statusbar.sgr(statusbar.LEVELS["yellow"][0], statusbar.ICONS["branch"] + " ") + statusbar.sgr(statusbar.WHITE, "main"), raw)
+
+    def test_xhigh_and_max_are_the_effort_pickers_still_frames(self):
+        # The /effort picker shimmers xhigh (autoAccept violet, one letter lit #d0b4ff) and runs max through the
+        # rainbow; the bar holds one frame of each: the light on xhigh's middle letter, max's rainbow going on from its bolt.
+        looks = lambda level: [(span["text"], span["colour"]) for span in statusbar.spans(statusbar.effort_text(level))]
+        self.assertEqual(looks("xhigh"), [("xh", "#af87ff"), ("i", "#d0b4ff"), ("gh", "#af87ff")])
+        self.assertEqual(looks("max"), [("m", "#f58b57"), ("a", "#fac35f"), ("x", "#91c882")])
+        self.assertEqual(looks("high"), [("high", "#ff6b80")])
+        self.assertEqual(looks("odd"), [("odd", None)])
+        raw = statusbar.fit(self.demo_row(effort={"level": "max"}), 200)
+        self.assertIn(statusbar.sgr("38;2;235;95;87", statusbar.ICONS["effort"] + " "), raw)
+        self.assertIn(statusbar.effort_text("max"), raw)
 
     def test_only_common_characters(self):
         # No private-use (Nerd Font) code points: the bar must read the same in Consolas or Cascadia Mono.

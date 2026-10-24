@@ -130,9 +130,13 @@ const EFFORT_COLOURS: Record<string, string> = {
   low: 'green',
   medium: 'yellow',
   high: 'error', // the red of `bypass permissions on`, as the status bar draws it
-  xhigh: 'magentaBright',
-  max: 'whiteBright',
+  // xhigh and max are still frames of the /effort picker's animations, as the status bar holds them: xhigh's
+  // autoAccept shimmer lit on its middle letter, max's rainbow starting at the bolt (red) and running on through the word.
+  xhigh: 'autoAccept',
+  max: '#eb5f57',
 }
+const SHIMMER = '#d0b4ff'
+const RAINBOW = ['#f58b57', '#fac35f', '#91c882'] // orange, yellow, green: the steps after the bolt's red
 
 const familyOf = (model: string) => FAMILIES.find(family => model.toLowerCase().includes(family))
 
@@ -146,6 +150,21 @@ export function modelColour(model: string): string | undefined {
 /** The colour name for an effort level, undefined when unknown. */
 export function effortColour(level: string): string | undefined {
   return EFFORT_COLOURS[level]
+}
+
+/** An effort level as coloured runs: xhigh and max letter by letter, as the /effort picker draws them, held still. */
+export function effortLetters(level: string): { text: string; color: string }[] {
+  const letters = [...level]
+
+  if (level === 'xhigh') {
+    return letters.map((text, i) => ({ text, color: i === Math.floor(letters.length / 2) ? SHIMMER : 'autoAccept' }))
+  }
+
+  if (level === 'max') {
+    return letters.map((text, i) => ({ text, color: RAINBOW[i % RAINBOW.length] as string }))
+  }
+
+  return [{ text: level, color: effortColour(level) ?? 'text' }]
 }
 
 /** The family capitalised (`Sonnet`), or the id as given when the family is unknown. */
@@ -669,7 +688,8 @@ export const register: Register = on => {
               {row.model}
             </Text>}
           {/* The bolt between model and effort takes the level's colour, as on the status bar. */}
-          {row.effort !== undefined && <Text color={effortColour(row.effort) ?? 'text'}>{`  ${row.effort}`}</Text>}
+          {row.effort !== undefined && <Text color={effortColour(row.effort) ?? 'text'}>{'  '}</Text>}
+          {row.effort !== undefined && effortLetters(row.effort).map(run => <Text color={run.color}>{run.text}</Text>)}
           <Text color="text">{`  ${cut(row.action, columns - fixed)}`}</Text>
           {mark === ' ✗' && <Text color="error">{mark}</Text>}
           {mark === ' (stopped)' && <Text color="text">{mark}</Text>}

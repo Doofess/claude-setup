@@ -1,7 +1,7 @@
 import { expect, mock, test, type TestBody } from 'claude-code/testing'
 
 import { neon, NEON_MS } from '../hooks/neon'
-import { effortColour, fmtElapsed, fmtTokens, modelColour } from '../hooks/register'
+import { effortColour, effortLetters, fmtElapsed, fmtTokens, modelColour } from '../hooks/register'
 
 type On = Parameters<TestBody>[1]
 
@@ -18,9 +18,27 @@ test('effortColour names the level colour', () => {
   expect(effortColour('low')).toBe('green')
   expect(effortColour('medium')).toBe('yellow')
   expect(effortColour('high')).toBe('error')
-  expect(effortColour('xhigh')).toBe('magentaBright')
-  expect(effortColour('max')).toBe('whiteBright')
+  expect(effortColour('xhigh')).toBe('autoAccept')
+  expect(effortColour('max')).toBe('#eb5f57')
   expect(effortColour('7')).toBeUndefined()
+})
+
+test('xhigh and max are the effort picker\'s still frames, letter by letter', () => {
+  // The status bar's frames: xhigh's shimmer lit on its middle letter, max's rainbow going on from the bolt's red.
+  expect(effortLetters('xhigh')).toEqual([
+    { text: 'x', color: 'autoAccept' },
+    { text: 'h', color: 'autoAccept' },
+    { text: 'i', color: '#d0b4ff' },
+    { text: 'g', color: 'autoAccept' },
+    { text: 'h', color: 'autoAccept' },
+  ])
+  expect(effortLetters('max')).toEqual([
+    { text: 'm', color: '#f58b57' },
+    { text: 'a', color: '#fac35f' },
+    { text: 'x', color: '#91c882' },
+  ])
+  expect(effortLetters('high')).toEqual([{ text: 'high', color: 'error' }])
+  expect(effortLetters('7')).toEqual([{ text: '7', color: 'text' }])
 })
 
 test('fmtElapsed', () => {
@@ -141,10 +159,11 @@ test('test_agent_row_shows_type_model_effort_and_action', async ($, on) => {
   expect(verb?.props.bold).toBe(true)
   expect(verb?.props.color).toBe('text')
   expect((await ui.find({ type: 'Text', text: /Sonnet/ }))?.props.color).toBe('blue')
-  expect((await ui.find({ type: 'Text', text: /^  high$/ }))?.props.color).toBe('error')
+  expect((await ui.find({ type: 'Text', text: /^  $/ }))?.props.color).toBe('error')
+  expect((await ui.find({ type: 'Text', text: /^high$/ }))?.props.color).toBe('error')
 
   for (const t of await ui.findAll({ type: 'Text' })) {
-    if (!/^(Sonnet|  high)$/.test(t.text)) {
+    if (!/^(Sonnet|  |high)$/.test(t.text)) {
       expect(t.props.color).toBe('text')
     }
   }
