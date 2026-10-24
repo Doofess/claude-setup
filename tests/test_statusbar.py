@@ -287,9 +287,9 @@ class RowTest(unittest.TestCase):
         self.assertIn("high", row)
         self.assertNotIn("high", [statusbar.plain(t).strip() for t, _, _ in dropped])
 
-    def test_session_time_is_the_repo_violet_beside_a_blue_clock(self):
+    def test_session_time_and_its_clock_are_the_repo_violet(self):
         raw = statusbar.fit(self.demo_row(), 200)
-        self.assertTrue(raw.endswith(statusbar.sgr(statusbar.BLUE, statusbar.ICONS["time"] + " ") + statusbar.sgr(statusbar.VIOLET, "1h33m")), repr(raw[-60:]))
+        self.assertTrue(raw.endswith(statusbar.sgr(statusbar.VIOLET, statusbar.ICONS["time"] + " ") + statusbar.sgr(statusbar.VIOLET, "1h33m")), repr(raw[-60:]))
         self.assertNotEqual(statusbar.ICONS["time"], statusbar.ICONS["5h"])  # its own clock, not the 5-hour window's
         self.assertNotIn("1h33m", statusbar.plain(statusbar.fit(self.demo_row(cost={"total_cost_usd": 1.23}), 200)))
 
