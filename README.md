@@ -97,8 +97,11 @@ Nothing to look at here, but it shapes every session:
    ```powershell
    git clone https://github.com/Doofess/claude-setup C:\dev\claude-setup
    cd C:\dev\claude-setup
-   .\install.ps1
+   .\install.cmd
    ```
+
+   `install.cmd` runs `install.ps1` under PowerShell 7 when it is installed, else Windows PowerShell, past 5.1's
+   blocked-scripts policy. From Git Bash, run `./install.sh`, which calls it.
 
 4. Restart Claude Code and open a new terminal tab.
 5. Only for photo work: `python -m venv ~/.claude/skills/underwater-photoshop/.venv`, then
