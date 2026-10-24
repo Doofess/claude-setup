@@ -107,7 +107,7 @@ It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` 
 
 After installing, the installer prints a `Same experience` table (`name  expected  actual  ok|FAIL`) and fails if any
 row is wrong. It checks everything that decides what the screen looks like: the Nerd Font and Windows Terminal's font
-face and `cellHeight`, the `Campbell` colour scheme, Claude Code's `dark` theme, the status line command, the
+face and `cellHeight`, the `Campbell` colour scheme, Claude Code's theme (`custom:clear` with its file), the status line command, the
 session-cards mod being loaded, and Claude Code 2.1.308+, Python 3.10+ and Git Bash. It also runs the status bar on
 sample data and prints it, so a broken bar or a mangled meter glyph stops the install. Rows covered by `-KeepFont`,
 `-KeepScheme` or `-SkipFont` show `kept`.
@@ -138,6 +138,7 @@ git -C C:/dev/claude-setup pull && powershell -ExecutionPolicy Bypass -File C:/d
 | `CLAUDE.md` | `~/.claude/CLAUDE.md` |
 | `settings.json` | merged into `~/.claude/settings.json` (plugins, model and effort, skill overrides; see the merge rules below) |
 | `agents/*.md` | `~/.claude/agents/` |
+| `themes/*.json` | `~/.claude/themes/`; `custom:clear` is Claude Code's `dark` with `userMessageBackground` set to Campbell's background `#0c0c0c`, so the sticky prompt line at the top (the last prompt, once it scrolls away) has no grey bar. A typed `/command`'s echo row and the selected row in the background-tasks list lose their grey too. Its text stays the dim `subtle` grey and it has no border: Claude Code draws that one-row line itself, with no mod hook |
 | `statusbar.py` | `~/.claude/statusbar.py`, run by `statusLine` in `settings.json` every 60 s so the reset countdowns move |
 | `skills/<name>/` | `~/.claude/skills/<name>/` |
 | `mods/session-cards/` | stays in the repo; `install.ps1` adds its folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` and checks it with `claude plugin validate` |

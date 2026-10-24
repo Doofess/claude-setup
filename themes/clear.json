@@ -1,0 +1,7 @@
+{
+  "name": "Clear",
+  "base": "dark",
+  "overrides": {
+    "userMessageBackground": "#0c0c0c"
+  }
+}

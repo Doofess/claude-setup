@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusbar.py,statusline.py,keybindings.json} to ~/.claude/backups/claude-setup-<stamp>/
-  2. Copies CLAUDE.md, statusbar.py, skills/ and agents/ into ~/.claude
+  2. Copies CLAUDE.md, statusbar.py, themes/, skills/ and agents/ into ~/.claude
   3. Merges settings.json keys into the existing file (machine-local keys survive)
   4. Adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in enabledPlugins,
      updates them, then disables every plugin marked false
@@ -649,9 +649,13 @@ foreach ($f in 'CLAUDE.md', 'settings.json', 'statusbar.py', 'statusline.py', 'k
 }
 
 # 2. Copy files
-Write-Step 'Copying CLAUDE.md, statusbar.py, skills/, agents/'
+Write-Step 'Copying CLAUDE.md, statusbar.py, themes/, skills/, agents/'
 Copy-Item (Join-Path $repo 'CLAUDE.md') $claudeDir -Force
 Copy-Item (Join-Path $repo 'statusbar.py') $claudeDir -Force
+# Themes: settings.json selects custom:clear, which Claude Code reads from ~/.claude/themes/clear.json.
+$themesDir = Join-Path $claudeDir 'themes'
+New-Item -ItemType Directory -Force $themesDir | Out-Null
+Copy-Item (Join-Path $repo 'themes\*.json') $themesDir -Force
 # Skills: each folder under skills/ becomes ~/.claude/skills/<name>. Copy keeps a skill's local .venv.
 foreach ($skill in Get-ChildItem (Join-Path $repo 'skills') -Directory -ErrorAction SilentlyContinue) {
   $dest = Join-Path $claudeDir "skills\$($skill.Name)"
@@ -898,7 +902,9 @@ $schemeActual = if (-not $wtLook) { 'no Windows Terminal settings' } elseif ($wt
 Add-SameRow 'Terminal colour scheme' "$wantScheme, none on the default profile" $schemeActual ([bool]($wtLook -and $wtLook.Scheme -eq $wantScheme -and -not $wtLook.ProfileScheme)) ([bool]$KeepScheme)
 $themeProp = $installed.PSObject.Properties['theme']
 $wantTheme = [string]$template.theme
-Add-SameRow 'Claude Code theme' $wantTheme $(if ($themeProp) { [string]$themeProp.Value } else { 'unset' }) ([bool]($themeProp -and $themeProp.Value -eq $wantTheme))
+# A custom theme (custom:<slug>) also needs its file, or Claude Code falls back to its default theme.
+$themeFileOk = -not $wantTheme.StartsWith('custom:') -or (Test-Path (Join-Path $claudeDir "themes\$($wantTheme.Substring(7)).json"))
+Add-SameRow 'Claude Code theme' $wantTheme $(if ($themeProp) { [string]$themeProp.Value } else { 'unset' }) ([bool]($themeProp -and $themeProp.Value -eq $wantTheme -and $themeFileOk))
 $slInst = $installed.PSObject.Properties['statusLine']
 $slCmd = if ($slInst -and $slInst.Value) { [string]$slInst.Value.command } else { '' }
 Add-SameRow 'Status line command' 'ends with statusbar.py [--labels]' $(if ($slCmd) { $slCmd } else { 'unset' }) ($slCmd -match 'statusbar\.py( --labels)?$')
