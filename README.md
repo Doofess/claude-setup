@@ -178,8 +178,12 @@ Entries are compared ignoring slash style, trailing slash and case.
 ### Plugin and MCP policy
 
 - Always on (user scope): superpowers, frontend-design, context7, playwright, and the typescript, pyright and
-  rust-analyzer LSPs. claude-md-management is pinned off. The synced docs/docx/pdf/pptx/xlsx skills and the browser and
-  computer-use skills load by name only (`skillOverrides`). `good-css` is declared in `extraKnownMarketplaces`
+  rust-analyzer LSPs. claude-md-management and the synced design and engineering plugins are pinned off. The synced
+  docs/docx/pdf/pptx/xlsx skills and the browser and computer-use skills load by name only (`skillOverrides`).
+- Superpowers' brainstorming, diagnosing-superpowers, dispatching-parallel-agents, receiving-code-review,
+  requesting-code-review, verification-before-completion and writing-skills are off (`skillOverrides`): CLAUDE.md asks
+  design questions through `AskUserQuestion`, reviews with the built-in `/code-review`, and keeps "run the check before
+  saying done" as a rule of its own. `good-css` is declared in `extraKnownMarketplaces`
   (`vojtaholik/good-css`); enabling it is left to each machine.
 - Anything tied to one project (databases, deploy target, observability, Kubernetes) is project scope: `mcp-presets/`.
 - The GitHub MCP server stays off; `gh` does the same job with far less context.
