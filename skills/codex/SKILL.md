@@ -44,3 +44,5 @@ commit; review its diff, run the tests and commit yourself.
 
 `codex update`, run with the PowerShell tool, not Git Bash: from Git Bash the updater's bare `tar` is Git's GNU tar,
 which can't extract to a `C:\` path, and it fails with "did not contain the expected package layout".
+Then `codex app-server daemon update`: `codex update` leaves the background daemon on the old version
+(`codex app-server daemon version` prints both). It restarts the daemon, so run it when no Codex task is running.
