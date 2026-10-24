@@ -135,6 +135,8 @@ const EFFORT_COLOURS: Record<string, string> = {
   xhigh: 'autoAccept',
   max: '#eb5f57',
 }
+/** The status bar's model icon (md-robot), drawn before an agent's model in the model's colour. */
+const ROBOT = '\u{F06A9}'
 const SHIMMER = '#d0b4ff'
 const RAINBOW = ['#f58b57', '#fac35f', '#91c882'] // orange, yellow, green: the steps after the bolt's red
 
@@ -670,7 +672,7 @@ export const register: Register = on => {
       const tail = `   ${row.elapsed} · ${row.tokens}`
       const fixed =
         ` ${row.verb} ${row.type}`.length +
-        (row.model === undefined ? 0 : ` · ${row.model}`.length) +
+        (row.model === undefined ? 0 : [...` · ${ROBOT} ${row.model}`].length) +
         (row.effort === undefined ? 0 : `  ${row.effort}`.length) +
         2 +
         mark.length +
@@ -684,6 +686,7 @@ export const register: Register = on => {
           </Text>
           <Text color="text">{` ${row.type}`}</Text>
           {row.model !== undefined && <Text color="text">{' · '}</Text>}
+          {row.model !== undefined && <Text color={modelColour(row.model) ?? 'text'}>{`${ROBOT} `}</Text>}
           {row.model !== undefined && <Text color={modelColour(row.model) ?? 'text'} {...modelStyle}>
               {row.model}
             </Text>}
