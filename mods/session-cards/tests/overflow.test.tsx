@@ -16,6 +16,8 @@ const HINT_ROW = (hint: string, columns: number, extra: object = {}) =>
     ...extra,
   }) as const
 
+const SHIELD = '\u{F0BC5}'
+
 const span = (text: string, colour: string | null = null, bold = false) => ({ text, colour, bold })
 
 // Nothing sits beneath the plugin: these hooks stand for the engine, the
@@ -39,7 +41,7 @@ const engine = (
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
 
-    return <Text>engine</Text>
+    return <Text>{`engine ${e.props.hint}`}</Text>
   })
 }
 
@@ -96,7 +98,7 @@ test('test_overflow_is_cut_to_the_room', async ($, on) => {
 
   // Nothing fits: the engine's own line stays.
   const none = await $.ui.mount(HINT_ROW(hint, 40))
-  expect(await none.find({ type: 'Text', text: /^engine$/ })).toBeDefined()
+  expect(await none.find({ type: 'Text', text: /^engine / })).toBeDefined()
   await none.unmount()
 })
 
@@ -107,9 +109,9 @@ test('a mode label in front of the hint is counted, and the row is cut rather th
   const pieces = [[span('a'.repeat(10), 'green')], [span('b'.repeat(10), 'green')]]
   engine(on, JSON.stringify({ written_at: 1, columns: 80, pieces }))
 
-  // At 101 columns the room is 97: 27 + 46 + 2 + 10 = 85 fits, and the second piece would make 85 + 3 + 10 = 98.
-  const ui = await $.ui.mount(HINT_ROW(hint, 101))
-  expect(await line(ui)).toBe(`${hint}  ${'a'.repeat(10)}`)
+  // At 103 columns the room is 99: 27 + 2 + 46 + 2 + 10 = 87 fits, and the second piece would make 87 + 3 + 10 = 100.
+  const ui = await $.ui.mount(HINT_ROW(hint, 103))
+  expect(await line(ui)).toBe(`${SHIELD} ${hint}  ${'a'.repeat(10)}`)
   await ui.unmount()
 
   // Whatever the estimate, the row is one Text that truncates at the row's edge instead of wrapping.
@@ -124,13 +126,13 @@ test('any hint but the default mode\'s may have a mode label in front', async ($
   const pieces = [[span('a'.repeat(10), 'green')]]
   engine(on, JSON.stringify({ written_at: 1, columns: 80, pieces }))
 
-  // 27 + 7 + 2 + 10 = 46 is one more than the room of 49 - 4.
-  const tight = await $.ui.mount(HINT_ROW('1 shell', 49))
-  expect(await line(tight)).toBe('engine')
+  // 27 + 2 + 7 + 2 + 10 = 48 is one more than the room of 51 - 4.
+  const tight = await $.ui.mount(HINT_ROW('1 shell', 51))
+  expect(await line(tight)).toBe(`engine ${SHIELD} 1 shell`)
   await tight.unmount()
 
-  const room = await $.ui.mount(HINT_ROW('1 shell', 50))
-  expect(await line(room)).toBe(`1 shell  ${'a'.repeat(10)}`)
+  const room = await $.ui.mount(HINT_ROW('1 shell', 52))
+  expect(await line(room)).toBe(`${SHIELD} 1 shell  ${'a'.repeat(10)}`)
   await room.unmount()
 
   // The default mode's hint has no label: 15 + 2 + 10 = 27 fits 31 - 4.
@@ -164,7 +166,7 @@ test('test_no_overflow_file_passes_to_the_engine', async ($, on) => {
   engine(on, null)
 
   const ui = await $.ui.mount(HINT_ROW(HINT, 160))
-  expect(await ui.find({ type: 'Text', text: /^engine$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^engine / })).toBeDefined()
   await ui.unmount()
 })
 
@@ -176,7 +178,7 @@ test('test_bad_overflow_file_passes_to_the_engine', async ($, on) => {
     file = bad
 
     const ui = await $.ui.mount(HINT_ROW(HINT, 160))
-    expect(await ui.find({ type: 'Text', text: /^engine$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^engine / })).toBeDefined()
     await ui.unmount()
   }
 })
@@ -185,7 +187,7 @@ test('test_other_surfaces_pass', async ($, on) => {
   engine(on, JSON.stringify({ written_at: 1, columns: 160, pieces: [[span('$1.23', 'green')]] }))
 
   const ui = await $.ui.mount(HINT_ROW(HINT, 160, { surface: 'desktop' }))
-  expect(await ui.find({ type: 'Text', text: /^engine$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^engine / })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /\$1\.23/ })).toBeUndefined()
   await ui.unmount()
 })
@@ -214,5 +216,30 @@ test('the folder is looked up under USERPROFILE before HOME', async ($, on) => {
 
   const ui = await $.ui.mount(HINT_ROW(HINT, 160))
   expect(await line(ui)).toBe(`${HINT}  $1.23`)
+  await ui.unmount()
+})
+
+test('a mode label is followed by the permissions shield, dim like the hint', async ($, on) => {
+  // The engine draws `⏵⏵ bypass permissions on` and its own dim ` · ` before the hint; the shield (md-shield_key_outline)
+  // starts the hint, so the row reads `⏵⏵ bypass permissions on · <shield> (shift+tab to cycle)`.
+  const hint = '(shift+tab to cycle)'
+  engine(on, null)
+
+  const passed = await $.ui.mount(HINT_ROW(hint, 160))
+  expect(await line(passed)).toBe(`engine ${SHIELD} ${hint}`)
+  await passed.unmount()
+
+  // The default mode has no label, so no shield.
+  const plain = await $.ui.mount(HINT_ROW(HINT, 160))
+  expect(await line(plain)).toBe(`engine ${HINT}`)
+  await plain.unmount()
+})
+
+test('the shield is drawn dim in front of the hint beside the overflow', async ($, on) => {
+  engine(on, JSON.stringify({ written_at: 1, columns: 160, pieces: [[span('$1.23', 'green')]] }))
+
+  const ui = await $.ui.mount(HINT_ROW('(shift+tab to cycle)', 160))
+  expect(await line(ui)).toBe(`${SHIELD} (shift+tab to cycle)  $1.23`)
+  expect((await ui.find({ type: 'Text', text: /^\u{F0BC5} \(shift\+tab to cycle\)$/u }))?.props.dimColor).toBe(true)
   await ui.unmount()
 })

@@ -240,6 +240,13 @@ const SEPARATOR = ' │ '
  */
 const MODE_LABEL = 27
 
+/**
+ * The permissions shield (md-shield_key_outline) that starts the hint behind a mode label. The engine draws the
+ * label's ` · ` itself, outside this hook, so the shield follows the dot: `⏵⏵ bypass permissions on · <shield> (…)`.
+ * The mode is not on the event, so it is dim like the hint rather than in the mode's colour.
+ */
+const SHIELD = '\u{F0BC5}'
+
 function isSpan(value: unknown): value is Span {
   return typeof field(value, 'text') === 'string'
 }
@@ -697,11 +704,16 @@ export const register: Register = on => {
 
     await read($, overflowTick)
 
+    const { hint } = e.props
+    const label = hint.startsWith('? for shortcuts') ? 0 : MODE_LABEL
+    const shown = label === 0 ? hint : `${SHIELD} ${hint}`
+    const pass = () => next(shown === hint ? e : { ...e, props: { ...e.props, hint: shown } })
+
     // statusbar.py writes under Python's expanduser("~"), which on Windows is USERPROFILE.
     const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
 
     if (!home) {
-      return next(e)
+      return pass()
     }
 
     let pieces: Span[][] | null
@@ -709,15 +721,13 @@ export const register: Register = on => {
     try {
       pieces = parseOverflow(await $.fs.read(`${home}/.claude/statusbar-overflow/${await $.session.id()}.json`))
     } catch {
-      return next(e)
+      return pass()
     }
 
-    const { hint } = e.props
-    const label = hint.startsWith('? for shortcuts') ? 0 : MODE_LABEL
-    const fits = pieces === null ? [] : fitPieces(pieces, label + [...hint].length, (e.viewport?.columns ?? 80) - 4)
+    const fits = pieces === null ? [] : fitPieces(pieces, label + [...shown].length, (e.viewport?.columns ?? 80) - 4)
 
     if (fits.length === 0) {
-      return next(e)
+      return pass()
     }
 
     const { Box, Text } = $.ui.resolve(e)
@@ -725,7 +735,7 @@ export const register: Register = on => {
     // One Text, so a row narrower than the estimate cuts its end instead of wrapping onto a second line.
     return (
       <Text wrap="truncate-end">
-        <Text dimColor>{hint}</Text>
+        <Text dimColor>{shown}</Text>
         <Text>{'  '}</Text>
         {fits.map((piece, i) => [
           i > 0 && <Text color="text">{SEPARATOR}</Text>,
