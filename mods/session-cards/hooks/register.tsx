@@ -226,7 +226,7 @@ export function turnLine(r: TurnRecord): { duration: string; done: string; shell
 const agentTick = atom({ plugin: 'session-cards', key: 'agentTick' } as const, 0)
 
 /** One run of the status bar's overflow: `colour` is a colour name, a hex string, or null for the default. */
-type Span = { text: string; colour: string | null; bold: boolean }
+type Span = { text: string; colour: string | null; bold: boolean; underline?: boolean }
 
 /** Bumped every minute so the hint line reads the overflow file again. */
 const overflowTick = atom({ plugin: 'session-cards', key: 'overflowTick' } as const, 0)
@@ -707,7 +707,7 @@ export const register: Register = on => {
         {fits.map((piece, i) => [
           i > 0 && <Text color="text">{SEPARATOR}</Text>,
           ...piece.map(span => (
-            <Text color={span.colour ?? undefined} bold={span.bold === true}>
+            <Text color={span.colour ?? undefined} bold={span.bold === true} underline={span.underline === true}>
               {span.text}
             </Text>
           )),

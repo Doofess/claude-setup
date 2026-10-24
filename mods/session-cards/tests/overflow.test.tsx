@@ -71,6 +71,16 @@ test('pieces are joined by a bar, spans keep their colour and bold', async ($, o
   await ui.unmount()
 })
 
+test('an underlined span stays underlined, and only that one', async ($, on) => {
+  const pieces = [[{ ...span('#12', 'yellow'), underline: true }], [span('$1.23', 'green')]]
+  engine(on, JSON.stringify({ written_at: 1, columns: 160, pieces }))
+
+  const ui = await $.ui.mount(HINT_ROW(HINT, 160))
+  expect((await ui.find({ type: 'Text', text: /^#12$/ }))?.props.underline).toBe(true)
+  expect((await ui.find({ type: 'Text', text: /^\$1\.23$/ }))?.props.underline).not.toBe(true)
+  await ui.unmount()
+})
+
 test('test_overflow_is_cut_to_the_room', async ($, on) => {
   const hint = 'h'.repeat(30)
   const pieces = [[span('a'.repeat(10), 'green')], [span('b'.repeat(10), 'green')]]

@@ -5,19 +5,19 @@ sample data instead and `--demo-json` prints that sample as the JSON Claude Code
 
 The line reads left to right: repo (owner/name), git branch, PR number │ model · effort │ a context
 meter with tokens used out of the auto-compact point │ the 5-hour and 7-day plan usage meters with the
-time until each resets, each named 5H or 7D beside its icon │ cost. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
-short words (ctx, 5H, 7D) so the bar also reads in a font without the glyphs (the installer adds the flag
+time until each resets, each named 5H or 7D beside its icon │ cost │ how long the session has run. Each piece has a Nerd Font icon in front; `--labels` swaps the icons for
+short words (ctx, 5H, 7D, session) so the bar also reads in a font without the glyphs (the installer adds the flag
 on a machine with no Nerd Font). Colours are the terminal's own 16-colour palette, so the bar follows the
-terminal's scheme: cost green, each model and each effort level its own colour. Everything else is sent as
+terminal's scheme: cost green, the PR number yellow and underlined, the session time bright blue, each model and each effort level its own colour. Everything else is sent as
 exact 24-bit colours, never the terminal's default foreground (a light grey in most schemes): the chrome
-(separators, the place and model icons, branch, PR number, reset times) in pure white; the repo name in the
+(separators, the place and model icons, branch, reset times) in pure white; the repo name in the
 violet Claude Code highlights with (its dark theme's `permission` colour, rgb 177,185,249); and the three
 8-cell meters, whose icon, figures, filled blocks and (darker) unfilled blocks all take the meter's level:
 green below 50%, yellow from 50, orange from 70, red from 90. Nothing is grey.
 
 Width fitting: the line may use COLUMNS minus a small margin that Claude Code keeps for itself. Each
 piece (a segment) has a priority. While the line is too wide, the piece with the highest priority
-number is dropped: cost first, then the 7-day and 5-hour reset times, the PR number, the effort, then
+number is dropped: the session time first, then cost, then the 7-day and 5-hour reset times, the PR number, the effort, then
 the 7-day and 5-hour meters; the repo, the branch, the model and the context meter always stay. Once
 the line fits, dropped pieces that still fit come back, most important first, so no room is left unused.
 When even the pieces that always stay are too wide, the repo gives up the difference: its owner goes
@@ -47,7 +47,9 @@ import time
 GREEN = 32
 YELLOW = 33
 RED = 31
+BLUE = 94  # bright blue: the plain one is too dark on black
 BOLD = 1
+UNDERLINE = 4
 # Claude Code's own highlight colour (the dark theme's `permission` token), 24-bit so it matches exactly: the repo name.
 VIOLET = "38;2;177;185;249"
 # The chrome: pure white, 24-bit, because the terminal's default foreground is a light grey in most schemes.
@@ -106,6 +108,17 @@ def fmt_reset(resets_at: float, now: float) -> str:
     if hours < 24:
         return f"→ {hours}h{minutes % 60}m"
     return f"→ {hours // 24}d{hours % 24}h"  # minutes would be noise this far out
+
+
+def fmt_elapsed(ms: float) -> str:
+    """How long the session has run: 0m, 12m, 1h33m, 1d2h."""
+    minutes = int(ms) // 60_000
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h{minutes % 60}m"
+    return f"{hours // 24}d{hours % 24}h"
 
 
 def meter(pct: float, cells: int) -> str:
@@ -284,17 +297,18 @@ SEPARATOR = sgr(WHITE, " │ ")  # separators, icons and labels are explicit whi
 # (text with colours, priority, group): priority 0 never drops, a higher number drops sooner;
 # segments of one group sit together and groups are joined by a separator.
 Segment = tuple[str, int, int]
-# Drop order, least important first (the user's call: cost, then reset times, then the rest). The repo never drops:
-# it always opens the line, like the branch, model and context meter.
-P_COST, P_7D_RESET, P_5H_RESET, P_PR, P_EFFORT, P_7D, P_5H = 7, 6, 5, 4, 3, 2, 1
-G_PLACE, G_MODEL, G_CONTEXT, G_5H, G_7D, G_COST = range(6)
+# Drop order, least important first (the user's call: session time, cost, then reset times, then the rest). The repo
+# never drops: it always opens the line, like the branch, model and context meter.
+P_TIME, P_COST, P_7D_RESET, P_5H_RESET, P_PR, P_EFFORT, P_7D, P_5H = 8, 7, 6, 5, 4, 3, 2, 1
+G_PLACE, G_MODEL, G_CONTEXT, G_5H, G_7D, G_COST, G_TIME = range(7)
 GROUP_JOIN = {G_MODEL: sgr(WHITE, " · ")}  # "Opus · high"; every other group joins its pieces with two spaces
 
 # Markers before a piece: a Nerd Font glyph (the default) or, with --labels, a short word for fonts without the
 # glyphs (then the repo, branch, PR and model carry no marker: they read on their own). Every glyph is followed
 # by a space because the non-Mono Nerd Font variants draw it wider than one cell and it would overlap the text.
-ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "pr": "\uf407", "model": "\uf2db", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073"}
-LABELS = {"ctx": "ctx", "5h": "5H", "7d": "7D"}
+ICONS = {"repo": "\uf09b", "branch": "\ue0a0", "pr": "\uf407", "model": "\uf2db", "ctx": "\uf1c0", "5h": "\uf017", "7d": "\uf073",
+         "time": "󰅐"}  # time: md-clock-outline, since fa-clock-o is the 5-hour window's
+LABELS = {"ctx": "ctx", "5h": "5H", "7d": "7D", "time": "session"}
 GITLAB = "38;2;252;109;38"  # #FC6D26, GitLab's orange
 # The repo piece's icon and colour by host kind (origin_remote): GitHub, GitLab, and the plain git glyph for the rest.
 REPO_LOOKS = {"github": (ICONS["repo"], VIOLET), "gitlab": ("", GITLAB), "other": ("", VIOLET)}
@@ -381,7 +395,7 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     if branch_name:
         out.append((_mark(marks, "branch", sgr(WHITE, branch_name)), 0, G_PLACE))
     if number:
-        out.append((_mark(marks, "pr", sgr(WHITE, f"#{number}")), P_PR, G_PLACE))
+        out.append((_mark(marks, "pr", sgr(UNDERLINE, sgr(YELLOW, f"#{number}")), YELLOW), P_PR, G_PLACE))
     if name:
         colour = model_colour(str(name))
         out.append((_mark(marks, "model", sgr(BOLD, _coloured(str(name), colour)), colour), 0, G_MODEL))
@@ -410,6 +424,8 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     cost = _dict(data.get("cost"))
     if isinstance(cost.get("total_cost_usd"), (int, float)):
         out.append((sgr(GREEN, f"${cost['total_cost_usd']:.2f}"), P_COST, G_COST))
+    if isinstance(cost.get("total_duration_ms"), (int, float)):
+        out.append((_mark(marks, "time", sgr(BLUE, fmt_elapsed(cost["total_duration_ms"])), BLUE), P_TIME, G_TIME))
     return out
 
 
@@ -447,20 +463,22 @@ def fit(segments: list[Segment], width: int) -> str:
 
 
 def spans(text: str) -> list[dict]:
-    """text split into runs of one style, each `{"text", "colour", "bold"}`, for the mod to draw: the colour is
+    """text split into runs of one style, each `{"text", "colour", "bold"}` (plus `"underline": true` where underlined), for the mod to draw: the colour is
     a terminal name (`green`, `redBright`), a hex value for a 24-bit colour, or None for the default."""
     out: list[dict] = []
     colour: str | None = None
-    bold = False
+    bold = underline = False
     pos = 0
     for match in SGR_RE.finditer(text):
-        _add_span(out, text[pos:match.start()], colour, bold)
+        _add_span(out, text[pos:match.start()], colour, bold, underline)
         pos = match.end()
         params = match.group()[2:-1]
         if params in ("", "0"):
-            colour, bold = None, False
+            colour, bold, underline = None, False, False
         elif params == "1":
             bold = True
+        elif params == "4":
+            underline = True
         elif params.startswith("38;2;"):
             r, g, b = (int(v) for v in params.split(";")[2:5])
             colour = f"#{r:02x}{g:02x}{b:02x}"
@@ -468,17 +486,19 @@ def spans(text: str) -> list[dict]:
             colour = COLOUR_NAMES[int(params) - 30]
         elif params.isdigit() and 90 <= int(params) <= 97:
             colour = COLOUR_NAMES[int(params) - 90] + "Bright"
-    _add_span(out, text[pos:], colour, bold)
+    _add_span(out, text[pos:], colour, bold, underline)
     return out
 
 
-def _add_span(out: list[dict], text: str, colour: str | None, bold: bool) -> None:
+def _add_span(out: list[dict], text: str, colour: str | None, bold: bool, underline: bool = False) -> None:
+    """Appends a run, merged into the last one when the style is the same; `underline` is only written when set."""
     if not text:
         return
-    if out and out[-1]["colour"] == colour and out[-1]["bold"] == bold:
+    span = {"text": text, "colour": colour, "bold": bold} | ({"underline": True} if underline else {})
+    if out and {**out[-1], "text": text} == span:
         out[-1]["text"] += text
     else:
-        out.append({"text": text, "colour": colour, "bold": bold})
+        out.append(span)
 
 
 def overflow_record(dropped: list[Segment], columns: int, now: float) -> dict:
@@ -561,7 +581,7 @@ DEMO = {
         "five_hour": {"used_percentage": 23, "resets_at": DEMO_NOW + 2 * 3600 + 10 * 60},
         "seven_day": {"used_percentage": 41, "resets_at": DEMO_NOW + 3 * 86400 + 4 * 3600},
     },
-    "cost": {"total_cost_usd": 1.23},
+    "cost": {"total_cost_usd": 1.23, "total_duration_ms": 5_580_000},
 }
 
 
