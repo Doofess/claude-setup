@@ -348,7 +348,8 @@ const joined = (pieces: Span[][]): Span[] => pieces.flatMap((piece, i) => (i ===
  * Where the second row's pieces go, as offsets inside the hook's tree, which starts after the mode label at screen
  * column `HINT_X + record.label` and opens with `hintCells` of hint and two spaces. Reset times go under their bar
  * (one the hint reaches is not drawn); moved bars go where the record lines them up, or join the right group when
- * one would start inside the hint or run past the margin; the right group ends at the margin of `columns - 4`.
+ * one would start inside the hint or run past the margin; the right group ends at the margin of `columns - 4`, or,
+ * when a piece there blocks it and it holds no moved bar, in the rightmost gap that fits, a separator before a piece.
  * While the right group reaches the hint or a piece before it, the highest rank among those pieces drops, so a
  * moved bar outranks a reset time it collides with. Null when nothing is left to draw.
  */
@@ -372,8 +373,9 @@ export function placeRow(record: Overflow, hintCells: number, columns: number): 
   const bars = (record.bars ?? []).map(bar => ({ ...bar, col: bar.col - origin }))
   const clear = (bar: Placed) => fixed.every(piece => endOf(piece) <= bar.col || endOf(bar) <= piece.col)
   let right: Ranked[] = record.right ?? []
+  const barsLinedUp = bars.every(bar => inRow(bar) && clear(bar))
 
-  if (bars.every(bar => inRow(bar) && clear(bar))) {
+  if (barsLinedUp) {
     fixed = [...fixed, ...bars]
   } else {
     right = [...bars.map(({ rank, spans }) => ({ rank, spans })), ...right]
@@ -383,12 +385,24 @@ export function placeRow(record: Overflow, hintCells: number, columns: number): 
 
   while (right.length > 0) {
     const spans = joined(right.map(piece => piece.spans))
-    const start = end - widthOf(spans)
+    const width = widthOf(spans)
+    const start = end - width
     // Two spaces between a piece before and the right group, as after the hint.
     const blocking = fixed.filter(piece => endOf(piece) + 2 > start)
 
     if (start >= left && blocking.length === 0) {
       group = { col: start, spans }
+      break
+    }
+
+    // With the margin taken, a group of no moved bar (which would leave the meters' order) goes in the rightmost
+    // free gap, ending a separator before the piece after it.
+    const fits = (col: number) =>
+      col >= left && fixed.every(piece => endOf(piece) + 2 <= col || col + width + SEPARATOR.length <= piece.col)
+    const gap = barsLinedUp ? Math.max(...fixed.map(piece => piece.col - SEPARATOR.length - width).filter(fits)) : -Infinity
+
+    if (gap > -Infinity) {
+      group = { col: gap, spans }
       break
     }
 

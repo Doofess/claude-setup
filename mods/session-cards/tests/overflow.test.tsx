@@ -284,14 +284,32 @@ test('right pieces end at the margin', async ($, on) => {
 
 test('right pieces drop by rank on collision', () => {
   const right = [{ rank: 5, spans: [span('$1.23')] }, { rank: 6, spans: [span('1h 33m')] }]
-  const end = 120 - 4 - HINT_X - 27 // tree offset of the margin
-  // An under piece ending 12 cells before the margin: `$1.23 │ 1h 33m` (14) does not fit beside it, `$1.23` does.
+  // At 83 columns the margin is tree offset 50; an under piece at 34 ends 11 cells before it. `$1.23 │ 1h 33m` (14)
+  // fits neither beside it nor in the gap after the 22-cell hint, `$1.23` does beside it.
   const at = (offset: number) => offset + HINT_X + 27
-  const one = placedText(placeRow(record({ under: [{ col: at(end - 16), rank: 3, spans: [span('2h10m')] }], right }), 22, 120))
-  expect(one?.map(p => p.text)).toEqual(['2h10m', '$1.23'])
-  // Closer still: the cost goes too, and the reset time keeps its place.
-  const none = placedText(placeRow(record({ under: [{ col: at(end - 8), rank: 3, spans: [span('2h10m')] }], right }), 22, 120))
-  expect(none).toEqual([{ col: end - 8, text: '2h10m' }])
+  const one = placedText(placeRow(record({ under: [{ col: at(34), rank: 3, spans: [span('2h10m')] }], right }), 22, 83))
+  expect(one).toEqual([{ col: 34, text: '2h10m' }, { col: 45, text: '$1.23' }])
+  // Narrower still: the cost goes too, and the reset time keeps its place.
+  const none = placedText(placeRow(record({ under: [{ col: at(29), rank: 3, spans: [span('2h10m')] }], right }), 22, 70))
+  expect(none).toEqual([{ col: 29, text: '2h10m' }])
+})
+
+test('right pieces the margin has no room for go in the gap before the piece there', () => {
+  const right = [{ rank: 5, spans: [span('$1.23')] }, { rank: 6, spans: [span('1h 33m')] }]
+  const end = 120 - 4 - HINT_X - 27
+  const at = (offset: number) => offset + HINT_X + 27
+  // A reset time 16 cells before the margin: the pair ends a separator before it and is drawn with the separator.
+  const placed = placedText(placeRow(record({ under: [{ col: at(end - 16), rank: 3, spans: [span('2h10m')] }], right }), 22, 120))
+  expect(placed).toEqual([{ col: end - 16 - 3 - 14, text: '$1.23 │ 1h 33m │ 2h10m' }])
+
+  // Live at 117 columns: the 7D bar lined up under the 5H bar holds the margin, so the cost and the session time go
+  // in the free cells between the hint and the bar.
+  const bar = { col: 82, rank: 2, spans: [span(' 7D ████████ 33%  → 4d21h')] }
+  const live = record({ bars: [bar], right: [{ rank: 5, spans: [span('$29.73')] }, { rank: 6, spans: [span('\u{F0150} 1h49m')] }] })
+  const pair = '$29.73 │ \u{F0150} 1h49m'
+  expect(placedText(placeRow(live, 22, 117))).toEqual([
+    { col: 82 - HINT_X - 27 - 3 - cellsOf(pair), text: `${pair} │  7D ████████ 33%  → 4d21h` },
+  ])
 })
 
 test('moved bar lines up', () => {
