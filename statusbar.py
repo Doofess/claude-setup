@@ -610,10 +610,11 @@ def overflow_record(kept: list[Segment], dropped: list[Segment], columns: int, n
             "under": under, "bars": bars, "right": right}
 
 
-def mode_label_cells(transcript_path: str | None) -> int:
+def mode_label_cells(transcript_path: str | None, last: int | None = None) -> int:
     """Cells of the permission-mode label Claude Code draws before its hint (`⏵⏵ bypass permissions on · `), for the
-    mode in the last `permission-mode` entry of the transcript's last LABEL_TAIL bytes. With no transcript, no such
-    entry or a mode it does not know, the bypass width."""
+    mode in the last `permission-mode` entry of the transcript's last LABEL_TAIL bytes. With no transcript or no such
+    entry (a long turn can write more than LABEL_TAIL between two), `last`: the width the session's previous record
+    said (see last_label); without that, or for a mode it does not know, the bypass width."""
     mode = None
     try:
         with open(transcript_path, "rb") as f:  # type: ignore[arg-type]  # None raises TypeError, caught below
@@ -632,7 +633,19 @@ def mode_label_cells(transcript_path: str | None) -> int:
                 break
     except (OSError, TypeError, ValueError):
         pass
+    if mode is None and isinstance(last, int):
+        return last
     return LABEL_CELLS[mode] if isinstance(mode, str) and mode in LABEL_CELLS else LABEL_CELLS["bypassPermissions"]
+
+
+def _overflow_path(home: str, session_id: str) -> str:
+    return os.path.join(home, OVERFLOW_DIR, re.sub(r"[^\w.-]", "_", session_id) + ".json")
+
+
+def last_label(home: str, session_id: str) -> int | None:
+    """The mode label width in the session's last overflow record, or None when it has none."""
+    label = _read_json(_overflow_path(home, session_id)).get("label")
+    return label if isinstance(label, int) and not isinstance(label, bool) else None
 
 
 def prune_overflow(folder: str, now: float) -> None:
@@ -652,7 +665,7 @@ def write_overflow(home: str, session_id: str, record: dict) -> None:
     folder = os.path.join(home, OVERFLOW_DIR)
     os.makedirs(folder, exist_ok=True)
     prune_overflow(folder, record["written_at"])
-    path = os.path.join(folder, re.sub(r"[^\w.-]", "_", session_id) + ".json")
+    path = _overflow_path(home, session_id)
     temp = f"{path}.{os.getpid()}.tmp"
     with open(temp, "w", encoding="utf-8") as f:
         json.dump(record, f)
@@ -748,7 +761,7 @@ def main(argv: list[str]) -> int:
             session_id = data.get("session_id")
             if isinstance(session_id, str) and session_id:
                 try:
-                    label = mode_label_cells(data.get("transcript_path"))
+                    label = mode_label_cells(data.get("transcript_path"), last_label(os.path.expanduser("~"), session_id))
                     write_overflow(os.path.expanduser("~"), session_id, overflow_record(kept, dropped, columns, now, label))
                 except Exception:  # the line is already printed; a lost overflow file costs nothing visible
                     pass

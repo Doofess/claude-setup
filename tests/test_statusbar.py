@@ -381,6 +381,31 @@ class RowTest(unittest.TestCase):
         # Only the tail is read: a mode line 5 MB back is not found, and the bypass width stands.
         self.assertEqual(statusbar.mode_label_cells(transcript("old.jsonl", mode("plan"), filler)), statusbar.LABEL_CELLS["bypassPermissions"])
 
+    def test_mode_label_keeps_the_last_known_width_through_a_long_turn(self):
+        # A big turn writes more than LABEL_TAIL between two permission-mode entries: the tail has none, and the
+        # width the session's last overflow record said stands instead of the bypass guess.
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        path = os.path.join(folder, "t.jsonl")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "permission-mode", "permissionMode": "plan"}) + "\n" + "x" * (statusbar.LABEL_TAIL + 10) + "\n")
+        self.assertEqual(statusbar.mode_label_cells(path, statusbar.LABEL_CELLS["plan"]), statusbar.LABEL_CELLS["plan"])
+        self.assertEqual(statusbar.mode_label_cells(path), statusbar.LABEL_CELLS["bypassPermissions"])
+        self.assertEqual(statusbar.mode_label_cells(None, 0), 0)
+        # An entry in the tail wins over the last record's width.
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "permission-mode", "permissionMode": "acceptEdits"}) + "\n")
+        self.assertEqual(statusbar.mode_label_cells(path, statusbar.LABEL_CELLS["plan"]), statusbar.LABEL_CELLS["acceptEdits"])
+
+    def test_last_label_reads_the_session_record(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home)
+        self.assertIsNone(statusbar.last_label(home, "s1"))
+        statusbar.write_overflow(home, "s1", {"written_at": time.time(), "columns": 120, "pieces": [], "label": 17})
+        self.assertEqual(statusbar.last_label(home, "s1"), 17)
+        statusbar.write_overflow(home, "s2", {"written_at": time.time(), "columns": 120, "pieces": []})  # an older bar's record
+        self.assertIsNone(statusbar.last_label(home, "s2"))
+
     def test_no_pr_number_on_the_bar(self):
         # Claude Code draws its own PR badge next to the status line, so the bar leaves it out.
         self.assertNotIn("#12", statusbar.plain(statusbar.fit(self.demo_row(pr={"number": 12}), 200)))
