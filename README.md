@@ -72,6 +72,9 @@ Nothing to look at here, but it shapes every session:
   for implementation briefs).
 - **Plugins and connectors**: a short always-on list, with everything project-specific kept per project (see
   [Plugin and MCP policy](#plugin-and-mcp-policy)).
+- **`advisor-switch`**: turns Claude Code's advisor on (Opus, or Fable when Opus is stuck) and off for one project, in
+  its `.claude/settings.local.json`. Claude runs it itself before and after a plan with workers; the installer removes a
+  user-level `advisorModel`, so the advisor is never on in every project at once.
 - **`underwater-photoshop`**: a personal skill that edits underwater and macro photos in the local Photoshop.
 
 ## Set up a new machine (Windows)
