@@ -1,4 +1,5 @@
 import { expect, mock, test, type TestBody } from 'claude-code/testing'
+import { placeRow } from '../hooks/register'
 
 type On = Parameters<TestBody>[1]
 
@@ -242,4 +243,127 @@ test('the shield is drawn dim in front of the hint beside the overflow', async (
   expect(await line(ui)).toBe(`${SHIELD} (shift+tab to cycle)  $1.23`)
   expect((await ui.find({ type: 'Text', text: /^\u{F0BC5} \(shift\+tab to cycle\)$/u }))?.props.dimColor).toBe(true)
   await ui.unmount()
+})
+
+// The second row from statusbar.py's placed record (since the second-row layout): `under` reset times at their bar's
+// screen column, moved `bars` lined up under the top row, the `right` group ending at the margin.
+const HINT_X = 2
+const BYPASS = '(shift+tab to cycle)'
+const cellsOf = (text: string) => [...text].length
+const record = (extra: object) => ({ written_at: 1, columns: 120, pieces: [], label: 27, under: [], bars: [], right: [], ...extra })
+const placedText = (placed: { col: number; spans: { text: string }[] }[] | null) =>
+  placed?.map(p => ({ col: p.col, text: p.spans.map(s => s.text).join('') }))
+
+test('under piece lands at its column', async ($, on) => {
+  const r = record({ under: [{ col: 60, rank: 4, spans: [span('3d4h')] }] })
+  expect(placedText(placeRow(r, 22, 120))).toEqual([{ col: 60 - HINT_X - 27, text: '3d4h' }])
+  expect(placedText(placeRow({ ...r, label: 0 }, 15, 120))).toEqual([{ col: 60 - HINT_X, text: '3d4h' }])
+
+  // Drawn on the row: the hint, then spaces up to the piece.
+  engine(on, JSON.stringify(r))
+  const ui = await $.ui.mount(HINT_ROW(BYPASS, 120))
+  const text = await line(ui)
+  expect(cellsOf(text?.slice(0, text.indexOf('3d4h')) ?? '')).toBe(60 - HINT_X - 27) // by code point: the shield is two UTF-16 units
+  expect(text?.startsWith(`${SHIELD} ${BYPASS}  `)).toBe(true)
+  await ui.unmount()
+})
+
+test('right pieces end at the margin', async ($, on) => {
+  const r = record({ right: [{ rank: 5, spans: [span('$1.23', 'green')] }, { rank: 6, spans: [span('1h 33m')] }] })
+  const placed = placedText(placeRow(r, 22, 120))
+  expect(placed).toEqual([{ col: 120 - 4 - HINT_X - 27 - cellsOf('$1.23 │ 1h 33m'), text: '$1.23 │ 1h 33m' }])
+
+  engine(on, JSON.stringify(r))
+  const ui = await $.ui.mount(HINT_ROW(BYPASS, 120))
+  const text = (await line(ui)) ?? ''
+  expect(text.endsWith('$1.23 │ 1h 33m')).toBe(true)
+  expect(cellsOf(text)).toBe(120 - 4 - HINT_X - 27)
+  expect((await ui.find({ type: 'Text', text: /^ │ $/ }))?.props.color).toBe('text')
+  await ui.unmount()
+})
+
+test('right pieces drop by rank on collision', () => {
+  const right = [{ rank: 5, spans: [span('$1.23')] }, { rank: 6, spans: [span('1h 33m')] }]
+  const end = 120 - 4 - HINT_X - 27 // tree offset of the margin
+  // An under piece ending 12 cells before the margin: `$1.23 │ 1h 33m` (14) does not fit beside it, `$1.23` does.
+  const at = (offset: number) => offset + HINT_X + 27
+  const one = placedText(placeRow(record({ under: [{ col: at(end - 16), rank: 3, spans: [span('2h10m')] }], right }), 22, 120))
+  expect(one?.map(p => p.text)).toEqual(['2h10m', '$1.23'])
+  // Closer still: the cost goes too, and the reset time keeps its place.
+  const none = placedText(placeRow(record({ under: [{ col: at(end - 8), rank: 3, spans: [span('2h10m')] }], right }), 22, 120))
+  expect(none).toEqual([{ col: end - 8, text: '2h10m' }])
+})
+
+test('moved bar lines up', () => {
+  const bar = { col: 70, rank: 2, spans: [span('7D ████████ 41%  → 3d4h')] }
+  const placed = placedText(placeRow(record({ bars: [bar], right: [{ rank: 6, spans: [span('1h 33m')] }] }), 22, 120))
+  expect(placed?.[0]).toEqual({ col: 70 - HINT_X - 27, text: '7D ████████ 41%  → 3d4h' })
+  const last = placed?.[placed.length - 1]
+  expect(last && last.col + cellsOf(last.text)).toBe(120 - 4 - HINT_X - 27)
+
+  // A second bar a separator after the first is drawn with the separator.
+  const second = { col: 70 + cellsOf(bar.spans[0].text) + 3, rank: 1, spans: [span('5H ████████ 23%')] }
+  expect(placedText(placeRow(record({ bars: [bar, second] }), 22, 140))).toEqual([
+    { col: 70 - HINT_X - 27, text: `7D ████████ 41%  → 3d4h │ 5H ████████ 23%` },
+  ])
+})
+
+test('bar that cannot line up goes right', () => {
+  const bar = { col: 40, rank: 2, spans: [span('7D ████████ 41%')] } // tree offset 11, inside the 22-cell hint
+  const placed = placedText(placeRow(record({ bars: [bar], right: [{ rank: 6, spans: [span('1h 33m')] }] }), 22, 120))
+  expect(placed).toEqual([{ col: 120 - 4 - HINT_X - 27 - cellsOf('7D ████████ 41% │ 1h 33m'), text: '7D ████████ 41% │ 1h 33m' }])
+  // Ranks are kept: on a narrower row the session time (6) drops before the moved bar (2).
+  expect(placedText(placeRow(record({ bars: [bar], right: [{ rank: 6, spans: [span('1h 33m')] }] }), 22, 74))?.map(p => p.text)).toEqual([
+    '7D ████████ 41%',
+  ])
+})
+
+test('hint wins over an under piece', () => {
+  const r = record({ under: [{ col: 20, rank: 3, spans: [span('2h10m')] }, { col: 100, rank: 4, spans: [span('3d4h')] }] })
+  expect(placedText(placeRow(r, 50, 120))).toEqual([{ col: 100 - HINT_X - 27, text: '3d4h' }])
+})
+
+test('old record falls back', async ($, on) => {
+  // Only `pieces`: an older statusbar.py. Left-packed after the hint, as before.
+  engine(on, JSON.stringify({ written_at: 1, columns: 160, pieces: [[span('$1.23', 'green')], [span('c')]] }))
+  const ui = await $.ui.mount(HINT_ROW(HINT, 160))
+  expect(await line(ui)).toBe(`${HINT}  $1.23 │ c`)
+  await ui.unmount()
+})
+
+test('too narrow returns engine line', async ($, on) => {
+  const r = record({ under: [{ col: 60, rank: 4, spans: [span('3d4h')] }], right: [{ rank: 6, spans: [span('1h 33m')] }] })
+  expect(placeRow(r, 22, 50)).toBeNull()
+  engine(on, JSON.stringify(r))
+  const ui = await $.ui.mount(HINT_ROW(BYPASS, 50))
+  expect(await line(ui)).toBe(`engine ${SHIELD} ${BYPASS}`)
+  await ui.unmount()
+})
+
+test('the record\'s label decides the shield', async ($, on) => {
+  // label 0: the transcript says default mode, so a `1 shell` hint has no mode label and no shield in front.
+  engine(on, JSON.stringify(record({ label: 0, right: [{ rank: 6, spans: [span('1h 33m')] }] })))
+  const ui = await $.ui.mount(HINT_ROW('1 shell', 120))
+  const text = (await line(ui)) ?? ''
+  expect(text.startsWith('1 shell  ')).toBe(true)
+  expect(cellsOf(text)).toBe(120 - 4 - HINT_X)
+  await ui.unmount()
+})
+
+test('rank decides a collision, reset times included', () => {
+  // Live at 104 columns: the 5H reset under its bar, a 7D bar too wide to line up, the cost and the session time.
+  // The moved 7D bar (rank 2) outranks the 5H reset (3), so the reset gives way and the bar shows on the right.
+  const r = record({
+    under: [{ col: 87, rank: 3, spans: [span('1h59m')] }],
+    bars: [{ col: 95, rank: 2, spans: [span(' 7D ████████ 32%  → 4d21h')] }],
+    right: [{ rank: 5, spans: [span('$0.12')] }, { rank: 6, spans: [span('\u{F0150} 0m')] }],
+  })
+  const end = 104 - 4 - HINT_X - 27
+  const bar = ' 7D ████████ 32%  → 4d21h'
+  expect(placedText(placeRow(r, 22, 104))).toEqual([{ col: end - cellsOf(bar), text: bar }])
+  // With room for both, the reset keeps its place and the bar lines up after it with a separator.
+  expect(placedText(placeRow(r, 22, 145))).toEqual([
+    { col: 87 - HINT_X - 27, text: '1h59m │  7D ████████ 32%  → 4d21h' },
+    { col: 145 - 4 - HINT_X - 27 - cellsOf('$0.12 │ \u{F0150} 0m'), text: '$0.12 │ \u{F0150} 0m' },
+  ])
 })

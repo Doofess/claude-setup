@@ -253,11 +253,15 @@ const overflowTick = atom({ plugin: 'session-cards', key: 'overflowTick' } as co
 
 const SEPARATOR = ' │ '
 
+/** Screen column where the engine starts the mode label, or the hint when there is none (measured on 2.1.310). */
+const HINT_X = 2
+
 /**
  * Cells of the mode label the engine draws in front of the hint on the same row, the widest one with its
- * separator (`⏵⏵ bypass permissions on · `). The hint text leaves the label out and the mode is not on the event,
- * so it is reserved in front of every hint but the default mode's own (`? for shortcuts`), which has no label:
- * a background shell's hint is `1 shell` in any mode.
+ * separator (`⏵⏵ bypass permissions on · `), for a record from an older statusbar.py that does not say the
+ * label's width. The hint text leaves the label out and the mode is not on the event, so it is reserved in front
+ * of every hint but the default mode's own (`? for shortcuts`), which has no label: a background shell's hint is
+ * `1 shell` in any mode.
  */
 const MODE_LABEL = 27
 
@@ -272,8 +276,43 @@ function isSpan(value: unknown): value is Span {
   return typeof field(value, 'text') === 'string'
 }
 
-/** The pieces in the status bar's overflow file, or null when it is missing, unreadable or not the shape. */
-function parseOverflow(text: string): Span[][] | null {
+/** A moved piece of the status bar: `col` is a screen column, `rank` its drop priority (higher drops first). */
+type Placed = { col: number; spans: Span[] }
+type Ranked = { rank: number; spans: Span[] }
+
+/**
+ * The status bar's overflow file: `pieces` is the flat list every statusbar.py writes; a newer one also says
+ * where each piece goes (`under` its bar, moved `bars`, the `right` group) and the mode label's width.
+ */
+export type Overflow = { pieces: Span[][]; label?: number; under?: (Placed & Ranked)[]; bars?: (Placed & Ranked)[]; right?: Ranked[] }
+
+const spansOf = (value: unknown): Span[] | null => {
+  const spans = field(value, 'spans')
+  return Array.isArray(spans) ? spans.filter(isSpan) : null
+}
+
+const numberOf = (value: unknown, key: string): number | null => {
+  const n = field(value, key)
+  return typeof n === 'number' && Number.isFinite(n) ? n : null
+}
+
+/** The entries of `key` that have a span list and every number in `numbers`, or undefined when there is no list. */
+function entries<T>(parsed: unknown, key: string, numbers: string[]): T[] | undefined {
+  const list = field(parsed, key)
+
+  if (!Array.isArray(list)) {
+    return undefined
+  }
+
+  return list.flatMap(item => {
+    const spans = spansOf(item)
+    const values = numbers.map(n => numberOf(item, n))
+    return spans === null || values.includes(null) ? [] : [{ ...Object.fromEntries(numbers.map((n, i) => [n, values[i]])), spans } as T]
+  })
+}
+
+/** The status bar's overflow file, or null when it is missing, unreadable or not the shape. */
+function parseOverflow(text: string): Overflow | null {
   let parsed: unknown
 
   try {
@@ -288,11 +327,92 @@ function parseOverflow(text: string): Span[][] | null {
     return null
   }
 
-  return pieces.map(piece => (Array.isArray(piece) ? piece.filter(isSpan) : []))
+  return {
+    pieces: pieces.map(piece => (Array.isArray(piece) ? piece.filter(isSpan) : [])),
+    label: numberOf(parsed, 'label') ?? undefined,
+    under: entries<Placed & Ranked>(parsed, 'under', ['col', 'rank']),
+    bars: entries<Placed & Ranked>(parsed, 'bars', ['col', 'rank']),
+    right: entries<Ranked>(parsed, 'right', ['rank']),
+  }
 }
 
 // By code point: a Nerd Font icon past U+FFFF (the clock, the robot) is two UTF-16 units but one cell.
 const widthOf = (piece: Span[]): number => piece.reduce((sum, span) => sum + [...span.text].length, 0)
+
+const separatorSpan: Span = { text: SEPARATOR, colour: 'text', bold: false }
+
+/** The pieces joined by the separator, as one run of spans. */
+const joined = (pieces: Span[][]): Span[] => pieces.flatMap((piece, i) => (i === 0 ? piece : [separatorSpan, ...piece]))
+
+/**
+ * Where the second row's pieces go, as offsets inside the hook's tree, which starts after the mode label at screen
+ * column `HINT_X + record.label` and opens with `hintCells` of hint and two spaces. Reset times go under their bar
+ * (one the hint reaches is not drawn); moved bars go where the record lines them up, or join the right group when
+ * one would start inside the hint or run past the margin; the right group ends at the margin of `columns - 4`.
+ * While the right group reaches the hint or a piece before it, the highest rank among those pieces drops, so a
+ * moved bar outranks a reset time it collides with. Null when nothing is left to draw.
+ */
+export function placeRow(record: Overflow, hintCells: number, columns: number): Placed[] | null {
+  const origin = HINT_X + (record.label ?? 0)
+  const end = columns - 4 - origin
+  const left = hintCells + 2
+  const endOf = (piece: Placed) => piece.col + widthOf(piece.spans)
+  const inRow = (piece: Placed) => piece.col >= left && endOf(piece) <= end
+  let fixed: (Placed & Ranked)[] = []
+
+  for (const piece of record.under ?? []) {
+    const at = { ...piece, col: piece.col - origin }
+    const before = fixed[fixed.length - 1]
+
+    if (inRow(at) && (!before || at.col >= endOf(before))) {
+      fixed.push(at)
+    }
+  }
+
+  const bars = (record.bars ?? []).map(bar => ({ ...bar, col: bar.col - origin }))
+  const clear = (bar: Placed) => fixed.every(piece => endOf(piece) <= bar.col || endOf(bar) <= piece.col)
+  let right: Ranked[] = record.right ?? []
+
+  if (bars.every(bar => inRow(bar) && clear(bar))) {
+    fixed = [...fixed, ...bars]
+  } else {
+    right = [...bars.map(({ rank, spans }) => ({ rank, spans })), ...right]
+  }
+
+  let group: Placed | null = null
+
+  while (right.length > 0) {
+    const spans = joined(right.map(piece => piece.spans))
+    const start = end - widthOf(spans)
+    // Two spaces between a piece before and the right group, as after the hint.
+    const blocking = fixed.filter(piece => endOf(piece) + 2 > start)
+
+    if (start >= left && blocking.length === 0) {
+      group = { col: start, spans }
+      break
+    }
+
+    const contenders: Ranked[] = start < left ? right : [...right, ...blocking]
+    const worst = contenders.reduce((a, b) => (b.rank > a.rank ? b : a))
+    right = right.filter(piece => piece !== worst)
+    fixed = fixed.filter(piece => piece !== worst)
+  }
+
+  const placed: Placed[] = []
+
+  for (const piece of [...fixed, ...(group ? [group] : [])].sort((a, b) => a.col - b.col)) {
+    const before = placed[placed.length - 1]
+
+    // A piece a separator after the one before it is drawn with the separator, as on the top row.
+    if (before && endOf(before) + SEPARATOR.length === piece.col) {
+      before.spans = [...before.spans, separatorSpan, ...piece.spans]
+    } else {
+      placed.push({ col: piece.col, spans: piece.spans })
+    }
+  }
+
+  return placed.length === 0 ? null : placed
+}
 
 /** The leading pieces whose line (`hint`, two spaces, the pieces joined) fits in `room` cells. */
 export function fitPieces(pieces: Span[][], hintWidth: number, room: number): Span[][] {
@@ -728,46 +848,69 @@ export const register: Register = on => {
     await read($, overflowTick)
 
     const { hint } = e.props
-    const label = hint.startsWith('? for shortcuts') ? 0 : MODE_LABEL
-    const shown = label === 0 ? hint : `${SHIELD} ${hint}`
-    const pass = () => next(shown === hint ? e : { ...e, props: { ...e.props, hint: shown } })
+    const defaultHint = hint.startsWith('? for shortcuts')
+    const withShield = (label: number) => (label === 0 ? hint : `${SHIELD} ${hint}`)
+    const pass = (shown: string) => next(shown === hint ? e : { ...e, props: { ...e.props, hint: shown } })
 
     // statusbar.py writes under Python's expanduser("~"), which on Windows is USERPROFILE.
     const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
+    const guess = withShield(defaultHint ? 0 : MODE_LABEL)
 
     if (!home) {
-      return pass()
+      return pass(guess)
     }
 
-    let pieces: Span[][] | null
+    let record: Overflow | null
 
     try {
-      pieces = parseOverflow(await $.fs.read(`${home}/.claude/statusbar-overflow/${await $.session.id()}.json`))
+      record = parseOverflow(await $.fs.read(`${home}/.claude/statusbar-overflow/${await $.session.id()}.json`))
     } catch {
-      return pass()
+      return pass(guess)
     }
 
-    const fits = pieces === null ? [] : fitPieces(pieces, label + [...shown].length, (e.viewport?.columns ?? 80) - 4)
-
-    if (fits.length === 0) {
-      return pass()
+    if (record === null) {
+      return pass(guess)
     }
 
-    const { Box, Text } = $.ui.resolve(e)
+    const columns = e.viewport?.columns ?? 80
+    const placedRecord = record.under !== undefined || record.bars !== undefined || record.right !== undefined
+    // The record's label is the transcript's mode; the default mode's own hint never has one in front.
+    const label = defaultHint ? 0 : placedRecord ? (record.label ?? MODE_LABEL) : MODE_LABEL
+    const shown = withShield(label)
+    const cells = [...shown].length
+    let placed: Placed[] | null
+
+    if (placedRecord) {
+      placed = placeRow({ ...record, label }, cells, columns)
+    } else {
+      // An older statusbar.py: its pieces packed left after the hint, the label's cells reserved in front.
+      const fits = fitPieces(record.pieces, label + cells, columns - 4)
+      placed = fits.length === 0 ? null : [{ col: cells + 2, spans: joined(fits) }]
+    }
+
+    if (placed === null) {
+      return pass(shown)
+    }
+
+    const { Text } = $.ui.resolve(e)
+    let at = cells
 
     // One Text, so a row narrower than the estimate cuts its end instead of wrapping onto a second line.
     return (
       <Text wrap="truncate-end">
         <Text dimColor>{shown}</Text>
-        <Text>{'  '}</Text>
-        {fits.map((piece, i) => [
-          i > 0 && <Text color="text">{SEPARATOR}</Text>,
-          ...piece.map(span => (
-            <Text color={span.colour ?? undefined} bold={span.bold === true} underline={span.underline === true}>
-              {span.text}
-            </Text>
-          )),
-        ])}
+        {placed.map(piece => {
+          const gap = piece.col - at
+          at = piece.col + widthOf(piece.spans)
+          return [
+            <Text>{' '.repeat(gap)}</Text>,
+            ...piece.spans.map(span => (
+              <Text color={span.colour ?? undefined} bold={span.bold === true} underline={span.underline === true}>
+                {span.text}
+              </Text>
+            )),
+          ]
+        })}
       </Text>
     )
   })
