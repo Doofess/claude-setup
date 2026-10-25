@@ -713,6 +713,20 @@ export const register: Register = on => {
 
     const { Box, Text } = $.ui.resolve(e)
     const { text } = e.props
+    // A slash command's row (the one /compact keeps reaches here; a typed one is the engine's echo) is a card in the
+    // permission blue of the command output cards. A prompt that starts with a path (`/tmp is full`) names no command.
+    const name = /^\/(\S+)/.exec(text)?.[1]
+
+    if (name !== undefined && (await $.command.list()).some(c => c.name === name)) {
+      return (
+        <Box borderStyle="round" borderColor="permission" paddingX={1}>
+          <Text color="permission" bold>
+            {`  You ran ${text}`}
+          </Text>
+        </Box>
+      )
+    }
+
     let at = claimed.get(e.requestId)
 
     if (at === undefined) {

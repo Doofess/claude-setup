@@ -13,9 +13,10 @@ const MESSAGE = (requestId: string, text: string, origin: PromptOrigin = { kind:
     props: { text, origin, isExpanded: false },
   }) as const
 
-// Nothing sits beneath the plugin: these two hooks stand for the engine.
-const engine = (on: Parameters<TestBody>[1]) => {
+// Nothing sits beneath the plugin: these hooks stand for the engine and the session's slash commands.
+const engine = (on: Parameters<TestBody>[1], commands: string[] = []) => {
   on('prompt.submit', (_, e) => ({ text: e.text }))
+  on('command.list', () => ({ value: commands.map(name => ({ name, description: '', source: 'builtin' as const })) }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
 
@@ -55,6 +56,28 @@ test('a prompt that starts with a path is a prompt card', async ($, on) => {
   expect((await ui.find({ type: 'Box' }))?.props.borderColor).toBe('claude')
   expect((await ui.find({ type: 'Text', text: /You prompted/ }))?.text).toBe(HEADER)
   await ui.unmount()
+})
+
+test('a slash command row is a blue You ran card, a path is not', async ($, on) => {
+  // Seen live after /compact: the engine draws the kept `/compact` row through UserMessage, where it read as an orange
+  // prompt card with no time. A command is the permission blue of the command output cards.
+  mock.clock(on)
+  engine(on, ['compact'])
+
+  for (const text of ['/compact', '/compact keep the plan']) {
+    const ui = await $.ui.mount(MESSAGE('c1', text))
+    expect((await ui.find({ type: 'Box' }))?.props.borderColor).toBe('permission')
+    const head = await ui.find({ type: 'Text', text: /You ran/ })
+    expect(head?.text).toBe(`  You ran ${text}`)
+    expect(head?.props.color).toBe('permission')
+    expect(head?.props.bold).toBe(true)
+    expect(await ui.find({ type: 'Text', text: /You prompted/ })).toBeUndefined()
+    await ui.unmount()
+  }
+
+  const path = await $.ui.mount(MESSAGE('p1', '/tmp is full, why?'))
+  expect((await path.find({ type: 'Box' }))?.props.borderColor).toBe('claude')
+  await path.unmount()
 })
 
 test('a row with no recorded time has no clock', async ($, on) => {
