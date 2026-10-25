@@ -57,7 +57,8 @@ The icons come from a Nerd Font. On a machine without one, the installer switche
 `mods/session-cards` is a Claude Code mod that makes a long session easier to scan:
 
 - **Your prompts** become a coloured card headed with the time you sent them, so you can find your own messages again.
-- **Slash-command output** gets a violet card of its own.
+- **Slash-command output** gets a violet card of its own. A command row the engine hands to the mod (one queued while
+  Claude works, such as `/compact`) is a violet `You ran /compact` card rather than a prompt card.
 - **The end of each turn** is a coloured line with how long it took and when it finished (`✻ Baked for 1s · done 4:20 PM`).
   While a background shell or agent still runs, Claude Code's own line stays, since only it knows when they end.
 - **Tool calls** shrink to one short row each: an icon and a few words. Runs of reads, searches and shell commands
