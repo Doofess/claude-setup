@@ -61,6 +61,13 @@ The icons come from a Nerd Font. On a machine without one, the installer switche
 - **Your prompts** become a coloured card headed with the time you sent them, so you can find your own messages again.
 - **Slash-command output** gets a violet card of its own. A command row the engine hands to the mod (one queued while
   Claude works, such as `/compact`) is a violet `You ran /compact` card rather than a prompt card.
+  Only output Claude Code keeps as a command result gets a card (`/context`, `/color`, `/reload-plugins`, `/memory`,
+  `/skills`, `/usage`, `/rename`). Some commands get none, since Claude Code hands the mod nothing to draw:
+  - Pickers and dialogs (`/model`, `/effort`, `/mcp`, `/plugin`, `/theme`, `/login`, `/advisor`) keep their result
+    line as a plain row that no mod hook sees.
+  - `/clear` prints nothing.
+  - Skills print no output row.
+  - In fullscreen, a dialog closed with Esc leaves no row.
 - **The end of each turn** is a coloured line with how long it took and when it finished (`✻ Baked for 1s · done 4:20 PM`).
   While background shells run, every such line ends in a dim `· 1 shell still running`, which goes away when the
   shell's notification arrives. While a background agent runs, Claude Code's own line stays, since only it knows when
