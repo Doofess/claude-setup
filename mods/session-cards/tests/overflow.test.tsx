@@ -42,7 +42,8 @@ const engine = (
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
 
-    return <Text>{`engine ${e.props.hint}`}</Text>
+    // As on 2.1.310: the engine draws its own ` · ` before a hook's tail.
+    return <Text>{`engine ${e.props.hint}${e.props.tail ? ` · ${e.props.tail}` : ''}`}</Text>
   })
 }
 
@@ -121,25 +122,36 @@ test('a mode label in front of the hint is counted, and the row is cut rather th
   await row.unmount()
 })
 
-test('any hint but the default mode\'s may have a mode label in front', async ($, on) => {
+test('a pill hint keeps the engine\'s line and its pieces go in the tail', async ($, on) => {
   // Logged live with a background shell running: the hint was `1 shell`, the engine drew
   // `⏵⏵ bypass permissions on · ` before it, and a row 27 cells too wide squeezed that ` · ` onto a line of its own.
+  // `1 shell` is a pill the user clicks to see the command, so the line is never rewritten and has no shield.
   const pieces = [[span('a'.repeat(10), 'green')]]
   engine(on, JSON.stringify({ written_at: 1, columns: 80, pieces }))
 
-  // 27 + 2 + 7 + 2 + 10 = 48 is one more than the room of 51 - 4.
-  const tight = await $.ui.mount(HINT_ROW('1 shell', 51))
-  expect(await line(tight)).toBe(`engine ${SHIELD} 1 shell`)
+  // 27 + 7 + 3 + 10 = 47 is one more than the room of 50 - 4.
+  const tight = await $.ui.mount(HINT_ROW('1 shell', 50))
+  expect(await line(tight)).toBe('engine 1 shell')
   await tight.unmount()
 
-  const room = await $.ui.mount(HINT_ROW('1 shell', 52))
-  expect(await line(room)).toBe(`${SHIELD} 1 shell  ${'a'.repeat(10)}`)
+  const room = await $.ui.mount(HINT_ROW('1 shell', 51))
+  expect(await line(room)).toBe(`engine 1 shell · ${'a'.repeat(10)}`)
   await room.unmount()
 
   // The default mode's hint has no label: 15 + 2 + 10 = 27 fits 31 - 4.
   const plain = await $.ui.mount(HINT_ROW(HINT, 31))
   expect(await line(plain)).toBe(`${HINT}  ${'a'.repeat(10)}`)
   await plain.unmount()
+})
+
+test('a pill hint is passed on untouched without an overflow file', async ($, on) => {
+  engine(on, null)
+
+  for (const hint of ['1 shell', '2 shells · 1 monitor']) {
+    const ui = await $.ui.mount(HINT_ROW(hint, 160))
+    expect(await line(ui)).toBe(`engine ${hint}`)
+    await ui.unmount()
+  }
 })
 
 test('a Nerd Font glyph counts as one cell and no viewport means 80 columns', async ($, on) => {
@@ -358,14 +370,27 @@ test('too narrow returns engine line', async ($, on) => {
   await ui.unmount()
 })
 
-test('the record\'s label decides the shield', async ($, on) => {
-  // label 0: the transcript says default mode, so a `1 shell` hint has no mode label and no shield in front.
-  engine(on, JSON.stringify(record({ label: 0, right: [{ rank: 6, spans: [span('1h 33m')] }] })))
-  const ui = await $.ui.mount(HINT_ROW('1 shell', 120))
-  const text = (await line(ui)) ?? ''
-  expect(text.startsWith('1 shell  ')).toBe(true)
-  expect(cellsOf(text)).toBe(120 - 4 - HINT_X)
-  await ui.unmount()
+test('a pill hint\'s tail packs the record\'s pieces left, its label counted', async ($, on) => {
+  // The engine squeezes the tail's spaces, so a placed record's pieces cannot line up: they pack as the flat list.
+  const pieces = [[span('$0.12')], [span('1h 33m')]]
+  const right = [{ rank: 5, spans: [span('$0.12')] }, { rank: 6, spans: [span('1h 33m')] }]
+  let file = JSON.stringify(record({ label: 0, pieces, right }))
+  engine(on, () => file)
+
+  const wide = await $.ui.mount(HINT_ROW('1 shell', 120))
+  expect(await line(wide)).toBe('engine 1 shell · $0.12 │ 1h 33m')
+  await wide.unmount()
+
+  // label 0: 7 + 3 + 5 = 15 fits 24 - 4, the next piece does not.
+  const narrow = await $.ui.mount(HINT_ROW('1 shell', 24))
+  expect(await line(narrow)).toBe('engine 1 shell · $0.12')
+  await narrow.unmount()
+
+  // label 27 (bypass): nothing fits in front of the margin, so the engine's line is left alone.
+  file = JSON.stringify(record({ label: 27, pieces, right }))
+  const label = await $.ui.mount(HINT_ROW('1 shell', 24))
+  expect(await line(label)).toBe('engine 1 shell')
+  await label.unmount()
 })
 
 test('rank decides a collision, reset times included', () => {

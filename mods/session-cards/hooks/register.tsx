@@ -272,6 +272,13 @@ const MODE_LABEL = 27
  */
 const SHIELD = '\u{F0BC5}'
 
+/**
+ * The hints the engine draws as plain text, which the hook may rewrite. Any other hint may hold live pills (`1 shell`,
+ * monitors, agents) that the user clicks to see what runs; a rewritten hint or a tree of the hook's own turns them
+ * into dead text, so beside those the engine keeps its line and the pieces go in its dim `tail`.
+ */
+const isPlainHint = (hint: string) => hint.startsWith('? for shortcuts') || hint.startsWith('(shift+tab to cycle)')
+
 function isSpan(value: unknown): value is Span {
   return typeof field(value, 'text') === 'string'
 }
@@ -863,7 +870,8 @@ export const register: Register = on => {
 
     const { hint } = e.props
     const defaultHint = hint.startsWith('? for shortcuts')
-    const withShield = (label: number) => (label === 0 ? hint : `${SHIELD} ${hint}`)
+    const plain = isPlainHint(hint)
+    const withShield = (label: number) => (label === 0 || !plain ? hint : `${SHIELD} ${hint}`)
     const pass = (shown: string) => next(shown === hint ? e : { ...e, props: { ...e.props, hint: shown } })
 
     // statusbar.py writes under Python's expanduser("~"), which on Windows is USERPROFILE.
@@ -892,6 +900,15 @@ export const register: Register = on => {
     const label = defaultHint ? 0 : placedRecord ? (record.label ?? MODE_LABEL) : MODE_LABEL
     const shown = withShield(label)
     const cells = [...shown].length
+
+    if (!plain) {
+      // The engine draws its own ` · ` before the tail and squeezes its spaces, so the pieces cannot line up under
+      // their bars: the flat list packs left, the ` · ` counted as the hint's two spaces and one more cell.
+      const fits = fitPieces(record.pieces, label + cells + 1, columns - 4)
+      const tail = joined(fits).map(span => span.text).join('')
+      return fits.length === 0 ? next(e) : next({ ...e, props: { ...e.props, tail } })
+    }
+
     let placed: Placed[] | null
 
     if (placedRecord) {

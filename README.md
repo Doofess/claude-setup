@@ -42,6 +42,8 @@ permissions text:
 - The rest (cost, session time) is right-aligned at the margin, or, when a moved meter holds the margin, in the
   free space before it.
 - Where pieces collide, the least important one drops, in the bar's own order; the hint always stays.
+- While background work shows on the hint line (`1 shell`, monitors, agents), Claude Code's own line stays, so those
+  pills stay clickable and open the exact command. The pieces follow it dim, packed left after a ` · `.
 
 ![At 104 columns the bar keeps repo, branch, model, effort, context and the 5-hour meter; the 7-day meter moves onto the hint line with its reset time, right-aligned](docs/images/hint-overflow.png)
 
@@ -172,7 +174,7 @@ git -C C:/dev/claude-setup pull && powershell -ExecutionPolicy Bypass -File C:/d
 | `global/CLAUDE.md` | `~/.claude/CLAUDE.md` |
 | `settings.json` | merged into `~/.claude/settings.json` (plugins, model and effort, skill overrides; see the merge rules below) |
 | `agents/*.md` | `~/.claude/agents/` |
-| `themes/*.json` | `~/.claude/themes/`; `custom:clear` is Claude Code's `dark` with `userMessageBackground` set to Campbell's background `#0c0c0c`, so the sticky prompt line at the top (the last prompt, once it scrolls away) has no grey bar. A typed `/command`'s echo row and the selected row in the background-tasks list lose their grey too. Its text stays the dim `subtle` grey and it has no border: Claude Code draws that one-row line itself, with no mod hook |
+| `themes/*.json` | `~/.claude/themes/`; `custom:clear` is Claude Code's `dark` with `userMessageBackground` set to Campbell's background `#0c0c0c`, so the sticky prompt line at the top (the last prompt, once it scrolls away) has no grey bar, and `background` set to Campbell's bright white `#F2F2F2`, so background work (the `1 shell` pill under the prompt, the background-tasks dialog) is white instead of cyan. A typed `/command`'s echo row and the selected row in the background-tasks list lose their grey too. Its text stays the dim `subtle` grey and it has no border: Claude Code draws that one-row line itself, with no mod hook |
 | `statusbar.py` | `~/.claude/statusbar.py`, run by `statusLine` in `settings.json` every 60 s so the reset countdowns move |
 | `skills/<name>/` | `~/.claude/skills/<name>/` |
 | `mods/session-cards/` | stays in the repo; `install.ps1` adds its folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` and checks it with `claude plugin validate` |
@@ -194,8 +196,9 @@ Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers)
   the violet of `accept edits` with its middle letter lit, max a rainbow that starts at the bolt.
 - The pieces dropped on a narrow terminal are written to `~/.claude/statusbar-overflow/<session_id>.json`, as text with
   their colours, with where each one goes and the width of the mode label in front of the hint (read from the session
-  transcript); files older than a day are removed. The session-cards mod reads them for the hint line. While the hint
-  line shows that overflow, its shortcut pills are plain text; with nothing to show, Claude Code's own line stays.
+  transcript); files older than a day are removed. The session-cards mod reads them for the hint line. Beside the
+  plain hints (`? for shortcuts`, `(shift+tab to cycle)`) it draws the line itself; beside any other hint, such as the
+  `1 shell` pill, it hands the pieces to Claude Code's `tail`, since a rewritten hint turns the pills into dead text.
 - Reset times and the session time leave out a zero hour count past a day: `5d`, not `5d0h`.
 - Most of the bar's and the mod's colours are the colour scheme's own 16; Claude orange, the repo's violet and high
   effort's red (the red of `bypass permissions on`) are Claude Code's exact theme colours. The icons depend on the Nerd

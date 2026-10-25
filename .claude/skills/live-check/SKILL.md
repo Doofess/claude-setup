@@ -32,4 +32,5 @@ Copy `.claude-plugin`, `hooks` and `types` into `~/.claude/dev-mods/<session id>
 - Typed slash commands: the engine draws its own grey echo row whatever the hook returns.
 - `PromptHint`'s `hint` omits the mode label drawn before it on the same row (`bypass permissions on` and so on; widths: default 0, acceptEdits 21, auto 18, bypass 27, dontAsk 18, plan 17). The mode is on no event; `statusbar.py` reads it from the transcript's last `permission-mode` line and lags after Shift+Tab until the turn ends.
 - "1 shell still running": the engine drops it itself when shells end; no mod event says when.
+- `PromptHint` pills (`1 shell`, monitors, agents) are clickable only while the hook keeps the engine's line: return `next(e)` with `tail` set. A rewritten `hint` or a tree of the hook's own turns them into plain text. The engine puts its own ` · ` in front of `tail` and collapses its spaces. Pills are drawn in the theme's `background` colour.
 - `CommandOutput` fires only for `local_command` rows with `commandRun`; picker commands (`/model`, `/effort`) never get a card.

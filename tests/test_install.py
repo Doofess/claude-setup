@@ -44,9 +44,12 @@ class SettingsTest(unittest.TestCase):
 
     def test_clear_theme_is_dark_with_a_clear_prompt_background(self):
         # Claude Code 2.1.310 draws the sticky prompt line (the last prompt, pinned at the top once it scrolls away) on
-        # userMessageBackground; no theme value is transparent, so it is Campbell's own background.
+        # userMessageBackground; no theme value is transparent, so it is Campbell's own background. `background` is the
+        # colour of background work (the clickable `1 shell` pill under the prompt, the Background tasks dialog):
+        # Campbell's bright white instead of the dark theme's cyan.
         theme = json.loads(read("themes", "clear.json"))
-        self.assertEqual(theme, {"name": "Clear", "base": "dark", "overrides": {"userMessageBackground": "#0c0c0c"}})
+        self.assertEqual(theme, {"name": "Clear", "base": "dark",
+                                 "overrides": {"userMessageBackground": "#0c0c0c", "background": "#F2F2F2"}})
         self.assertEqual(json.loads(read("terminal", "profile.json"))["colorScheme"], "Campbell")
 
     def test_mod_folder_is_loaded(self):
