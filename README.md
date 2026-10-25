@@ -43,7 +43,8 @@ permissions text:
   free space before it.
 - Where pieces collide, the least important one drops, in the bar's own order; the hint always stays.
 - While background work shows on the hint line (`1 shell`, monitors, agents), Claude Code's own line stays, so those
-  pills stay clickable and open the exact command. The pieces follow it dim, packed left after a ` · `.
+  pills stay clickable and open the exact command. The pieces follow it dim, packed left after a ` · `, a meter as
+  its percentage alone, since dim blocks can't show how full it is.
 
 ![At 104 columns the bar keeps repo, branch, model, effort, context and the 5-hour meter; the 7-day meter moves onto the hint line with its reset time, right-aligned](docs/images/hint-overflow.png)
 

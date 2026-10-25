@@ -903,9 +903,14 @@ export const register: Register = on => {
 
     if (!plain) {
       // The engine draws its own ` · ` before the tail and squeezes its spaces, so the pieces cannot line up under
-      // their bars: the flat list packs left, the ` · ` counted as the hint's two spaces and one more cell.
-      const fits = fitPieces(record.pieces, label + cells + 1, columns - 4)
-      const tail = joined(fits).map(span => span.text).join('')
+      // their bars: the flat list packs left, the ` · ` counted as the hint's two spaces and one more cell. The tail is
+      // one dim grey, so a meter's full and empty blocks look alike: they are left out and its percentage stays.
+      const pieces = record.pieces.map(piece => piece.map(span => ({ ...span, text: span.text.replace(/█+/g, '') })))
+      const fits = fitPieces(pieces, label + cells + 1, columns - 4)
+      const tail = joined(fits)
+        .map(span => span.text)
+        .join('')
+        .replace(/ {2,}/g, ' ')
       return fits.length === 0 ? next(e) : next({ ...e, props: { ...e.props, tail } })
     }
 

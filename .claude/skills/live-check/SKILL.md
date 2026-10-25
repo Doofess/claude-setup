@@ -11,6 +11,7 @@ Two scripts, run from the repo root with `pwsh -NoProfile -File`.
 
 `.claude/skills/live-check/capture.ps1 -Out <png> [-Columns 120] [-Rows 30] [-Prompt <word>] [-Worktree <path>] [-Mode bypassPermissions] [-Keep]`
 
+- Waits `-Wait` seconds (15 to 60) before the capture, so a prompt's turn can finish and the demo outlives the fullscreen boot canary: a launch killed within 10 s of its first frame is a strike, and two strikes turn fullscreen off machine-wide (`fullscreenAutoDisabled` in `~/.claude.json`) until `/tui fullscreen` or an update.
 - Starts a demo `claude.exe` in its own Windows Terminal window, with `NO_COLOR`, `CLAUDECODE`, `CLAUDE_PID` and all `CLAUDE_CODE_*` env vars stripped (otherwise it is colourless and warns that transcripts are off).
 - `-Worktree` writes a temp `--settings` file: `statusLine.command` runs the worktree's `statusbar.py`, `env.CLAUDE_CODE_PLUGIN_DIRS` loads the worktree's `mods/session-cards`. Use it to check a branch without merging or running its `install.ps1`.
 - Finds the window with EnumWindows, captures with `PrintWindow` (never a screen grab: the user may be in a fullscreen game), then stops only the demo's `claude.exe` (matched by the temp settings file name in its command line) and sends `WM_CLOSE` to its window. Never kill `WindowsTerminal.exe` or any other `claude.exe`: the live session is one.
