@@ -2,6 +2,7 @@
   "name": "Clear",
   "base": "dark",
   "overrides": {
-    "userMessageBackground": "#0c0c0c"
+    "userMessageBackground": "#0c0c0c",
+    "background": "#F2F2F2"
   }
 }
