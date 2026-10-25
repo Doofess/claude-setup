@@ -248,6 +248,9 @@ type Span = { text: string; colour: string | null; bold: boolean; underline?: bo
 /** Bumped every NEON_MS while a Fable subagent runs: the frame of chalk-animation's neon on its row. */
 const neonTick = atom({ plugin: 'session-cards', key: 'neonTick' } as const, 0)
 
+/** The ids of the background shells that run now: the turn-end lines read it, so they redraw as one starts or ends. */
+const runningShells = atom({ plugin: 'session-cards', key: 'runningShells' } as const, [] as string[])
+
 /** Bumped every minute so the hint line reads the overflow file again. */
 const overflowTick = atom({ plugin: 'session-cards', key: 'overflowTick' } as const, 0)
 
@@ -577,7 +580,7 @@ export const register: Register = on => {
       const key = { plugin: 'session-cards', key: 'turns' } as const
       const { value = [] } = await $.state.get(key)
       const seq = (value.at(-1)?.seq ?? -1) + 1
-      const all = [...value, { seq, durationMs: e.durationMs, endedAt: await $.clock.now(), shells: shells.size }]
+      const all = [...value, { seq, durationMs: e.durationMs, endedAt: await $.clock.now() }]
       await $.state.set(key, all.slice(-TURNS_KEPT))
     }
 
@@ -592,32 +595,50 @@ export const register: Register = on => {
   })
 
   // Background shells that run now, by the id the Bash/PowerShell result gave.
-  // A ui.render hook may not write $.state but may write the module, so the
-  // task-notification row can end one. That row can come after the turn ended
-  // (a shell that finished during the final answer), so the count is only ever
-  // too high: a turn that ended with one counted keeps the engine's line.
+  // Event hooks publish the set to `runningShells`, which the turn-end lines
+  // read, so they redraw as shells start and end. A ui.render hook may not
+  // write $.state but may write the module, so the task-notification row can
+  // end one too; the lines count from here and show it on their next redraw.
   const shells = new Set<string>()
+  const all = () => [...shells]
 
   // A call that went to the background (run_in_background, ctrl+b, a timeout) answers with the task's id.
-  const backgrounded = <T extends { result?: unknown }>(answer: T): T => {
+  const backgrounded = (answer: { result?: unknown }) => {
     const id = answer.result === undefined ? undefined : (answer.result as { backgroundTaskId?: string }).backgroundTaskId
 
     if (id !== undefined && id !== '') {
       shells.add(id)
     }
 
-    return answer
+    return id !== undefined && id !== ''
   }
 
-  on('tool.call', { tool: 'Bash' }, async ($, e, next) => backgrounded(await next(e)))
-  on('tool.call', { tool: 'PowerShell' }, async ($, e, next) => backgrounded(await next(e)))
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const answer = await next(e)
+
+    if (backgrounded(answer)) {
+      await update($, runningShells, all)
+    }
+
+    return answer
+  })
+
+  on('tool.call', { tool: 'PowerShell' }, async ($, e, next) => {
+    const answer = await next(e)
+
+    if (backgrounded(answer)) {
+      await update($, runningShells, all)
+    }
+
+    return answer
+  })
 
   on('tool.call', { tool: 'TaskStop' }, async ($, e, next) => {
     const answer = await next(e)
     const id = answer.result === undefined ? undefined : (answer.result as { task_id?: string }).task_id
 
-    if (id !== undefined) {
-      shells.delete(id)
+    if (id !== undefined && shells.delete(id)) {
+      await update($, runningShells, all)
     }
 
     return answer
@@ -653,14 +674,18 @@ export const register: Register = on => {
 
     const record = value.find(r => r.seq === at)
 
-    // A shell or a background agent still ran when the turn ended: the engine's line says
-    // so (`Waiting for 1 background agent to finish`), and only it knows when they end.
-    const waiting = (r: TurnRecord) =>
-      r.shells > 0 || [...agents.values()].some(a => a.background && a.finishedAt === undefined && a.startedAt <= r.endedAt)
+    // A background agent still ran when the turn ended: the engine's line says so
+    // (`Waiting for 1 background agent to finish`), and only it knows when one ends.
+    const waiting = (r: TurnRecord) => [...agents.values()].some(a => a.background && a.finishedAt === undefined && a.startedAt <= r.endedAt)
 
     if (record === undefined || waiting(record)) {
       return next(e)
     }
+
+    // As the engine's line does, every turn-end line says while a background shell runs.
+    // Reading the state redraws the line when a shell starts or ends; the count is the module's.
+    await read($, runningShells)
+    const running = shells.size
 
     const line = turnLine(record)
     const { Box, Text } = $.ui.resolve(e)
@@ -677,6 +702,7 @@ export const register: Register = on => {
           {line.duration}
         </Text>
         <Text color="success">{` · done ${line.done}`}</Text>
+        {running > 0 && <Text dimColor>{` · ${running} ${running === 1 ? 'shell' : 'shells'} still running`}</Text>}
       </Box>
     )
   })
@@ -695,6 +721,13 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const { value = {} } = await $.state.get({ plugin: 'session-cards', key: 'promptTimes' })
     await $.state.set({ plugin: 'session-cards', key: 'promptTimes' }, { ...value, [e.text]: [...(value[e.text] ?? []), now] })
+
+    // A finished background task reaches the session as a notification naming it.
+    const ended = e.origin.kind === 'task-notification' ? /<task-id>([^<]+)<\/task-id>/.exec(e.text)?.[1] : undefined
+
+    if (ended !== undefined && shells.delete(ended)) {
+      await update($, runningShells, all)
+    }
 
     return next(e)
   })

@@ -30,6 +30,7 @@ const NOTE = (requestId: string, id: string) =>
 // A call whose tool_use_id starts with `b` went to the background and answers with that id as the task id, unless `bash` says otherwise.
 const engine = (on: On, bash?: object) => {
   on('turn.complete', () => ({ text: '' }))
+  on('prompt.submit', (_, e) => ({ text: e.text }))
   on('tool.call', { tool: 'Bash' }, (_, e) => {
     const call = e as { tool_use_id: string }
     const plain = { stdout: '', stderr: '', interrupted: false }
@@ -46,6 +47,13 @@ const engine = (on: On, bash?: object) => {
 
 const finish = ($: Raise, durationMs: number, agentId?: string) =>
   $.turn.complete({ answer: 'done', durationMs, isAborted: false, turnId: 't1', reason: 'answer', agentId })
+
+/** The prompt the engine submits when background task `id` ends. */
+const notify = ($: Raise, id: string) =>
+  $.prompt.submit({ text: `<task-notification>
+<task-id>${id}</task-id>
+<status>completed</status>
+</task-notification>`, origin: { kind: 'task-notification' } } as never)
 
 const background = ($: Raise, id: string) => $.tool.call({ tool: 'Bash', tool_use_id: id, command: 'sleep 120', run_in_background: true } as never)
 
@@ -76,16 +84,35 @@ test('a finished turn is coloured', async ($, on) => {
   await ui.unmount()
 })
 
-test("a turn that ended with a shell running is the engine's line", async ($, on) => {
-  // The mod only learns a shell ended when its notification row is drawn, which can come after the turn:
-  // the engine knows the real count, so its line stands.
+test('a turn that ended with a shell running is coloured and says so until the shell ends', async ($, on) => {
   mock.clock(on, { now: AT })
   engine(on)
   await background($, 'b1')
   await finish($, 5_000)
 
   const ui = await $.ui.mount(ROW('r1', { durationMs: 5_000 }))
-  expect(await line(ui)).toBe('engine')
+  expect(await line(ui)).toBe('✻Brewed for 5s · done 12:34 PM · 1 shell still running')
+  expect((await ui.find({ type: 'Text', text: /still running/ }))?.props.dimColor).toBe(true)
+
+  // A second shell, then each one's notification: the drawn line follows without a remount.
+  await background($, 'b2')
+  expect(await line(ui)).toBe('✻Brewed for 5s · done 12:34 PM · 2 shells still running')
+  await notify($, 'b1')
+  expect(await line(ui)).toBe('✻Brewed for 5s · done 12:34 PM · 1 shell still running')
+  await notify($, 'b2')
+  expect(await line(ui)).toBe('✻Brewed for 5s · done 12:34 PM')
+  await ui.unmount()
+})
+
+test("a notification that names no running shell changes nothing", async ($, on) => {
+  mock.clock(on, { now: AT })
+  engine(on)
+  await background($, 'b1')
+  await finish($, 5_000)
+  await notify($, 'a7')
+
+  const ui = await $.ui.mount(ROW('r1', { durationMs: 5_000 }))
+  expect(await line(ui)).toBe('✻Brewed for 5s · done 12:34 PM · 1 shell still running')
   await ui.unmount()
 })
 
@@ -226,7 +253,7 @@ test('a call that went to the background by ctrl+b is a running shell', async ($
   await finish($, 4000)
 
   const ui = await $.ui.mount(ROW('r1', { durationMs: 4000 }))
-  expect(await line(ui)).toBe('engine')
+  expect(await line(ui)).toBe('✻Brewed for 4s · done 12:34 PM · 1 shell still running')
   await ui.unmount()
 })
 
@@ -261,5 +288,5 @@ test('only the last 200 records are kept, and a row keeps its record when the ol
 })
 
 test('turnLine holds the words', () => {
-  expect(turnLine({ seq: 0, durationMs: 1_016_000, endedAt: AT, shells: 0 })).toEqual({ duration: fmtElapsed(1_016_000), done: '12:34 PM' })
+  expect(turnLine({ seq: 0, durationMs: 1_016_000, endedAt: AT })).toEqual({ duration: fmtElapsed(1_016_000), done: '12:34 PM' })
 })

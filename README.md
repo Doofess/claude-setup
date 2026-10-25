@@ -60,7 +60,9 @@ The icons come from a Nerd Font. On a machine without one, the installer switche
 - **Slash-command output** gets a violet card of its own. A command row the engine hands to the mod (one queued while
   Claude works, such as `/compact`) is a violet `You ran /compact` card rather than a prompt card.
 - **The end of each turn** is a coloured line with how long it took and when it finished (`✻ Baked for 1s · done 4:20 PM`).
-  While a background shell or agent still runs, Claude Code's own line stays, since only it knows when they end.
+  While background shells run, every such line ends in a dim `· 1 shell still running`, which goes away when the
+  shell's notification arrives. While a background agent runs, Claude Code's own line stays, since only it knows when
+  the agent ends.
 - **Tool calls** shrink to one short row each: an icon and a few words. Runs of reads, searches and shell commands
   keep Claude Code's own one-line summary ("Searched for 1 pattern, read 1 file…"), as in the picture below.
 - **Agents** get a row showing the agent type, its model and effort (in the same colours as the status bar), what it's
