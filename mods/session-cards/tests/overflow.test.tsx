@@ -144,6 +144,16 @@ test('a pill hint keeps the engine\'s line and its pieces go in the tail', async
   await plain.unmount()
 })
 
+test('a meter in a pill hint\'s tail keeps its percentage, not its blocks', async ($, on) => {
+  // The tail is one dim grey, so full and empty blocks look alike (seen live: a solid grey 7D bar at 46%).
+  const meter = [span('\u{F073} 7D', 'green'), span(' '), span('████', 'green'), span('████', '#19432a'), span(' 46%  → 4d14h')]
+  engine(on, JSON.stringify({ written_at: 1, columns: 120, pieces: [meter, [span('$0.12')]] }))
+
+  const ui = await $.ui.mount(HINT_ROW('1 shell', 120))
+  expect(await line(ui)).toBe('engine 1 shell · \u{F073} 7D 46% → 4d14h │ $0.12')
+  await ui.unmount()
+})
+
 test('a pill hint is passed on untouched without an overflow file', async ($, on) => {
   engine(on, null)
 

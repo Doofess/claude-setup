@@ -51,7 +51,9 @@ function ConvertTo-WtArg([string]$a) {
 Start-Process wt -ArgumentList (($wtArgs | ForEach-Object { ConvertTo-WtArg $_ }) -join ' ')
 $h = [IntPtr]::Zero
 for ($i = 0; $i -lt $Wait -and $h -eq [IntPtr]::Zero; $i++) { Start-Sleep -Seconds 1; $h = [LiveW]::Find($title) }
-Start-Sleep -Seconds ([Math]::Max(0, [Math]::Min($Wait, 10)))   # let the TUI draw
+# Let the TUI draw, and outlive the fullscreen boot canary: a launch killed within 10 s of its first frame is a
+# strike, and two strikes turn fullscreen off on this machine until /tui fullscreen or an update (2.1.310).
+Start-Sleep -Seconds ([Math]::Max(15, [Math]::Min($Wait, 60)))
 
 function Stop-Demo {
   # Only claude.exe processes whose command line carries this run's settings file name.
