@@ -36,4 +36,9 @@ Copy `.claude-plugin`, `hooks` and `types` into `~/.claude/dev-mods/<session id>
 - "1 shell still running" on the turn-end line is the engine's live count of background tasks, read from its store, not a `TurnDuration` prop. The mod draws its own copy: a shell's end reaches it as `prompt.submit` with origin `task-notification` and `<task-id>` in the text.
 - A demo started in a worktree with uncommitted code runs `.claude/hooks/stop_tests.py` (every suite on its first run there) at each turn end: "running Stop hook" for a minute or more. Commit first, or run the hook once with that `cwd` to stamp it.
 - `PromptHint` pills (`1 shell`, monitors, agents) are clickable only while the hook keeps the engine's line: return `next(e)` with `tail` set. A rewritten `hint` or a tree of the hook's own turns them into plain text; a hook's own `Button` running `$.command.run({ command: 'tasks' })` opens the same list at once when idle, but mid-turn the run is queued (`Prompt from the <mod> plugin › /tasks`) until the turn ends. The engine's pill is `inverse` only while hovered or selected. The engine puts its own ` · ` in front of `tail` and collapses its spaces. Pills are drawn in the theme's `background` colour.
-- `CommandOutput` fires only for `local_command` rows with `commandRun`; picker commands (`/model`, `/effort`) never get a card.
+- `CommandOutput` fires only for a system `local_command` row with `commandRun` and non-empty text (`local` commands, and `local-jsx` ones that finish with `display: "system"`). Never for:
+  - the other `local-jsx` commands (`/model`, `/effort`, `/mcp`, `/plugin`, `/theme`, `/login`, `/advisor`), which keep their result as a user row `<local-command-stdout>…` that raises neither `CommandOutput` nor `UserMessage` (probed with a logging mod on a resumed transcript);
+  - `/clear` (empty output);
+  - skills (no output row);
+  - a fullscreen dialog closed with Esc, whose "… dismissed" result leaves no row.
+- To sort commands, read the transcripts: a result stored as `type: system` with `commandRun` gets a card, one stored as `type: user` does not.
