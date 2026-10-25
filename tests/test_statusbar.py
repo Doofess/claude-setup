@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -616,8 +617,17 @@ class ProgramTest(unittest.TestCase):
             texts = ["".join(span["text"] for span in piece) for piece in record["pieces"]]
             self.assertIn("$ 1.23", texts)
             self.assertNotIn("Opus", "".join(texts))
+            self.assertEqual(record["pull"], "https://github.com/Doofess/claude-setup/pull/")
         finally:
             shutil.rmtree(home, ignore_errors=True)
+
+    def test_pull_url_is_github_only(self):
+        repo = {"workspace": {"current_dir": tempfile.gettempdir(), "repo": {"owner": "a", "name": "b"}}}
+        with mock.patch.object(statusbar, "origin_remote", return_value=None):
+            self.assertEqual(statusbar.pull_url(repo), "https://github.com/a/b/pull/")
+            self.assertIsNone(statusbar.pull_url({"workspace": {"current_dir": tempfile.gettempdir()}}))
+        with mock.patch.object(statusbar, "origin_remote", return_value=("gitlab", "a/b")):
+            self.assertIsNone(statusbar.pull_url({"workspace": {"current_dir": "."}}))
 
     def test_no_session_id_writes_nothing(self):
         home = tempfile.mkdtemp()

@@ -282,6 +282,51 @@ const SHIELD = '\u{F0BC5}'
  */
 const isPlainHint = (hint: string) => hint.startsWith('? for shortcuts') || hint.startsWith('(shift+tab to cycle)')
 
+/** The background-tasks pill as the engine labels it (2.1.310): shells and monitors, agents, or a count of tasks. */
+const PILL = /^(?:\d+ shells?(?:, \d+ monitors?)?|\d+ (?:monitors?|local agents?|MCP tasks?|background tasks?))$/
+
+/** The PR badge as the hint line reads it: `PR #12`, or GitLab's `MR !12`. */
+const PR_BADGE = /^([PM]R) ([#!])(\d+)$/
+
+/** The PR badge's mark in the status bar's meter yellow, its number in the bar's white. */
+const BADGE_MARK = '#EBC83C'
+const BADGE_NUMBER = '#FFFFFF'
+
+/** One part of a hint the hook draws: dim text, the PR badge, or the background-tasks pill. */
+export type HintPiece =
+  | { kind: 'text'; text: string }
+  | { kind: 'badge'; word: string; mark: string; number: string }
+  | { kind: 'pill'; text: string }
+
+/** The hint's ` · `-separated parts as pieces, with the separators in the text pieces around them. */
+export function hintPieces(hint: string): HintPiece[] {
+  const pieces: HintPiece[] = []
+  const text = (more: string) => {
+    const last = pieces[pieces.length - 1]
+
+    if (last?.kind === 'text') {
+      last.text += more
+    } else if (more !== '') {
+      pieces.push({ kind: 'text', text: more })
+    }
+  }
+
+  hint.split(' · ').forEach((part, i) => {
+    text(i === 0 ? '' : ' · ')
+    const badge = PR_BADGE.exec(part)
+
+    if (PILL.test(part)) {
+      pieces.push({ kind: 'pill', text: part })
+    } else if (badge !== null) {
+      pieces.push({ kind: 'badge', word: badge[1], mark: badge[2], number: badge[3] })
+    } else {
+      text(part)
+    }
+  })
+
+  return pieces
+}
+
 function isSpan(value: unknown): value is Span {
   return typeof field(value, 'text') === 'string'
 }
@@ -294,7 +339,15 @@ type Ranked = { rank: number; spans: Span[] }
  * The status bar's overflow file: `pieces` is the flat list every statusbar.py writes; a newer one also says
  * where each piece goes (`under` its bar, moved `bars`, the `right` group) and the mode label's width.
  */
-export type Overflow = { pieces: Span[][]; label?: number; under?: (Placed & Ranked)[]; bars?: (Placed & Ranked)[]; right?: Ranked[] }
+export type Overflow = {
+  pieces: Span[][]
+  label?: number
+  under?: (Placed & Ranked)[]
+  bars?: (Placed & Ranked)[]
+  right?: Ranked[]
+  /** The address a PR number goes after (`https://github.com/<owner>/<name>/pull/`), in a GitHub repo. */
+  pull?: string
+}
 
 const spansOf = (value: unknown): Span[] | null => {
   const spans = field(value, 'spans')
@@ -332,6 +385,7 @@ function parseOverflow(text: string): Overflow | null {
   }
 
   const pieces = field(parsed, 'pieces')
+  const pull = field(parsed, 'pull')
 
   if (!Array.isArray(pieces)) {
     return null
@@ -343,6 +397,7 @@ function parseOverflow(text: string): Overflow | null {
     under: entries<Placed & Ranked>(parsed, 'under', ['col', 'rank']),
     bars: entries<Placed & Ranked>(parsed, 'bars', ['col', 'rank']),
     right: entries<Ranked>(parsed, 'right', ['rank']),
+    pull: typeof pull === 'string' && pull.startsWith('https://') ? pull : undefined,
   }
 }
 
@@ -948,17 +1003,30 @@ export const register: Register = on => {
     const shown = withShield(label)
     const cells = [...shown].length
 
-    if (!plain) {
+    const overflow: Overflow = record // narrowed, for the closures below
+    const withTail = () => {
       // The engine draws its own ` · ` before the tail and squeezes its spaces, so the pieces cannot line up under
       // their bars: the flat list packs left, the ` · ` counted as the hint's two spaces and one more cell. The tail is
       // one dim grey, so a meter's full and empty blocks look alike: they are left out and its percentage stays.
-      const pieces = record.pieces.map(piece => piece.map(span => ({ ...span, text: span.text.replace(/█+/g, '') })))
+      const pieces = overflow.pieces.map(piece => piece.map(span => ({ ...span, text: span.text.replace(/█+/g, '') })))
       const fits = fitPieces(pieces, label + cells + 1, columns - 4)
       const tail = joined(fits)
         .map(span => span.text)
         .join('')
         .replace(/ {2,}/g, ' ')
       return fits.length === 0 ? next(e) : next({ ...e, props: { ...e.props, tail } })
+    }
+
+    // Idle, a hint of the pill and the PR badge alone is drawn here like a plain one, the pill as the hook's own
+    // Button. While a turn runs the engine's pill stays: a plugin's /tasks waits for the turn's end, the engine's opens
+    // at once. Any other part may be live too (a cloud session, the bridge), so such a hint keeps the engine's line.
+    const parts = hintPieces(shown)
+    const hasPill = parts.some(part => part.kind === 'pill')
+    const ownPill =
+      !e.props.isWorking && hasPill && parts.every(part => part.kind !== 'text' || /^(?: · )+$/.test(part.text))
+
+    if (!plain && !ownPill) {
+      return withTail()
     }
 
     let placed: Placed[] | null
@@ -972,29 +1040,70 @@ export const register: Register = on => {
     }
 
     if (placed === null) {
-      return pass(shown)
+      return plain ? pass(shown) : withTail()
     }
 
-    const { Text } = $.ui.resolve(e)
+    const { Box, Text, Link, Button } = $.ui.resolve(e)
     let at = cells
 
-    // One Text, so a row narrower than the estimate cuts its end instead of wrapping onto a second line.
+    const rest = placed.map(piece => {
+      const gap = piece.col - at
+      at = piece.col + widthOf(piece.spans)
+      return [
+        <Text>{' '.repeat(gap)}</Text>,
+        ...piece.spans.map(span => (
+          <Text color={span.colour ?? undefined} bold={span.bold === true} underline={span.underline === true}>
+            {span.text}
+          </Text>
+        )),
+      ]
+    })
+
+    // The hint dim, but the PR badge: its mark yellow and its number white and underlined, a link to the PR when the
+    // status bar knows the repo (the engine's badge is one, and a rewritten line would lose it).
+    const run = (part: Exclude<HintPiece, { kind: 'pill' }>) => {
+      if (part.kind === 'text') {
+        return <Text dimColor>{part.text}</Text>
+      }
+
+      const number = [
+        <Text color={BADGE_MARK}>{part.mark}</Text>,
+        <Text color={BADGE_NUMBER} underline>
+          {part.number}
+        </Text>,
+      ]
+      return [
+        <Text dimColor>{`${part.word} `}</Text>,
+        overflow.pull !== undefined && part.mark === '#' ? <Link href={`${overflow.pull}${part.number}`}>{number}</Link> : number,
+      ]
+    }
+
+    if (!hasPill) {
+      // One Text, so a row narrower than the estimate cuts its end instead of wrapping onto a second line.
+      return (
+        <Text wrap="truncate-end">
+          {parts.map(part => (part.kind === 'pill' ? null : run(part)))}
+          {rest}
+        </Text>
+      )
+    }
+
+    // The pill inverted at rest, as the engine's is under the pointer; a press opens the background tasks list.
     return (
-      <Text wrap="truncate-end">
-        <Text dimColor>{shown}</Text>
-        {placed.map(piece => {
-          const gap = piece.col - at
-          at = piece.col + widthOf(piece.spans)
-          return [
-            <Text>{' '.repeat(gap)}</Text>,
-            ...piece.spans.map(span => (
-              <Text color={span.colour ?? undefined} bold={span.bold === true} underline={span.underline === true}>
-                {span.text}
+      <Box flexDirection="row">
+        {parts.map(part =>
+          part.kind === 'pill' ? (
+            <Button key="tasks" plain onPress={() => void $.command.run({ command: 'tasks' })}>
+              <Text color="background" inverse>
+                {part.text}
               </Text>
-            )),
-          ]
-        })}
-      </Text>
+            </Button>
+          ) : (
+            <Text>{run(part)}</Text>
+          ),
+        )}
+        <Text wrap="truncate-end">{rest}</Text>
+      </Box>
     )
   })
 }

@@ -12,7 +12,7 @@ terminal's font and colours.
 
 The line along the bottom of Claude Code, read left to right:
 
-- **Where you are**: the repo (GitHub in violet, GitLab in its orange with its own icon, read from the origin remote) and the branch (Claude Code shows the PR badge itself).
+- **Where you are**: the repo (GitHub in violet, GitLab in its orange with its own icon, read from the origin remote) and the branch (Claude Code shows the PR badge itself; on the hint line the mod draws its `#` yellow and the number white and underlined, still a link to the PR).
 - **Who is working**: the model and the effort level. Each model and each effort level has its own colour, so you can
   tell at a glance whether you're on Opus (Claude orange) or Sonnet, at high or medium. Fable's name is a gold gradient, and a running Fable subagent's row pulses.
 - **How full the context is**: a meter that reaches 100% at the auto-compact point (about 267k of the 300k window), not
@@ -42,9 +42,11 @@ permissions text:
 - The rest (cost, session time) is right-aligned at the margin, or, when a moved meter holds the margin, in the
   free space before it.
 - Where pieces collide, the least important one drops, in the bar's own order; the hint always stays.
-- While background work shows on the hint line (`1 shell`, monitors, agents), Claude Code's own line stays, so those
-  pills stay clickable and open the exact command. The pieces follow it dim, packed left after a ` · `, a meter as
-  its percentage alone, since dim blocks can't show how full it is.
+- While background work shows on the hint line (`1 shell`, monitors, agents) and Claude is idle, the row keeps this
+  layout and the pill is the mod's own: a white block that opens the background-tasks list when clicked. While Claude
+  works, Claude Code's own line stays instead, since a mod's `/tasks` waits for the turn to end and Claude Code's pill
+  opens at once; the pieces then follow it dim, packed left after a ` · `, a meter as its percentage alone, since dim
+  blocks can't show how full it is.
 
 ![At 104 columns the bar keeps repo, branch, model, effort, context and the 5-hour meter; the 7-day meter moves onto the hint line with its reset time, right-aligned](docs/images/hint-overflow.png)
 
@@ -201,8 +203,10 @@ Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers)
 - The pieces dropped on a narrow terminal are written to `~/.claude/statusbar-overflow/<session_id>.json`, as text with
   their colours, with where each one goes and the width of the mode label in front of the hint (read from the session
   transcript); files older than a day are removed. The session-cards mod reads them for the hint line. Beside the
-  plain hints (`? for shortcuts`, `(shift+tab to cycle)`) it draws the line itself; beside any other hint, such as the
-  `1 shell` pill, it hands the pieces to Claude Code's `tail`, since a rewritten hint turns the pills into dead text.
+  plain hints (`? for shortcuts`, `(shift+tab to cycle)`), and beside a hint of only the background pill and the PR
+  badge while Claude is idle, it draws the line itself, the pill as its own Button that runs `/tasks`; beside any other
+  hint it hands the pieces to Claude Code's `tail`, since a rewritten hint turns the engine's pills into dead text. In a
+  GitHub repo the file also holds `pull`, the PR address the mod links the badge's number to.
 - Reset times and the session time leave out a zero hour count past a day: `5d`, not `5d0h`.
 - Most of the bar's and the mod's colours are the colour scheme's own 16; Claude orange, the repo's violet and high
   effort's red (the red of `bypass permissions on`) are Claude Code's exact theme colours. The icons depend on the Nerd
