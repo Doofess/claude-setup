@@ -9,11 +9,12 @@ Two scripts, run from the repo root with `pwsh -NoProfile -File`.
 
 ## capture.ps1: screenshot a demo session
 
-`.claude/skills/live-check/capture.ps1 -Out <png> [-Columns 120] [-Rows 30] [-Prompt <word>] [-Worktree <path>] [-Mode bypassPermissions] [-Keep]`
+`.claude/skills/live-check/capture.ps1 -Out <png> [-Columns 120] [-Rows 30] [-Prompt <word>] [-Worktree <path>] [-Mode bypassPermissions] [-PluginDir <probe mod>] [-Keep]`
 
 - Waits `-Wait` seconds (15 to 60) before the capture, so a prompt's turn can finish and the demo outlives the fullscreen boot canary: a launch killed within 10 s of its first frame is a strike, and two strikes turn fullscreen off machine-wide (`fullscreenAutoDisabled` in `~/.claude.json`) until `/tui fullscreen` or an update.
 - Starts a demo `claude.exe` in its own Windows Terminal window, with `NO_COLOR`, `CLAUDECODE`, `CLAUDE_PID` and all `CLAUDE_CODE_*` env vars stripped (otherwise it is colourless and warns that transcripts are off).
 - `-Worktree` writes a temp `--settings` file: `statusLine.command` runs the worktree's `statusbar.py`, `env.CLAUDE_CODE_PLUGIN_DIRS` loads the worktree's `mods/session-cards`. Use it to check a branch without merging or running its `install.ps1`.
+- `-PluginDir` adds `--plugin-dir`: a probe mod beside the installed ones (say, a `session.start` hook that tries an API after a delay).
 - Finds the window with EnumWindows, captures with `PrintWindow` (never a screen grab: the user may be in a fullscreen game), then stops only the demo's `claude.exe` (matched by the temp settings file name in its command line) and sends `WM_CLOSE` to its window. Never kill `WindowsTerminal.exe` or any other `claude.exe`: the live session is one.
 - `-Keep` leaves the demo running for further probing; stop it yourself by command line.
 
@@ -34,5 +35,5 @@ Copy `.claude-plugin`, `hooks` and `types` into `~/.claude/dev-mods/<session id>
 - `PromptHint`'s `hint` omits the mode label drawn before it on the same row (`bypass permissions on` and so on; widths: default 0, acceptEdits 21, auto 18, bypass 27, dontAsk 18, plan 17). The mode is on no event; `statusbar.py` reads it from the transcript's last `permission-mode` line and lags after Shift+Tab until the turn ends.
 - "1 shell still running" on the turn-end line is the engine's live count of background tasks, read from its store, not a `TurnDuration` prop. The mod draws its own copy: a shell's end reaches it as `prompt.submit` with origin `task-notification` and `<task-id>` in the text.
 - A demo started in a worktree with uncommitted code runs `.claude/hooks/stop_tests.py` (every suite on its first run there) at each turn end: "running Stop hook" for a minute or more. Commit first, or run the hook once with that `cwd` to stamp it.
-- `PromptHint` pills (`1 shell`, monitors, agents) are clickable only while the hook keeps the engine's line: return `next(e)` with `tail` set. A rewritten `hint` or a tree of the hook's own turns them into plain text. The engine puts its own ` · ` in front of `tail` and collapses its spaces. Pills are drawn in the theme's `background` colour.
+- `PromptHint` pills (`1 shell`, monitors, agents) are clickable only while the hook keeps the engine's line: return `next(e)` with `tail` set. A rewritten `hint` or a tree of the hook's own turns them into plain text; a hook's own `Button` running `$.command.run({ command: 'tasks' })` opens the same list at once when idle, but mid-turn the run is queued (`Prompt from the <mod> plugin › /tasks`) until the turn ends. The engine's pill is `inverse` only while hovered or selected. The engine puts its own ` · ` in front of `tail` and collapses its spaces. Pills are drawn in the theme's `background` colour.
 - `CommandOutput` fires only for `local_command` rows with `commandRun`; picker commands (`/model`, `/effort`) never get a card.

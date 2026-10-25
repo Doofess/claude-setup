@@ -1,5 +1,5 @@
 param([Parameter(Mandatory)][string]$Out, [int]$Columns = 120, [int]$Rows = 30, [string]$Prompt = '',
-      [string]$Worktree = '', [string]$Mode = 'bypassPermissions', [int]$Wait = 20, [switch]$Keep)
+      [string]$Worktree = '', [string]$Mode = 'bypassPermissions', [int]$Wait = 20, [string]$PluginDir = '', [switch]$Keep)
 # Starts a demo claude.exe in its own Windows Terminal window, captures it with PrintWindow, kills only that claude.exe.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
@@ -38,6 +38,7 @@ if ($Worktree) {
 
 $wtArgs = @('-w', 'new', '--size', "$Columns,$Rows", '--title', $title, '--suppressApplicationTitle', '-d', $dir,
             'claude.exe', '--permission-mode', $Mode, '--settings', $settings)
+if ($PluginDir) { $wtArgs += '--plugin-dir', (Resolve-Path $PluginDir).Path }   # a probe mod, beside the installed ones
 if ($Prompt) { $wtArgs += $Prompt }
 # One verbatim command line: Start-Process would join an array without quoting, and wt treats ';' as its own separator.
 function ConvertTo-WtArg([string]$a) {

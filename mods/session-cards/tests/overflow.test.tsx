@@ -1,5 +1,5 @@
 import { expect, mock, test, type TestBody } from 'claude-code/testing'
-import { placeRow } from '../hooks/register'
+import { hintPieces, placeRow } from '../hooks/register'
 
 type On = Parameters<TestBody>[1]
 
@@ -18,6 +18,10 @@ const HINT_ROW = (hint: string, columns: number, extra: object = {}) =>
   }) as const
 
 const SHIELD = '\u{F0BC5}'
+
+// A turn runs: the engine's pills stay, since a plugin's /tasks would wait for the turn to end.
+const WORKING = (hint: string, columns: number) =>
+  HINT_ROW(hint, columns, { props: { isDraft: false, isWorking: true, hint } })
 
 const span = (text: string, colour: string | null = null, bold = false) => ({ text, colour, bold })
 
@@ -122,7 +126,7 @@ test('a mode label in front of the hint is counted, and the row is cut rather th
   await row.unmount()
 })
 
-test('a pill hint keeps the engine\'s line and its pieces go in the tail', async ($, on) => {
+test('while a turn runs, a pill hint keeps the engine\'s line and its pieces go in the tail', async ($, on) => {
   // Logged live with a background shell running: the hint was `1 shell`, the engine drew
   // `⏵⏵ bypass permissions on · ` before it, and a row 27 cells too wide squeezed that ` · ` onto a line of its own.
   // `1 shell` is a pill the user clicks to see the command, so the line is never rewritten and has no shield.
@@ -130,11 +134,11 @@ test('a pill hint keeps the engine\'s line and its pieces go in the tail', async
   engine(on, JSON.stringify({ written_at: 1, columns: 80, pieces }))
 
   // 27 + 7 + 3 + 10 = 47 is one more than the room of 50 - 4.
-  const tight = await $.ui.mount(HINT_ROW('1 shell', 50))
+  const tight = await $.ui.mount(WORKING('1 shell', 50))
   expect(await line(tight)).toBe('engine 1 shell')
   await tight.unmount()
 
-  const room = await $.ui.mount(HINT_ROW('1 shell', 51))
+  const room = await $.ui.mount(WORKING('1 shell', 51))
   expect(await line(room)).toBe(`engine 1 shell · ${'a'.repeat(10)}`)
   await room.unmount()
 
@@ -149,7 +153,7 @@ test('a meter in a pill hint\'s tail keeps its percentage, not its blocks', asyn
   const meter = [span('\u{F073} 7D', 'green'), span(' '), span('████', 'green'), span('████', '#19432a'), span(' 46%  → 4d14h')]
   engine(on, JSON.stringify({ written_at: 1, columns: 120, pieces: [meter, [span('$0.12')]] }))
 
-  const ui = await $.ui.mount(HINT_ROW('1 shell', 120))
+  const ui = await $.ui.mount(WORKING('1 shell', 120))
   expect(await line(ui)).toBe('engine 1 shell · \u{F073} 7D 46% → 4d14h │ $0.12')
   await ui.unmount()
 })
@@ -387,18 +391,18 @@ test('a pill hint\'s tail packs the record\'s pieces left, its label counted', a
   let file = JSON.stringify(record({ label: 0, pieces, right }))
   engine(on, () => file)
 
-  const wide = await $.ui.mount(HINT_ROW('1 shell', 120))
+  const wide = await $.ui.mount(WORKING('1 shell', 120))
   expect(await line(wide)).toBe('engine 1 shell · $0.12 │ 1h 33m')
   await wide.unmount()
 
   // label 0: 7 + 3 + 5 = 15 fits 24 - 4, the next piece does not.
-  const narrow = await $.ui.mount(HINT_ROW('1 shell', 24))
+  const narrow = await $.ui.mount(WORKING('1 shell', 24))
   expect(await line(narrow)).toBe('engine 1 shell · $0.12')
   await narrow.unmount()
 
   // label 27 (bypass): nothing fits in front of the margin, so the engine's line is left alone.
   file = JSON.stringify(record({ label: 27, pieces, right }))
-  const label = await $.ui.mount(HINT_ROW('1 shell', 24))
+  const label = await $.ui.mount(WORKING('1 shell', 24))
   expect(await line(label)).toBe('engine 1 shell')
   await label.unmount()
 })
@@ -419,4 +423,83 @@ test('rank decides a collision, reset times included', () => {
     { col: 87 - HINT_X - 27, text: '1h59m │  7D ████████ 32%  → 4d21h' },
     { col: 145 - 4 - HINT_X - 27 - cellsOf('$0.12 │ \u{F0150} 0m'), text: '$0.12 │ \u{F0150} 0m' },
   ])
+})
+
+// The hint line with a background shell, idle: live on 2.1.310 its hint read `1 shell`, `PR #66 · 1 shell` with a PR.
+test('hint pieces: the pill and the PR badge apart, the separators with the text', () => {
+  expect(hintPieces('PR #66 · 1 shell')).toEqual([
+    { kind: 'badge', word: 'PR', mark: '#', number: '66' },
+    { kind: 'text', text: ' · ' },
+    { kind: 'pill', text: '1 shell' },
+  ])
+  expect(hintPieces('? for shortcuts · MR !7')).toEqual([
+    { kind: 'text', text: '? for shortcuts · ' },
+    { kind: 'badge', word: 'MR', mark: '!', number: '7' },
+  ])
+  expect(hintPieces('2 shells, 1 monitor').map(p => p.kind)).toEqual(['pill'])
+  expect(hintPieces('3 background tasks').map(p => p.kind)).toEqual(['pill'])
+  expect(hintPieces('1 shell to go').map(p => p.kind)).toEqual(['text'])
+})
+
+const ran = (on: On) => {
+  const commands: string[] = []
+  on('command.run', (_, e) => {
+    commands.push(e.command)
+    return {}
+  })
+  return commands
+}
+
+test('idle, a pill hint keeps the placed row, its pill the hook\'s own inverted Button that opens /tasks', async ($, on) => {
+  const right = [{ rank: 5, spans: [span('$0.12', 'green')] }]
+  engine(on, JSON.stringify(record({ label: 27, pieces: [[span('$0.12')]], right })))
+  const commands = ran(on)
+
+  const ui = await $.ui.mount(HINT_ROW('1 shell', 120))
+  expect(await ui.find({ type: 'Text', text: /^engine / })).toBeUndefined()
+  const pill = await ui.find({ type: 'Text', text: /^1 shell$/ })
+  expect(pill?.props.inverse).toBe(true)
+  expect(pill?.props.color).toBe('background')
+  // The cost ends at the margin, as on a plain hint's row: 120 - 4 - HINT_X - 27 cells, the pill's 7 and the cost's 5 in it.
+  expect((await ui.find({ type: 'Text', text: /^ +$/ }))?.text.length).toBe(120 - 4 - HINT_X - 27 - 7 - 5)
+  expect((await ui.find({ type: 'Text', text: /^\$0\.12$/ }))?.props.color).toBe('green')
+
+  await ui.press({ plugin: 'session-cards', key: 'tasks' })
+  expect(commands).toEqual(['tasks'])
+  await ui.unmount()
+})
+
+test('a pill hint beside a part the hook does not know keeps the engine\'s line', async ($, on) => {
+  engine(on, JSON.stringify(record({ label: 0, pieces: [[span('$0.12')]], right: [{ rank: 5, spans: [span('$0.12')] }] })))
+
+  const ui = await $.ui.mount(HINT_ROW('1 shell · ◉ cloud', 120))
+  expect(await line(ui)).toBe('engine 1 shell · ◉ cloud · $0.12')
+  await ui.unmount()
+})
+
+test('the PR badge: its mark yellow, its number white and underlined, a link to the PR', async ($, on) => {
+  const pull = 'https://github.com/Doofess/claude-setup/pull/'
+  const right = [{ rank: 5, spans: [span('$0.12')] }]
+  let file = JSON.stringify(record({ label: 0, right, pull }))
+  engine(on, () => file)
+
+  const ui = await $.ui.mount(HINT_ROW(`${HINT} · PR #66`, 120))
+  // The test surface writes a link's address out, as a terminal without OSC 8 does.
+  expect(await line(ui)).toMatch(/^\? for shortcuts · PR .*#66 +\$0\.12$/)
+  expect((await ui.find({ type: 'Text', text: /^\? for shortcuts · $/ }))?.props.dimColor).toBe(true)
+  expect((await ui.find({ type: 'Text', text: /^PR $/ }))?.props.dimColor).toBe(true)
+  expect((await ui.find({ type: 'Text', text: /^#$/ }))?.props.color).toBe('#EBC83C')
+  const number = await ui.find({ type: 'Text', text: /^66$/ })
+  expect(number?.props.color).toBe('#FFFFFF')
+  expect(number?.props.underline).toBe(true)
+  expect((await ui.find({ type: 'Link' }))?.props.href).toBe(`${pull}66`)
+  await ui.unmount()
+
+  // Beside the pill, idle, too; no address the status bar wrote (or one that is not https), no link.
+  file = JSON.stringify(record({ label: 0, right, pull: 'javascript:alert(1)' }))
+  const pill = await $.ui.mount(HINT_ROW('PR #66 · 1 shell', 120))
+  expect((await pill.find({ type: 'Text', text: /^#$/ }))?.props.color).toBe('#EBC83C')
+  expect((await pill.find({ type: 'Text', text: /^1 shell$/ }))?.props.inverse).toBe(true)
+  expect(await pill.find({ type: 'Link' })).toBeUndefined()
+  await pill.unmount()
 })

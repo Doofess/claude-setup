@@ -37,6 +37,7 @@ whose bar stayed, without its arrow, at the screen column of the bar's first blo
 meter with its reset time, the first one's first block under the last bar left on the top row (or a separator
 after the reset times there), the next one a separator after it; `right` holds the rest, right-aligned. Each
 carries its drop priority as `rank`: where pieces collide, the mod drops the least important of them first.
+In a GitHub repo, `pull` is the address a pull request's number goes after: the mod's link on the PR badge.
 `label` is the width of the mode label in front of the hint (`⏵⏵ bypass permissions on · `), read from the last
 `permission-mode` entry near the end of the session transcript; `pieces` keeps the old flat list for an older
 mod. Files older than a day are removed on each run; a session with no id writes nothing.
@@ -414,6 +415,20 @@ def _repo_name(repo) -> str | None:
     return repo if isinstance(repo, str) and repo else None
 
 
+def repo_of(data: dict) -> tuple[str, str | None]:
+    """(host kind, "owner/name" or None) of the session's repo: Claude Code's workspace.repo, else the origin remote."""
+    workspace = _dict(data.get("workspace"))
+    remote = origin_remote(str(workspace.get("current_dir") or os.getcwd()))
+    repo = _repo_name(workspace.get("repo")) or (remote[1] if remote else None)
+    return (remote[0] if remote else "github"), repo  # Claude Code fills workspace.repo for GitHub only
+
+
+def pull_url(data: dict) -> str | None:
+    """The address a pull request's number goes after, for the mod's link on the hint line's PR badge; GitHub only."""
+    kind, repo = repo_of(data)
+    return f"https://github.com/{repo}/pull/" if kind == "github" and repo else None
+
+
 def short_repo(repo: str, room: int) -> str:
     """repo in at most room cells: whole, then without its owner, then cut with an ellipsis (one letter at least)."""
     if cells(repo) <= room:
@@ -441,11 +456,7 @@ def segments(data: dict, env: dict, now: float, files: list[dict], branch_name: 
     repo_shrink: cells the repo must give up (see short_repo), for a terminal too narrow for the never-dropped pieces."""
     out: list[Segment] = []
     marks = ICONS if icons else LABELS
-    workspace = _dict(data.get("workspace"))
-    repo = _repo_name(workspace.get("repo"))
-    remote = origin_remote(str(workspace.get("current_dir") or os.getcwd()))
-    repo = repo or (remote[1] if remote else None)
-    kind = remote[0] if remote else "github"  # Claude Code fills workspace.repo for GitHub only
+    kind, repo = repo_of(data)
     model = _dict(data.get("model"))
     name = model.get("display_name") or model.get("id")
     effort = _dict(data.get("effort")).get("level")
@@ -763,7 +774,9 @@ def main(argv: list[str]) -> int:
             if isinstance(session_id, str) and session_id:
                 try:
                     label = mode_label_cells(data.get("transcript_path"), last_label(os.path.expanduser("~"), session_id))
-                    write_overflow(os.path.expanduser("~"), session_id, overflow_record(kept, dropped, columns, now, label))
+                    record = overflow_record(kept, dropped, columns, now, label)
+                    pull = pull_url(data)
+                    write_overflow(os.path.expanduser("~"), session_id, record | ({"pull": pull} if pull else {}))
                 except Exception:  # the line is already printed; a lost overflow file costs nothing visible
                     pass
     except Exception as error:  # the bar must never crash Claude Code's UI
