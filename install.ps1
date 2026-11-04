@@ -290,7 +290,8 @@ function Install-KotlinLsp([string]$version, [string]$arch, [string]$versionDir,
         if (-not (Test-Path (Join-Path $stage $need))) { throw "Kotlin LSP $version archive is incomplete (no $need); nothing was installed" }
       }
       $parent = Split-Path $versionDir
-      if (Test-Path $parent) { Get-ChildItem $parent -Directory | Remove-Item -Recurse -Force }   # this and older versions go
+      # this and older versions go; the shim folder beside them stays
+      if (Test-Path $parent) { Get-ChildItem $parent -Directory | Where-Object { (Format-DirKey $_.FullName) -ne (Format-DirKey $shimDir) } | Remove-Item -Recurse -Force }
       New-Item -ItemType Directory -Path $parent -Force | Out-Null
       Move-Item $stage $versionDir
     } finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }

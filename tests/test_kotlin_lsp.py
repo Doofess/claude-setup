@@ -125,6 +125,13 @@ class KotlinInstallerTest(unittest.TestCase):
         body = body[body.index("function Install-KotlinLsp"):]
         self.assertLess(body.index("'product-info.json'"), body.index("Move-Item $stage"))
 
+    def test_old_versions_go_but_the_shim_folder_stays(self):
+        # The shim folder sits beside the version folders; clearing them must not take it along.
+        body = read("install.ps1")
+        body = body[body.index("function Install-KotlinLsp"):body.index("# ---- Nerd Font")]
+        line = next(l for l in body.splitlines() if "Get-ChildItem $parent -Directory" in l)
+        self.assertIn("$shimDir", line)
+
     def test_user_path_only(self):
         text = read("install.ps1")
         block = text[text.index("function Install-KotlinLsp"):text.index("# ---- Nerd Font")]
