@@ -30,9 +30,14 @@
  14. Prints the `Same experience` table (font, colour scheme, Claude Code theme, status line, mod folder, tool
      versions) and fails when a row is FAIL
  15. Lists MCP health
+ 16. Installs the pinned Kotlin language server (JetBrains standalone build, SHA-256 verified) under
+     %LOCALAPPDATA%\Programs\kotlin-lsp and puts a `kotlin-lsp.cmd` shim folder on the user Path (step 4h)
 
 .PARAMETER SkipPlugins
   Skip the plugin install/update step (faster when only config changed).
+
+.PARAMETER SkipKotlinLsp
+  Do not install the Kotlin language server (the `kotlin-lsp` command Claude Code's kotlin-lsp plugin launches).
 
 .PARAMETER SkipFont
   Do not install a Nerd Font or touch the Windows Terminal font (the font rows of the check read `kept`).
@@ -53,7 +58,7 @@
 
 #>
 [CmdletBinding()]
-param([switch]$SkipPlugins, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme, [switch]$Check, [switch]$Json)
+param([switch]$SkipPlugins, [switch]$SkipKotlinLsp, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme, [switch]$Check, [switch]$Json)
 
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
@@ -215,6 +220,101 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
     }
   }
   return $current
+}
+
+# ---- Kotlin language server (Claude Code's kotlin-lsp plugin launches the command `kotlin-lsp`) ----
+# JetBrains' standalone build bundles its own JBR, so no JDK is needed. The pure helpers below are tested without a machine.
+$kotlinLspVersion = '263.7084.0'
+
+# Download URLs for one processor architecture ('AMD64' / 'ARM64', as in PROCESSOR_ARCHITECTURE; anything else -> $null).
+function Get-KotlinLspUrls([string]$version, [string]$arch) {
+  $suffix = switch ($arch.ToUpperInvariant()) { 'AMD64' { '' } 'X64' { '' } 'ARM64' { '-aarch64' } default { $null } }
+  if ($null -eq $suffix) { return $null }
+  $zip = "https://download.jetbrains.com/language-server/kotlin-server/$version/kotlin-server-$version$suffix.win.zip"
+  [pscustomobject]@{ Zip = $zip; Sha256 = "$zip.sha256" }
+}
+
+# The hash in a published .sha256 file ("<64 hex> *<file name>"), lower case; $null when the text holds none.
+function Get-Sha256FromText([string]$text) {
+  $m = [regex]::Match($text, '(?im)^\s*([0-9a-f]{64})(?![0-9a-f])')
+  if ($m.Success) { $m.Groups[1].Value.ToLowerInvariant() } else { $null }
+}
+
+# True when both are 64-hex hashes that are equal, ignoring case. A missing or malformed hash never matches.
+function Test-Sha256Match([string]$expected, [string]$actual) {
+  $re = '^[0-9a-fA-F]{64}$'
+  [bool]($expected -match $re -and $actual -match $re -and $expected.ToLowerInvariant() -eq $actual.ToLowerInvariant())
+}
+
+# A ';'-separated Path with $entry once: any entry equal to it (ignoring slash style, trailing slash and case) is dropped
+# and $entry is appended. Other entries keep their order and spelling; empty ones go.
+function Add-PathEntry([string]$current, [string]$entry) {
+  $key = Format-DirKey $entry
+  $kept = @(($current -split ';') | Where-Object { $_.Trim() -and (Format-DirKey $_) -ne $key })
+  ($kept + $entry) -join ';'
+}
+
+# Installs the pinned Kotlin language server into $versionDir and a stable shim dir $shimDir (on the USER Path) with
+# kotlin-lsp.cmd, which runs <versionDir>\bin\intellij-server.exe (the archive's own kotlin-lsp.cmd is deprecated and
+# prints a warning). Other folders next to $versionDir (older versions) are removed on an install. Returns 'installed'
+# or 'already installed'; throws with a clear message on any failure, and never installs an archive whose SHA-256
+# differs from the published one. -SkipPath leaves the registry and $env:Path alone (tests).
+function Install-KotlinLsp([string]$version, [string]$arch, [string]$versionDir, [string]$shimDir, [switch]$SkipPath) {
+  $urls = Get-KotlinLspUrls $version $arch
+  if (-not $urls) { throw "Kotlin LSP has no Windows build for processor architecture '$arch'" }
+  $exe = Join-Path $versionDir 'bin\intellij-server.exe'
+  $shim = Join-Path $shimDir 'kotlin-lsp.cmd'
+  $shimText = "@echo off`r`n`"$exe`" %*`r`n"
+  $haveShim = (Test-Path $shim) -and ((Read-Utf8 $shim) -eq $shimText)
+  if (-not ((Test-Path $exe) -and $haveShim)) {
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('kotlin-lsp-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    try {
+      $saved = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'   # 5.1's progress bar slows a 360 MB download to a crawl
+      try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $zipPath = Join-Path $tmp 'kotlin-lsp.zip'
+        Invoke-WebRequest -Uri $urls.Sha256 -OutFile "$zipPath.sha256" -UseBasicParsing
+        Invoke-WebRequest -Uri $urls.Zip -OutFile $zipPath -UseBasicParsing
+      } finally { $ProgressPreference = $saved }
+      $want = Get-Sha256FromText (Read-Utf8 "$zipPath.sha256")
+      $sha = [Security.Cryptography.SHA256]::Create(); $fs = [IO.File]::OpenRead($zipPath)
+      try { $got = ([BitConverter]::ToString($sha.ComputeHash($fs))).Replace('-', '') } finally { $fs.Dispose(); $sha.Dispose() }
+      if (-not (Test-Sha256Match $want $got)) {
+        throw "Kotlin LSP $version download failed its SHA-256 check (published: $want, downloaded: $got); nothing was installed"
+      }
+      Add-Type -AssemblyName System.IO.Compression.FileSystem
+      $stage = Join-Path $tmp 'extract'
+      [IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $stage)
+      foreach ($need in 'product-info.json', 'bin\intellij-server.exe') {
+        if (-not (Test-Path (Join-Path $stage $need))) { throw "Kotlin LSP $version archive is incomplete (no $need); nothing was installed" }
+      }
+      $parent = Split-Path $versionDir
+      # this and older versions go; the shim folder beside them stays
+      if (Test-Path $parent) { Get-ChildItem $parent -Directory | Where-Object { (Format-DirKey $_.FullName) -ne (Format-DirKey $shimDir) } | Remove-Item -Recurse -Force }
+      New-Item -ItemType Directory -Path $parent -Force | Out-Null
+      Move-Item $stage $versionDir
+    } finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    $result = 'installed'
+  } else { $result = 'already installed' }
+  if (-not $haveShim) {
+    New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
+    [IO.File]::WriteAllText($shim, $shimText, [Text.Encoding]::ASCII)
+    $result = 'installed'
+  }
+  if (-not $SkipPath) {
+    # USER Path only, read and written raw from the registry so %VARS% in other entries stay unexpanded.
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    try {
+      $cur = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+      if (@($cur -split ';' | Where-Object { $_.Trim() -and (Format-DirKey $_) -eq (Format-DirKey $shimDir) }).Count -eq 0) {
+        $key.SetValue('Path', (Add-PathEntry $cur $shimDir), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+        $result = 'installed'
+      }
+    } finally { $key.Close() }
+    if (@($env:Path -split ';' | Where-Object { $_.Trim() -and (Format-DirKey $_) -eq (Format-DirKey $shimDir) }).Count -eq 0) { $env:Path = "$env:Path;$shimDir" }
+  }
+  $result
 }
 
 # ---- Nerd Font (kept for a later visual rebuild) ----
@@ -1097,6 +1197,7 @@ if (-not $Check) {
   if ($KeepFont) { $ranWith += '-KeepFont' }
   if ($KeepScheme) { $ranWith += '-KeepScheme' }
   if ($SkipFont) { $ranWith += '-SkipFont' }
+  if ($SkipKotlinLsp) { $ranWith += '-SkipKotlinLsp' }
   Set-StateRepo (Join-Path $claudeDir 'claude-setup-state.json') $repo $ranWith
 
   # 4d. Nerd Font. Best effort: a failure here warns and never fails the install.
@@ -1242,6 +1343,20 @@ if (-not $Check) {
       Write-Host "    $msg"
     } catch {
       Write-Color "    could not update ${vsPath}: $($_.Exception.Message)" 228
+    }
+  }
+
+  # 4h. Kotlin language server for Claude Code's kotlin-lsp plugin (command `kotlin-lsp`), pinned and SHA-256 verified.
+  # -SkipKotlinLsp skips it. A failure is reported as a failed step and installs nothing.
+  if (-not $SkipKotlinLsp) {
+    Write-Step "Kotlin language server $kotlinLspVersion"
+    try {
+      $klRoot = Join-Path $env:LOCALAPPDATA 'Programs\kotlin-lsp'
+      $r = Install-KotlinLsp $kotlinLspVersion $env:PROCESSOR_ARCHITECTURE (Join-Path $klRoot $kotlinLspVersion) (Join-Path $klRoot 'bin')
+      Write-Host "    $r ($klRoot)"
+    } catch {
+      Write-Color "    $($_.Exception.Message)" 203
+      $failures += "kotlin-lsp: $($_.Exception.Message)"
     }
   }
 }
