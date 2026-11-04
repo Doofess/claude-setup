@@ -7,8 +7,9 @@
   1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusbar.py,statusline.py,keybindings.json} to ~/.claude/backups/claude-setup-<stamp>/
   2. Copies global/CLAUDE.md, statusbar.py, themes/, skills/ and agents/ into ~/.claude
   3. Merges settings.json keys into the existing file (machine-local keys survive)
-  4. Adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in enabledPlugins,
-     updates them, then disables every plugin marked false
+  4. Uninstalls the retired plugins (user scope) and the retired user skills, drops retired plugin ids from the merged
+     enabledPlugins, adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in
+     enabledPlugins, updates them, then disables every plugin marked false
   5. Turns the claude.ai Adobe connector off in each known project once (see mcp_off.py; /mcp turns it back on)
   6. Removes the retired visual setup (custom theme, status line, readable-session mod, keybinding, Windows Terminal
      Readable scheme) from the machine
@@ -32,17 +33,15 @@
  15. Lists MCP health
  16. Installs the pinned Kotlin language server (JetBrains standalone build, SHA-256 verified) under
      %LOCALAPPDATA%\Programs\kotlin-lsp and puts a `kotlin-lsp.cmd` shim folder on the user Path (step 4h)
- 17. Installs the pinned TypeScript language server (`typescript-language-server` and `typescript`, npm global) for
-     Claude Code's typescript-lsp plugin (step 4i)
+ 17. Uninstalls the global `typescript-language-server` and `typescript` an earlier install put there, only when npm
+     shows both at the pinned 6.0.3 (step 4i); a copy at another version stays
 
 .PARAMETER SkipPlugins
-  Skip the plugin install/update step (faster when only config changed).
+  Skip the plugin steps: the install/update and the retired-plugin uninstalls, and the retired global TypeScript
+  server uninstall (faster when only config changed).
 
 .PARAMETER SkipKotlinLsp
   Do not install the Kotlin language server (the `kotlin-lsp` command Claude Code's kotlin-lsp plugin launches).
-
-.PARAMETER SkipTypescriptLsp
-  Do not install the TypeScript language server (the `typescript-language-server` command Claude Code's typescript-lsp plugin launches).
 
 .PARAMETER SkipFont
   Do not install a Nerd Font or touch the Windows Terminal font (the font rows of the check read `kept`).
@@ -63,7 +62,7 @@
 
 #>
 [CmdletBinding()]
-param([switch]$SkipPlugins, [switch]$SkipKotlinLsp, [switch]$SkipTypescriptLsp, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme, [switch]$Check, [switch]$Json)
+param([switch]$SkipPlugins, [switch]$SkipKotlinLsp, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme, [switch]$Check, [switch]$Json)
 
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
@@ -322,28 +321,82 @@ function Install-KotlinLsp([string]$version, [string]$arch, [string]$versionDir,
   $result
 }
 
-# ---- TypeScript language server (Claude Code's typescript-lsp plugin launches the command `typescript-language-server`) ----
-# typescript-language-server needs the JavaScript tsserver.js, which TypeScript 7 (typescript-go) no longer ships, so
-# `typescript` is pinned to 6.0.3, the last 6.x. Both packages are installed globally with npm.
-$typescriptLspVersion = '6.0.3'
-$typescriptVersion = '6.0.3'
+# ---- Retired plugins, skills and the global TypeScript server (the user level holds only the workflow core) ----
+# Plugins, LSPs, MCP servers and hooks are per project (README, "User level vs project level"). Plugins nothing on this
+# PC ever used are uninstalled at user scope. Re-running on a PC where they are all gone makes no uninstall call.
+$retiredPlugins = @(
+  'chrome-devtools-mcp@claude-plugins-official', 'hookify@claude-plugins-official', 'mcp-server-dev@claude-plugins-official',
+  'claude-code-setup@claude-plugins-official', 'claude-md-management@claude-plugins-official', 'claude-security@claude-plugins-official',
+  'cloudflare@claude-plugins-official', 'code-review@claude-plugins-official', 'code-simplifier@claude-plugins-official',
+  'feature-dev@claude-plugins-official', 'github@claude-plugins-official', 'ralph-loop@claude-plugins-official',
+  'shopify-ai-toolkit@claude-plugins-official', 'skill-creator@claude-plugins-official', 'telegram@claude-plugins-official',
+  'vercel@claude-plugins-official', 'pyright-lsp@claude-plugins-official', 'rust-analyzer-lsp@claude-plugins-official',
+  'typescript-lsp@claude-plugins-official',
+  'superpowers@anthropic-plugin-directory', 'frontend-design@anthropic-plugin-directory',
+  'context7@anthropic-plugin-directory', 'playwright@anthropic-plugin-directory'
+)
+# User skills that moved into a plugin (underwater-photoshop is plugins/photo-edit) or were never used (find-skills).
+$retiredSkills = @('underwater-photoshop', 'find-skills')
 
-# Installs typescript-language-server@$lspVersion and typescript@$tsVersion globally with $Npm (a command name or path).
-# Skips npm install when `npm ls -g` already shows both at the pinned versions. Returns 'installed' or
-# 'already <lspVersion>'; throws when npm is missing or fails.
-function Install-TypescriptLsp([string]$lspVersion, [string]$tsVersion, [string]$Npm = 'npm') {
-  if (-not (Get-Command $Npm -ErrorAction SilentlyContinue)) { throw "npm was not found on PATH (install Node.js first)" }
+# Uninstalls each id in $ids that `claude plugin list --json` shows at user scope (an id installed only at project
+# scope is not touched). $claude runs the CLI: a scriptblock that gets the arguments, so a test can pass a fake.
+# Returns the ids it uninstalled; an id whose uninstall fails is added to $failed instead.
+function Remove-RetiredPlugins([string[]]$ids, [scriptblock]$claude = { & claude @args }, $failed = $null) {
+  $removed = @()
+  try {
+    $parsed = (& $claude plugin list --json 2>$null | Out-String) | ConvertFrom-Json
+    $listed = @($parsed | ForEach-Object { $_ })   # Windows PowerShell 5.1 returns a JSON array as one object
+  } catch { return @() }
+  $present = @($listed | Where-Object { $_ -and $_.id -and $_.scope -eq 'user' } | ForEach-Object { [string]$_.id })
+  foreach ($id in $ids) {
+    if ($present -notcontains $id) { continue }
+    $global:LASTEXITCODE = 0
+    & $claude plugin uninstall $id --scope user 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { $removed += $id } elseif ($null -ne $failed) { $failed.Add($id) }
+  }
+  return $removed
+}
+
+# Deletes each retired skill folder under $skillsDir. Returns the names it removed.
+function Remove-RetiredSkills([string[]]$names, [string]$skillsDir) {
+  $removed = @()
+  foreach ($n in $names) {
+    $p = Join-Path $skillsDir $n
+    if (Test-Path -LiteralPath $p -PathType Container) { Remove-Item -LiteralPath $p -Recurse -Force; $removed += $n }
+  }
+  return $removed
+}
+
+# The settings merge keeps keys the template no longer has, so a retired plugin id would stay in enabledPlugins.
+# Changes $settings and returns the ids it removed.
+function Remove-RetiredSettingsPlugins($settings, [string[]]$ids) {
+  $removed = @()
+  $ep = $settings.PSObject.Properties['enabledPlugins']
+  if (-not $ep -or -not (Test-IsObject $ep.Value)) { return $removed }
+  foreach ($id in $ids) {
+    if ($ep.Value.PSObject.Properties[$id]) { $ep.Value.PSObject.Properties.Remove($id); $removed += $id }
+  }
+  return $removed
+}
+
+# Step 4i used to install typescript-language-server 6.0.3 and typescript 6.0.3 globally. Uninstalls them only when
+# `npm ls -g` shows both at exactly those versions; a copy installed by hand at another version stays. $npm runs npm
+# (a scriptblock that gets the arguments). Returns 'removed' or 'kept <reason>'.
+function Remove-RetiredTypescriptLsp([scriptblock]$npm = { & npm @args }, [string]$version = '6.0.3') {
   $have = @{}
   try {
-    $json = (& $Npm ls -g --depth=0 --json 2>$null | Out-String) | ConvertFrom-Json
+    $json = (& $npm ls -g --depth=0 --json 2>$null | Out-String) | ConvertFrom-Json
     if ($json -and $json.dependencies) {
       foreach ($p in $json.dependencies.PSObject.Properties) { $have[$p.Name] = [string]$p.Value.version }
     }
-  } catch { $have = @{} }
-  if ($have['typescript-language-server'] -eq $lspVersion -and $have['typescript'] -eq $tsVersion) { return "already $lspVersion" }
-  & $Npm install -g --no-fund --no-audit "typescript-language-server@$lspVersion" "typescript@$tsVersion" | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw "npm install -g failed with exit code $LASTEXITCODE" }
-  'installed'
+  } catch { return 'kept (npm not available)' }
+  $lsp = $have['typescript-language-server']; $ts = $have['typescript']
+  if (-not $lsp -and -not $ts) { return 'kept (not installed)' }
+  if ($lsp -ne $version -or $ts -ne $version) { return "kept (installed by hand: server $lsp, typescript $ts)" }
+  $global:LASTEXITCODE = 0
+  & $npm uninstall -g --no-fund --no-audit typescript-language-server typescript 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) { return "kept (npm uninstall failed with exit code $LASTEXITCODE)" }
+  return 'removed'
 }
 
 # ---- Nerd Font (kept for a later visual rebuild) ----
@@ -1115,6 +1168,10 @@ if (-not $Check) {
     New-Item -ItemType Directory -Force $dest | Out-Null
     Copy-Item (Join-Path $skill.FullName '*') $dest -Recurse -Force
   }
+  # Retired user skills (moved into a plugin, or never used) are deleted from ~/.claude/skills.
+  foreach ($n in @(Remove-RetiredSkills $retiredSkills (Join-Path $claudeDir 'skills'))) {
+    Write-Host "    removed skill: $n (retired; underwater-photoshop is now the photo-edit plugin)"
+  }
   # Agents: each file under agents/ becomes ~/.claude/agents/<name>.md (a file named like a built-in agent replaces it).
   if (Test-Path (Join-Path $repo 'agents')) {
     New-Item -ItemType Directory -Force (Join-Path $claudeDir 'agents') | Out-Null
@@ -1127,6 +1184,7 @@ if (-not $Check) {
   # Per-key rules (enabledPlugins, env, permissions, hooks merge; the rest is replaced) live in Merge-ClaudeSettings.
   $current = Merge-ClaudeSettings $current $template $repo
   $current = Remove-RetiredHooks $current $retiredHooks
+  foreach ($d in @(Remove-RetiredSettingsPlugins $current $retiredPlugins)) { Write-Host "    removed from settings.json enabledPlugins: $d (retired)" }
   foreach ($d in @(Remove-UserAdvisor $current)) { Write-Host "    removed from settings.json: $d (the advisor is per project: advisor-switch skill)" }
   foreach ($r in $retiredHooks) { Remove-Item (Join-Path $claudeDir "hooks\$r") -Force -ErrorAction SilentlyContinue }
   # The status bar draws Nerd Font icons; on a machine without a Nerd Font the installed command gets --labels
@@ -1145,6 +1203,19 @@ if (-not $Check) {
   $savedEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   if (-not $SkipPlugins) {
+    # Retired plugins go first. The CLI may rewrite enabledPlugins while uninstalling, so prune the ids again after.
+    Write-Step 'Uninstalling retired plugins'
+    $retireFailed = New-Object 'System.Collections.Generic.List[string]'
+    $gonePlugins = @(Remove-RetiredPlugins $retiredPlugins { & claude @args } $retireFailed)
+    foreach ($id in $gonePlugins) { Write-Host "    uninstalled $id" }
+    foreach ($id in $retireFailed) { $failures += "uninstall $id" }
+    if ($gonePlugins.Count -gt 0) {
+      $cur = Read-Utf8 $settingsPath | ConvertFrom-Json
+      if (@(Remove-RetiredSettingsPlugins $cur $retiredPlugins).Count -gt 0) {
+        Write-Utf8NoBom $settingsPath (($cur | ConvertTo-Json -Depth 20) + "`n")
+      }
+    }
+    if ($gonePlugins.Count -eq 0 -and $retireFailed.Count -eq 0) { Write-Color '    none installed' 244 }
     # Plugins from outside the official marketplace (good-css) need their marketplace known first.
     foreach ($mp in $template.extraKnownMarketplaces.PSObject.Properties) {
       $out = & claude plugin marketplace add $mp.Value.source.repo 2>&1
@@ -1227,7 +1298,6 @@ if (-not $Check) {
   if ($KeepScheme) { $ranWith += '-KeepScheme' }
   if ($SkipFont) { $ranWith += '-SkipFont' }
   if ($SkipKotlinLsp) { $ranWith += '-SkipKotlinLsp' }
-  if ($SkipTypescriptLsp) { $ranWith += '-SkipTypescriptLsp' }
   Set-StateRepo (Join-Path $claudeDir 'claude-setup-state.json') $repo $ranWith
 
   # 4d. Nerd Font. Best effort: a failure here warns and never fails the install.
@@ -1390,17 +1460,15 @@ if (-not $Check) {
     }
   }
 
-  # 4i. TypeScript language server for Claude Code's typescript-lsp plugin (command `typescript-language-server`),
-  # pinned npm globals. -SkipTypescriptLsp skips it. A failure is reported as a failed step and never aborts the rest.
-  if (-not $SkipTypescriptLsp) {
-    Write-Step "TypeScript language server $typescriptLspVersion"
-    try {
-      $r = Install-TypescriptLsp $typescriptLspVersion $typescriptVersion
-      Write-Host "    $r (typescript $typescriptVersion)"
-    } catch {
-      Write-Color "    $($_.Exception.Message)" 203
-      $failures += "typescript-lsp: $($_.Exception.Message)"
-    }
+  # 4i. The global TypeScript language server (typescript-language-server + typescript) is retired: the TypeScript LSP
+  # is per project now. Removed only when npm shows both at the pinned 6.0.3 an earlier install put there.
+  # -SkipPlugins skips it. It never fails the install.
+  if (-not $SkipPlugins) {
+    Write-Step 'Retiring the global TypeScript language server'
+    $savedEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $r = Remove-RetiredTypescriptLsp
+    $ErrorActionPreference = $savedEap
+    Write-Host "    $r"
   }
 }
 

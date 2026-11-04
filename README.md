@@ -94,7 +94,9 @@ Nothing to look at here, but it shapes every session:
 - **`codex`**: hands a task to OpenAI's Codex CLI in the background (`codex exec`, read-only unless it works in a
   worktree), on the OpenAI subscription: questions about Codex, independent research, second opinions. Its sibling
   setup is [codex-setup](https://github.com/Doofess/codex-setup).
-- **`underwater-photoshop`**: a personal skill that edits underwater and macro photos in the local Photoshop.
+- **`photo-edit`** (plugin, not installed at user level): the `underwater-photoshop` skill, which edits underwater and
+  macro photos in the local Photoshop. This repo is a plugin marketplace; see
+  [Project-level plugins](#project-level-plugins).
 
 ## Set up a new machine (Windows)
 
@@ -122,8 +124,10 @@ Nothing to look at here, but it shapes every session:
    blocked-scripts policy. From Git Bash, run `./install.sh`, which calls it.
 
 4. Restart Claude Code and open a new terminal tab.
-5. Only for photo work: `python -m venv ~/.claude/skills/underwater-photoshop/.venv`, then
-   `pip install -r skills/underwater-photoshop/requirements.txt` into it. Needs Photoshop 2026 (COM `Photoshop.Application`).
+5. Only for photo work: switch on `photo-edit` in the photo project (see
+   [Project-level plugins](#project-level-plugins)), then make a venv for the skill:
+   `python -m venv <skill folder>\.venv` and `pip install -r plugins/photo-edit/skills/underwater-photoshop/requirements.txt`
+   into it. Needs Photoshop 2026 (COM `Photoshop.Application`).
 
 The installer installs JetBrainsMono Nerd Font through winget if the machine has no Nerd Font, sets Windows Terminal's
 font and colour scheme, and removes hooks this repo has retired. Options:
@@ -135,7 +139,6 @@ font and colour scheme, and removes hooks this repo has retired. Options:
 | `-SkipFont` | skip the font install and the font change |
 | `-SkipPlugins` | skip installing and updating plugins (faster when only config changed) |
 | `-SkipKotlinLsp` | skip the Kotlin language server install |
-| `-SkipTypescriptLsp` | skip the TypeScript language server install |
 
 It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` on every run.
 
@@ -148,15 +151,6 @@ JetBrains publishes next to the archive, and extracts it to `%LOCALAPPDATA%\Prog
 Path) runs it. The archive bundles its own JetBrains Runtime, so no JDK is needed. Re-running skips it when the pinned
 version is there and replaces an older version. Open a new terminal (and restart Claude Code) after the first install.
 On macOS use Homebrew instead; this installer is Windows only.
-
-### TypeScript language server
-
-Claude Code's `typescript-lsp` plugin launches the command `typescript-language-server`. The installer runs
-`npm install -g` for `typescript-language-server@6.0.3` and `typescript@6.0.3` (both pinned in `install.ps1`) and skips
-npm when `npm ls -g` already shows those versions. TypeScript is held at 6.0.3, the last 6.x, because the server needs
-the JavaScript `tsserver.js` that TypeScript 7 (typescript-go) no longer ships. It needs Node.js and npm on PATH; if
-they are missing the step fails and the rest of the install carries on. Projects on TypeScript 7 (such as
-omnichannel-platform) use their own project plugin instead and switch `typescript-lsp` off for that project.
 
 ### Check a machine
 
@@ -240,6 +234,44 @@ Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers)
   effort's red (the red of `bypass permissions on`) are Claude Code's exact theme colours. The icons depend on the Nerd
   Font's glyph widths, so a different scheme or font gives a different screen.
 
+### User level vs project level
+
+The user level (`settings.json` here, merged into `~/.claude/settings.json`) keeps only the workflow core:
+
+- plugins: `superpowers` and `remember` (both from `claude-plugins-official`);
+- skills: `advisor-switch`, `codex` and `setup-check`;
+- agents: `worker` and `Explore`;
+- the status line, permissions, mods and the global `CLAUDE.md`.
+
+Everything else is per project: plugins, LSPs, MCP servers and hooks go in the repo's `.claude/settings.json` (MCP in
+`.mcp.json`). A plugin that is installed but not core is pinned `false` in the template, so no session loads it unless
+its project switches it on; `playwright`, `context7`, `frontend-design`, `mattpocock-skills`, `modern-web-guidance`,
+`supabase`, `adobe-for-creativity`, `kotlin-lsp`, `security-guidance` and `good-css` are in that state.
+
+Tools that nothing on this PC ever used are uninstalled by `install.ps1` (user-scope plugins in `$retiredPlugins`, the
+skills in `$retiredSkills`: `underwater-photoshop`, which is now the `photo-edit` plugin, and `find-skills`), and their
+ids leave `~/.claude/settings.json`. The global `typescript-language-server` and `typescript` an earlier install put on
+the machine are removed only when `npm ls -g` shows both at exactly 6.0.3; a copy installed by hand at another version
+stays. A re-run on a machine where all of this is gone makes no uninstall call. `-SkipPlugins` skips the plugin and npm
+retire steps. An id installed only at project scope (for example `expo` for a deleted worktree) is not touched.
+
+### Project-level plugins
+
+This repo is also a Claude Code plugin marketplace named `claude-setup` (`.claude-plugin/marketplace.json`). It ships one
+plugin, `photo-edit`, which carries the `underwater-photoshop` skill. The skill is no longer copied into
+`~/.claude/skills`; a photo project switches it on in its own `.claude/settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "claude-setup": { "source": { "source": "github", "repo": "Doofess/claude-setup" } }
+  },
+  "enabledPlugins": { "photo-edit@claude-setup": true }
+}
+```
+
+`claude plugin validate .` checks the marketplace.
+
 ### Settings merge rules
 
 `settings.json` is merged into the machine's `~/.claude/settings.json`: `enabledPlugins` and `env` entry by entry (the
@@ -254,14 +286,14 @@ Entries are compared ignoring slash style, trailing slash and case.
 
 ### Plugin and MCP policy
 
-- Always on (user scope): superpowers, frontend-design, context7, playwright, and the typescript, pyright and
-  rust-analyzer LSPs. claude-md-management and the synced design and engineering plugins are pinned off. The synced
+- Always on (user scope): superpowers and remember. Every other plugin is pinned off in the template and switched on in
+  a project's `.claude/settings.json` (see [User level vs project level](#user-level-vs-project-level)). The synced
   docs/docx/pdf/pptx/xlsx skills and the browser and computer-use skills load by name only (`skillOverrides`).
 - Superpowers' brainstorming, diagnosing-superpowers, dispatching-parallel-agents, receiving-code-review,
   requesting-code-review, verification-before-completion and writing-skills are off (`skillOverrides`): CLAUDE.md asks
   design questions through `AskUserQuestion`, reviews with the built-in `/code-review`, and keeps "run the check before
   saying done" as a rule of its own. `good-css` is declared in `extraKnownMarketplaces`
-  (`vojtaholik/good-css`); enabling it is left to each machine.
+  (`vojtaholik/good-css`); a project that wants it switches it on.
 - Anything tied to one project (databases, deploy target, observability, Kubernetes) is project scope: `mcp-presets/`.
 - The GitHub MCP server stays off; `gh` does the same job with far less context.
 - `deniedMcpServers` blocks every claude.ai connector except Adobe, Supabase and Cloudflare (Slack, Linear, Atlassian,
@@ -271,7 +303,7 @@ Entries are compared ignoring slash style, trailing slash and case.
   return 403). It costs about 5k tokens a turn, so the installer turns it off in each project it knows (`mcp_off.py`);
   `/mcp` turns it back on for one project, and that choice survives re-runs. A deny-list entry wouldn't work here: deny
   lists union across settings sources, so `--settings` can't lift one for a session. A project first opened after the
-  last install starts with Adobe on. Photo edits themselves run in local Photoshop via the `underwater-photoshop` skill.
+  last install starts with Adobe on. Photo edits themselves run in local Photoshop via the `underwater-photoshop` skill of the `photo-edit` plugin.
 
 ## History
 

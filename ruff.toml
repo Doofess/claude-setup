@@ -14,7 +14,7 @@ ignore = [
 
 [lint.per-file-ignores]
 # Paid-work scripts: config ignores only, no edits allowed there.
-"skills/underwater-photoshop/**" = [
+"plugins/photo-edit/skills/underwater-photoshop/**" = [
     "B023",   # loop-variable closure; fixing would change code
     "C408",   # dict() calls
     "F401",   # unused import
