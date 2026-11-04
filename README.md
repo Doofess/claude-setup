@@ -134,8 +134,19 @@ font and colour scheme, and removes hooks this repo has retired. Options:
 | `-KeepScheme` | keep the machine's own colour scheme |
 | `-SkipFont` | skip the font install and the font change |
 | `-SkipPlugins` | skip installing and updating plugins (faster when only config changed) |
+| `-SkipKotlinLsp` | skip the Kotlin language server install |
 
 It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` on every run.
+
+### Kotlin language server
+
+Claude Code's `kotlin-lsp` plugin launches the command `kotlin-lsp`. The installer downloads JetBrains' standalone
+Kotlin language server (pinned in `install.ps1`, now 263.7084.0; x64 or arm64 by processor), checks the SHA-256
+JetBrains publishes next to the archive, and extracts it to `%LOCALAPPDATA%\Programs\kotlin-lsp\<version>`. A
+`kotlin-lsp.cmd` shim in `%LOCALAPPDATA%\Programs\kotlin-lspin` (added once to your user Path, never the machine
+Path) runs it. The archive bundles its own JetBrains Runtime, so no JDK is needed. Re-running skips it when the pinned
+version is there and replaces an older version. Open a new terminal (and restart Claude Code) after the first install.
+On macOS use Homebrew instead; this installer is Windows only.
 
 ### Check a machine
 
