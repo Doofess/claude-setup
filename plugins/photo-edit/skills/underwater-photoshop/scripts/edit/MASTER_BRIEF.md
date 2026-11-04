@@ -1,4 +1,4 @@
-> Paths in this brief: `$SP` = this skill's `scripts/` folder, `$SP/venv/Scripts/python` = the skill venv `~/.claude/skills/underwater-photoshop/.venv/Scripts/python.exe`. Work files go to `%UW_WORK%` (default `<photo folder>\.claude-work`), not a scratchpad.
+> Paths in this brief: `$SP` = this skill's `scripts/` folder, `$PY` = the photo-edit venv's Python, `~/.claude/photo-edit/.venv/Scripts/python.exe` (outside the plugin cache, not under `$SP`). Work files go to `%UW_WORK%` (default `<photo folder>\.claude-work`), not a scratchpad.
 
 # MASTER PASS: competition grade
 
@@ -24,7 +24,7 @@ The friend is entering these in an underwater photo competition. The first pass 
 6. **Noise**: LuminanceSmoothing 15-35 by ISO. Over-smoothing (plastic skin) is a fault too. Grain in water: slightly more NR and less sharpening in flat areas (use masking).
 7. **Colour truth**: whites neutral (sample sand or white tips: R, G, B within about 8 of each other), body colours believable, water natural. Compare with the camera JPEG thumb to make sure you have not drifted into a fantasy palette.
 8. **Crop**: keep as much of the frame as possible; aim for >= 12 MP after the crop (>= 4000 px long edge) unless the subject is tiny. Place the subject with intent (eye on a third, or centred and symmetric). No cut body parts unless the original already cuts them.
-9. **Final QA**: run `"$SP/venv/Scripts/python" -I "$SP/qa/qa.py" "$SP/qa/<yourkey>" <final.jpg>` and Read the `_100.jpg` strip; fix anything you see.
+9. **Final QA**: run `"$PY" -I "$SP/qa/qa.py" "$SP/qa/<yourkey>" <final.jpg>` and Read the `_100.jpg` strip; fix anything you see.
 
 ## Audit of the first pass (what is wrong now; fix or replace)
 - 01 Nautilus-Reflection DSC02568: eye sharp (good). Blue CA fringing on edges; small specks in the black; mild over-sharpening (halo 17). Fix CA, clean specks, soften sharpening.
@@ -46,7 +46,7 @@ The friend is entering these in an underwater photo competition. The first pass 
 ## Deliverables (overwrite the first-pass files; same naming)
 - `edited\friend-list\<NN>-<Subject>_<stem>.jpg` full-res quality 12, and `.psd` (RAW smart object plus any "Backscatter removed" pixel layer via add_layer_locked.ps1).
 - If you replace a frame, delete the old pair you are replacing (only files with YOUR list number) so each item has only the chosen frame(s).
-- EXIF must survive: Photoshop keeps it in the JPEG it writes, but python/cv2 re-saves DROP it. After any python edit, restore it with `"$SP/venv/Scripts/python" -I "$SP/edit/copy_exif.py" <photoshop.jpg> <cleaned.jpg>` (this re-saves at q97).
+- EXIF must survive: Photoshop keeps it in the JPEG it writes, but python/cv2 re-saves DROP it. After any python edit, restore it with `"$PY" -I "$SP/edit/copy_exif.py" <photoshop.jpg> <cleaned.jpg>` (this re-saves at q97).
 
 ## Report (short)
 Per item: final stem, verdict (competition-ready / usable with caveat / no good frame), the one-line reason, key settings, what you fixed from the audit, remaining weakness.

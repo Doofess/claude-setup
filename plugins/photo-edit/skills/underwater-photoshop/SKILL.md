@@ -13,13 +13,13 @@ Paid work for competitions. Judge every frame at 100% before calling it done.
 
 ```powershell
 $env:UW_PROJECT = "C:\path\to\photo folder"      # holds the ARWs (or a lightroom\ subfolder), edited\, and .claude-work\
-$PY = "$HOME\.claude\skills\underwater-photoshop\.venv\Scripts\python.exe"
-$S  = "$HOME\.claude\skills\underwater-photoshop\scripts"
+$PY = "$HOME\.claude\photo-edit\.venv\Scripts\python.exe"   # outside the plugin cache, so plugin updates keep it
+$S  = "<base directory>\scripts"   # the skill's base directory, printed when the skill loads
 ```
 
 Scripts take their folders from `UW_PROJECT`, `UW_RAW` (ARW folder, default `UW_PROJECT\lightroom` if it exists), `UW_DELIVER` (default `UW_PROJECT\edited`) and `UW_WORK` (default `UW_PROJECT\.claude-work`). Run Python with `-I`. A RAW the user drops in Downloads is copied into the project first so its sidecar sits beside it. A machine-wide mutex serialises Photoshop; one JSX runs at a time, and parallel subagents queue instead of colliding.
 
-Missing venv: `python -m venv <skill>\.venv` then `pip install -r <skill>\requirements.txt`.
+Missing venv: `python -m venv "$HOME\.claude\photo-edit\.venv"`, then `& $PY -m pip install -r "<base directory>\requirements.txt"`.
 
 ## Deliverables
 
