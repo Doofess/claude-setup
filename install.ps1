@@ -32,12 +32,17 @@
  15. Lists MCP health
  16. Installs the pinned Kotlin language server (JetBrains standalone build, SHA-256 verified) under
      %LOCALAPPDATA%\Programs\kotlin-lsp and puts a `kotlin-lsp.cmd` shim folder on the user Path (step 4h)
+ 17. Installs the pinned TypeScript language server (`typescript-language-server` and `typescript`, npm global) for
+     Claude Code's typescript-lsp plugin (step 4i)
 
 .PARAMETER SkipPlugins
   Skip the plugin install/update step (faster when only config changed).
 
 .PARAMETER SkipKotlinLsp
   Do not install the Kotlin language server (the `kotlin-lsp` command Claude Code's kotlin-lsp plugin launches).
+
+.PARAMETER SkipTypescriptLsp
+  Do not install the TypeScript language server (the `typescript-language-server` command Claude Code's typescript-lsp plugin launches).
 
 .PARAMETER SkipFont
   Do not install a Nerd Font or touch the Windows Terminal font (the font rows of the check read `kept`).
@@ -58,7 +63,7 @@
 
 #>
 [CmdletBinding()]
-param([switch]$SkipPlugins, [switch]$SkipKotlinLsp, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme, [switch]$Check, [switch]$Json)
+param([switch]$SkipPlugins, [switch]$SkipKotlinLsp, [switch]$SkipTypescriptLsp, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme, [switch]$Check, [switch]$Json)
 
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
@@ -315,6 +320,30 @@ function Install-KotlinLsp([string]$version, [string]$arch, [string]$versionDir,
     if (@($env:Path -split ';' | Where-Object { $_.Trim() -and (Format-DirKey $_) -eq (Format-DirKey $shimDir) }).Count -eq 0) { $env:Path = "$env:Path;$shimDir" }
   }
   $result
+}
+
+# ---- TypeScript language server (Claude Code's typescript-lsp plugin launches the command `typescript-language-server`) ----
+# typescript-language-server needs the JavaScript tsserver.js, which TypeScript 7 (typescript-go) no longer ships, so
+# `typescript` is pinned to 6.0.3, the last 6.x. Both packages are installed globally with npm.
+$typescriptLspVersion = '6.0.3'
+$typescriptVersion = '6.0.3'
+
+# Installs typescript-language-server@$lspVersion and typescript@$tsVersion globally with $Npm (a command name or path).
+# Skips npm install when `npm ls -g` already shows both at the pinned versions. Returns 'installed' or
+# 'already <lspVersion>'; throws when npm is missing or fails.
+function Install-TypescriptLsp([string]$lspVersion, [string]$tsVersion, [string]$Npm = 'npm') {
+  if (-not (Get-Command $Npm -ErrorAction SilentlyContinue)) { throw "npm was not found on PATH (install Node.js first)" }
+  $have = @{}
+  try {
+    $json = (& $Npm ls -g --depth=0 --json 2>$null | Out-String) | ConvertFrom-Json
+    if ($json -and $json.dependencies) {
+      foreach ($p in $json.dependencies.PSObject.Properties) { $have[$p.Name] = [string]$p.Value.version }
+    }
+  } catch { $have = @{} }
+  if ($have['typescript-language-server'] -eq $lspVersion -and $have['typescript'] -eq $tsVersion) { return "already $lspVersion" }
+  & $Npm install -g --no-fund --no-audit "typescript-language-server@$lspVersion" "typescript@$tsVersion" | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "npm install -g failed with exit code $LASTEXITCODE" }
+  'installed'
 }
 
 # ---- Nerd Font (kept for a later visual rebuild) ----
@@ -1198,6 +1227,7 @@ if (-not $Check) {
   if ($KeepScheme) { $ranWith += '-KeepScheme' }
   if ($SkipFont) { $ranWith += '-SkipFont' }
   if ($SkipKotlinLsp) { $ranWith += '-SkipKotlinLsp' }
+  if ($SkipTypescriptLsp) { $ranWith += '-SkipTypescriptLsp' }
   Set-StateRepo (Join-Path $claudeDir 'claude-setup-state.json') $repo $ranWith
 
   # 4d. Nerd Font. Best effort: a failure here warns and never fails the install.
@@ -1357,6 +1387,19 @@ if (-not $Check) {
     } catch {
       Write-Color "    $($_.Exception.Message)" 203
       $failures += "kotlin-lsp: $($_.Exception.Message)"
+    }
+  }
+
+  # 4i. TypeScript language server for Claude Code's typescript-lsp plugin (command `typescript-language-server`),
+  # pinned npm globals. -SkipTypescriptLsp skips it. A failure is reported as a failed step and never aborts the rest.
+  if (-not $SkipTypescriptLsp) {
+    Write-Step "TypeScript language server $typescriptLspVersion"
+    try {
+      $r = Install-TypescriptLsp $typescriptLspVersion $typescriptVersion
+      Write-Host "    $r (typescript $typescriptVersion)"
+    } catch {
+      Write-Color "    $($_.Exception.Message)" 203
+      $failures += "typescript-lsp: $($_.Exception.Message)"
     }
   }
 }
