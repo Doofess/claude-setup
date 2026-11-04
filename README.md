@@ -125,8 +125,8 @@ Nothing to look at here, but it shapes every session:
 
 4. Restart Claude Code and open a new terminal tab.
 5. Only for photo work: switch on `photo-edit` in the photo project (see
-   [Project-level plugins](#project-level-plugins)), then make a venv for the skill:
-   `python -m venv <skill folder>\.venv` and `pip install -r plugins/photo-edit/skills/underwater-photoshop/requirements.txt`
+   [Project-level plugins](#project-level-plugins)), then make the skill's venv outside the plugin cache:
+   `python -m venv "$HOME\.claude\photo-edit\.venv"` and `pip install -r plugins/photo-edit/skills/underwater-photoshop/requirements.txt`
    into it. Needs Photoshop 2026 (COM `Photoshop.Application`).
 
 The installer installs JetBrainsMono Nerd Font through winget if the machine has no Nerd Font, sets Windows Terminal's
