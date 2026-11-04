@@ -1,0 +1,6 @@
+{
+  "name": "photo-edit",
+  "version": "1.0.0",
+  "description": "Underwater and macro photo edits (RAW, Camera Raw, backscatter) in the local Photoshop.",
+  "author": { "name": "Doofess" }
+}

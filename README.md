@@ -94,7 +94,9 @@ Nothing to look at here, but it shapes every session:
 - **`codex`**: hands a task to OpenAI's Codex CLI in the background (`codex exec`, read-only unless it works in a
   worktree), on the OpenAI subscription: questions about Codex, independent research, second opinions. Its sibling
   setup is [codex-setup](https://github.com/Doofess/codex-setup).
-- **`underwater-photoshop`**: a personal skill that edits underwater and macro photos in the local Photoshop.
+- **`photo-edit`** (plugin, not installed at user level): the `underwater-photoshop` skill, which edits underwater and
+  macro photos in the local Photoshop. This repo is a plugin marketplace; see
+  [Project-level plugins](#project-level-plugins).
 
 ## Set up a new machine (Windows)
 
@@ -122,8 +124,10 @@ Nothing to look at here, but it shapes every session:
    blocked-scripts policy. From Git Bash, run `./install.sh`, which calls it.
 
 4. Restart Claude Code and open a new terminal tab.
-5. Only for photo work: `python -m venv ~/.claude/skills/underwater-photoshop/.venv`, then
-   `pip install -r skills/underwater-photoshop/requirements.txt` into it. Needs Photoshop 2026 (COM `Photoshop.Application`).
+5. Only for photo work: switch on `photo-edit` in the photo project (see
+   [Project-level plugins](#project-level-plugins)), then make a venv for the skill:
+   `python -m venv <skill folder>\.venv` and `pip install -r plugins/photo-edit/skills/underwater-photoshop/requirements.txt`
+   into it. Needs Photoshop 2026 (COM `Photoshop.Application`).
 
 The installer installs JetBrainsMono Nerd Font through winget if the machine has no Nerd Font, sets Windows Terminal's
 font and colour scheme, and removes hooks this repo has retired. Options:
@@ -239,6 +243,23 @@ Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers)
 - Most of the bar's and the mod's colours are the colour scheme's own 16; Claude orange, the repo's violet and high
   effort's red (the red of `bypass permissions on`) are Claude Code's exact theme colours. The icons depend on the Nerd
   Font's glyph widths, so a different scheme or font gives a different screen.
+
+### Project-level plugins
+
+This repo is also a Claude Code plugin marketplace named `claude-setup` (`.claude-plugin/marketplace.json`). It ships one
+plugin, `photo-edit`, which carries the `underwater-photoshop` skill. The skill is no longer copied into
+`~/.claude/skills`; a photo project switches it on in its own `.claude/settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "claude-setup": { "source": { "source": "github", "repo": "Doofess/claude-setup" } }
+  },
+  "enabledPlugins": { "photo-edit@claude-setup": true }
+}
+```
+
+`claude plugin validate .` checks the marketplace.
 
 ### Settings merge rules
 

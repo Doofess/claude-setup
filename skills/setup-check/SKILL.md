@@ -38,6 +38,10 @@ the machine is fixed by the installer, not by editing the repo.
    | Claude Code not signed in | Run `claude` and sign in. |
    | GitHub CLI not signed in | `gh auth login` |
 
-7. **Done only when step 4 exits 0.** Quote its last line verbatim. Restart notes: Windows Terminal picks up profile
+7. **Photo project?** When the current folder is a photo project (RAW files, or a `.claude-work` or `edited` folder), its
+   `.claude/settings.json` must have `"photo-edit@claude-setup": true` in `enabledPlugins` and the `claude-setup` entry
+   in `extraKnownMarketplaces` (README, "Project-level plugins"). If not, give the user that block; the skill is no longer
+   in `~/.claude/skills`.
+8. **Done only when step 4 exits 0.** Quote its last line verbatim. Restart notes: Windows Terminal picks up profile
    changes live (a new tab is enough); Claude Code needs a restart for `settings.json` changes, so tell the user to
    restart it if step 5 ran.

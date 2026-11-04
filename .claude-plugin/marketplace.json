@@ -1,0 +1,11 @@
+{
+  "name": "claude-setup",
+  "owner": { "name": "Doofess" },
+  "plugins": [
+    {
+      "name": "photo-edit",
+      "source": "./plugins/photo-edit",
+      "description": "Underwater and macro photo edits (RAW, Camera Raw, backscatter) in the local Photoshop, for the photo project only."
+    }
+  ]
+}
