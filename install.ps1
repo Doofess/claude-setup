@@ -381,8 +381,9 @@ function Remove-RetiredSettingsPlugins($settings, [string[]]$ids) {
 
 # Step 4i used to install typescript-language-server 6.0.3 and typescript 6.0.3 globally. Uninstalls them only when
 # `npm ls -g` shows both at exactly those versions; a copy installed by hand at another version stays. $npm runs npm
-# (a scriptblock that gets the arguments). Returns 'removed' or 'kept <reason>'.
-function Remove-RetiredTypescriptLsp([scriptblock]$npm = { & npm @args }, [string]$version = '6.0.3') {
+# (a scriptblock that gets the arguments). The default calls npm.cmd: npm 11's npm.ps1, which PowerShell would pick
+# first, rebuilds its arguments from the calling line and gets none through @args. Returns 'removed' or 'kept <reason>'.
+function Remove-RetiredTypescriptLsp([scriptblock]$npm = { & npm.cmd @args }, [string]$version = '6.0.3') {
   $have = @{}
   try {
     $json = (& $npm ls -g --depth=0 --json 2>$null | Out-String) | ConvertFrom-Json
@@ -1170,7 +1171,8 @@ if (-not $Check) {
   }
   # Retired user skills (moved into a plugin, or never used) are deleted from ~/.claude/skills.
   foreach ($n in @(Remove-RetiredSkills $retiredSkills (Join-Path $claudeDir 'skills'))) {
-    Write-Host "    removed skill: $n (retired; underwater-photoshop is now the photo-edit plugin)"
+    $why = if ($n -eq 'underwater-photoshop') { 'now the photo-edit plugin' } else { 'retired, unused' }
+    Write-Host "    removed skill: $n ($why)"
   }
   # Agents: each file under agents/ becomes ~/.claude/agents/<name>.md (a file named like a built-in agent replaces it).
   if (Test-Path (Join-Path $repo 'agents')) {
