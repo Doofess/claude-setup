@@ -38,10 +38,15 @@ the machine is fixed by the installer, not by editing the repo.
    | Claude Code not signed in | Run `claude` and sign in. |
    | GitHub CLI not signed in | `gh auth login` |
 
-7. **Photo project?** When the current folder is a photo project (RAW files, or a `.claude-work` or `edited` folder), its
+7. **User level is the workflow core.** `claude plugin list --json` must show, at user scope, `superpowers` and
+   `remember` (both `@claude-plugins-official`) enabled and every other user-scope plugin disabled; `~/.claude/skills`
+   must hold `advisor-switch`, `codex` and `setup-check` (and claude.ai's `synced`), with no `underwater-photoshop`
+   or `find-skills`; `npm ls -g` must not list `typescript-language-server`. Anything else means the last install
+   was skipped or failed: repair with step 5 (never `-SkipPlugins`).
+8. **Photo project?** When the current folder is a photo project (RAW files, or a `.claude-work` or `edited` folder), its
    `.claude/settings.json` must have `"photo-edit@claude-setup": true` in `enabledPlugins` and the `claude-setup` entry
    in `extraKnownMarketplaces` (README, "Project-level plugins"). If not, give the user that block; the skill is no longer
    in `~/.claude/skills`.
-8. **Done only when step 4 exits 0.** Quote its last line verbatim. Restart notes: Windows Terminal picks up profile
+9. **Done only when step 4 exits 0.** Quote its last line verbatim. Restart notes: Windows Terminal picks up profile
    changes live (a new tab is enough); Claude Code needs a restart for `settings.json` changes, so tell the user to
    restart it if step 5 ran.

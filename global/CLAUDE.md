@@ -26,13 +26,11 @@
 ## Compact instructions
 When compacting, keep decisions, file paths, open todos and failing test names.
 
-## Photo editing (paid work)
-- Underwater or macro photo edits, ARW/RAW, Camera Raw, backscatter, "pop", PSD deliverables: `underwater-photoshop` skill. Local Photoshop via COM, never the Adobe cloud tools for the edit itself. Nothing is uploaded to Adobe cloud.
-
 ## Defaults
 - Issue tracker: GitHub Issues via `gh`. Docs, specs, ADRs: `docs/` in the repo.
 - Git: run `push` and other history-changing commands yourself when I ask for them; don't hand the command back to me. Confirm first only for what can't be undone (`push --force` to a shared branch, `reset --hard`, `clean -f`, `branch -D`).
-- Styles in any form (CSS, Tailwind, StyleX, inline): `frontend-design` decides the look. When the `good-css` plugin is installed, read its skill before writing the declarations.
+- Styles in any form: where the project switches on `frontend-design`, it decides the look; where it switches on `good-css`, read its skill before writing the declarations.
+- Plugins, LSPs, MCP servers and hooks are per project: switch them on in the repo's `.claude/settings.json` (MCP in `.mcp.json`). The user level holds only superpowers, remember, the advisor-switch/codex/setup-check skills and the worker/Explore agents.
 - The claude.ai Adobe connector is off by default (about 5k tokens a turn); turn it on per project with `/mcp` for Express, Acrobat or Firefly work.
 - MCP servers for one project go in that repo's `.mcp.json` (start from `mcp-presets/` in the setup repo), never in user settings.
 - Setup lives in `C:/dev/claude-setup` (repo `Doofess/claude-setup`); change config there and run `install.ps1`, so the desktop stays identical.
