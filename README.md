@@ -135,6 +135,7 @@ font and colour scheme, and removes hooks this repo has retired. Options:
 | `-SkipFont` | skip the font install and the font change |
 | `-SkipPlugins` | skip installing and updating plugins (faster when only config changed) |
 | `-SkipKotlinLsp` | skip the Kotlin language server install |
+| `-SkipTypescriptLsp` | skip the TypeScript language server install |
 
 It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` on every run.
 
@@ -147,6 +148,15 @@ JetBrains publishes next to the archive, and extracts it to `%LOCALAPPDATA%\Prog
 Path) runs it. The archive bundles its own JetBrains Runtime, so no JDK is needed. Re-running skips it when the pinned
 version is there and replaces an older version. Open a new terminal (and restart Claude Code) after the first install.
 On macOS use Homebrew instead; this installer is Windows only.
+
+### TypeScript language server
+
+Claude Code's `typescript-lsp` plugin launches the command `typescript-language-server`. The installer runs
+`npm install -g` for `typescript-language-server@6.0.3` and `typescript@6.0.3` (both pinned in `install.ps1`) and skips
+npm when `npm ls -g` already shows those versions. TypeScript is held at 6.0.3, the last 6.x, because the server needs
+the JavaScript `tsserver.js` that TypeScript 7 (typescript-go) no longer ships. It needs Node.js and npm on PATH; if
+they are missing the step fails and the rest of the install carries on. Projects on TypeScript 7 (such as
+omnichannel-platform) use their own project plugin instead and switch `typescript-lsp` off for that project.
 
 ### Check a machine
 
