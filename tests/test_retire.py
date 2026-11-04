@@ -16,6 +16,7 @@ $env:FAKE_LOG = [string]$in.log
 $env:FAKE_LIST = [string]$in.list
 $env:FAKE_FAIL = [string]$in.fail
 $env:FAKE_NPM_LS = [string]$in.npmLs
+$env:FAKE_NPM_LS_FILE = [string]$in.npmLsFile
 
 $fakeClaude = {
   Add-Content -LiteralPath $env:FAKE_LOG -Value ('claude ' + ($args -join ' '))
@@ -50,6 +51,10 @@ switch ($in.mode) {
   'npm' {
     $npm = if ($in.missing) { $missingNpm } else { $fakeNpm }
     $result = [pscustomobject]@{ Result = [string](Remove-RetiredTypescriptLsp $npm) }
+  }
+  'npm-default' {
+    $env:PATH = [string]$in.shimDir + [IO.Path]::PathSeparator + $env:PATH
+    $result = [pscustomobject]@{ Result = [string](Remove-RetiredTypescriptLsp) }
   }
 }
 [Console]::Out.Write(($result | ConvertTo-Json -Compress -Depth 10))
@@ -238,6 +243,26 @@ class RetireBase:
     def test_missing_npm_is_kept(self):
         out, calls = self.run_driver(mode="npm", missing=True)
         self.assertTrue(out["Result"].startswith("kept"), out)
+
+    def test_the_default_runs_npm_cmd_not_the_npm_ps1_shim(self):
+        # npm 11's npm.ps1 rebuilds its arguments from the calling line, so `& npm @args` inside a scriptblock reached
+        # it with none: it printed its usage text and the retire step said "kept (npm not available)" (2026-11-04).
+        # PowerShell picks npm.ps1 over npm.cmd in the same folder, so the fake npm.ps1 below drops its arguments too.
+        shims = os.path.join(self.tmp, "npm-shims")
+        os.makedirs(shims, exist_ok=True)
+        ls = os.path.join(self.tmp, "npm-ls.json")
+        with open(ls, "w", encoding="utf-8") as f:
+            f.write(ls_json("6.0.3", "6.0.3"))
+        with open(os.path.join(shims, "npm.ps1"), "w", encoding="utf-8") as f:
+            f.write("Add-Content -LiteralPath $env:FAKE_LOG -Value 'npm.ps1 without arguments'\nWrite-Output 'npm <command>'\n")
+        with open(os.path.join(shims, "npm.cmd"), "w", encoding="ascii", newline="\r\n") as f:
+            f.write('@echo off\necho npm %*>>"%FAKE_LOG%"\nif "%1"=="ls" type "%FAKE_NPM_LS_FILE%"\nexit /b 0\n')
+        out, calls = self.run_driver(mode="npm-default", shimDir=shims, npmLsFile=ls)
+        self.assertEqual(out["Result"], "removed", calls)
+        self.assertEqual(
+            self.npm_uninstalls(calls),
+            ["npm uninstall -g --no-fund --no-audit typescript-language-server typescript"],
+        )
 
     def test_failed_npm_uninstall_is_kept(self):
         out, calls = self.run_driver(mode="npm", npmLs=ls_json("6.0.3", "6.0.3"), fail="1")
