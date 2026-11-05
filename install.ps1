@@ -35,15 +35,22 @@
  15. Lists MCP health
  16. Installs the pinned Kotlin language server (JetBrains standalone build, SHA-256 verified) under
      %LOCALAPPDATA%\Programs\kotlin-lsp and puts a `kotlin-lsp.cmd` shim folder on the user Path (step 4h)
- 17. Uninstalls the global `typescript-language-server` and `typescript` an earlier install put there, only when npm
-     shows both at the pinned 6.0.3 (step 4i); a copy at another version stays
+ 17. Installs the pinned `typescript-language-server` (and the `typescript` it falls back on) globally with npm when
+     the command is missing or older than the pin, and puts npm's global folder on the user Path (step 4i); a newer
+     copy stays
+ 18. Adds the `rust-analyzer` rustup component to every installed Rust toolchain that lacks it, when rustup is on Path
+     (step 4j); without rustup it says so and skips
 
 .PARAMETER SkipPlugins
-  Skip the plugin steps: the install/update and the retired-plugin uninstalls, and the retired global TypeScript
-  server uninstall (faster when only config changed).
+  Skip the plugin steps: the install/update and the retired-plugin uninstalls (faster when only config changed).
 
 .PARAMETER SkipKotlinLsp
   Do not install the Kotlin language server (the `kotlin-lsp` command Claude Code's kotlin-lsp plugin launches).
+
+.PARAMETER SkipLsp
+  Do not install the TypeScript language server (the `typescript-language-server` command Claude Code's typescript-lsp
+  plugin launches) or the rust-analyzer rustup components (the `rust-analyzer` command its rust-analyzer-lsp plugin
+  launches).
 
 .PARAMETER SkipFont
   Do not install a Nerd Font or touch the Windows Terminal font (the font rows of the check read `kept`).
@@ -64,7 +71,7 @@
 
 #>
 [CmdletBinding()]
-param([switch]$SkipPlugins, [switch]$SkipKotlinLsp, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme, [switch]$Check, [switch]$Json)
+param([switch]$SkipPlugins, [switch]$SkipKotlinLsp, [switch]$SkipLsp, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme, [switch]$Check, [switch]$Json)
 
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
@@ -323,7 +330,7 @@ function Install-KotlinLsp([string]$version, [string]$arch, [string]$versionDir,
   $result
 }
 
-# ---- Retired plugins, skills and the global TypeScript server (the user level holds only the workflow core) ----
+# ---- Retired plugins and skills (the user level holds only the workflow core) ----
 # Plugins, LSPs, MCP servers and hooks are per project (README, "User level vs project level"). Plugins nothing on this
 # PC ever used are uninstalled at user scope. Re-running on a PC where they are all gone makes no uninstall call.
 $retiredPlugins = @(
@@ -332,8 +339,7 @@ $retiredPlugins = @(
   'cloudflare@claude-plugins-official', 'code-review@claude-plugins-official', 'code-simplifier@claude-plugins-official',
   'feature-dev@claude-plugins-official', 'github@claude-plugins-official', 'ralph-loop@claude-plugins-official',
   'shopify-ai-toolkit@claude-plugins-official', 'skill-creator@claude-plugins-official', 'telegram@claude-plugins-official',
-  'vercel@claude-plugins-official', 'pyright-lsp@claude-plugins-official', 'rust-analyzer-lsp@claude-plugins-official',
-  'typescript-lsp@claude-plugins-official',
+  'vercel@claude-plugins-official', 'pyright-lsp@claude-plugins-official',
   'superpowers@anthropic-plugin-directory', 'frontend-design@anthropic-plugin-directory',
   'context7@anthropic-plugin-directory', 'playwright@anthropic-plugin-directory'
 )
@@ -415,25 +421,112 @@ function Remove-RetiredSettingsPlugins($settings, [string[]]$ids) {
   return $removed
 }
 
-# Step 4i used to install typescript-language-server 6.0.3 and typescript 6.0.3 globally. Uninstalls them only when
-# `npm ls -g` shows both at exactly those versions; a copy installed by hand at another version stays. $npm runs npm
-# (a scriptblock that gets the arguments). The default calls npm.cmd: npm 11's npm.ps1, which PowerShell would pick
-# first, rebuilds its arguments from the calling line and gets none through @args. Returns 'removed' or 'kept <reason>'.
-function Remove-RetiredTypescriptLsp([scriptblock]$npm = { & npm.cmd @args }, [string]$version = '6.0.3') {
-  $have = @{}
+# ---- TypeScript and Rust language servers (Claude Code's typescript-lsp and rust-analyzer-lsp plugins launch the commands
+# `typescript-language-server --stdio` and `rust-analyzer`; both plugins are pinned off here, a project switches them on) ----
+# typescript-language-server needs the JavaScript tsserver.js, which TypeScript 7 (typescript-go) no longer ships, so
+# `typescript` (the server's fallback when a project has none) stays on 6.0.3, the last 6.x; the server is at its latest.
+$typescriptLspVersion = '6.0.3'
+$typescriptVersion = '6.0.3'
+
+# The first x.y.z in $text as a [version]; $null when there is none.
+function ConvertTo-SemVer([string]$text) {
+  $m = [regex]::Match($text, '(\d+)\.(\d+)\.(\d+)')
+  if ($m.Success) { return [version]('{0}.{1}.{2}' -f $m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value) }
+  return $null
+}
+
+# What `typescript-language-server --version` prints, from the command on Path ($dir empty) or from the .cmd shim in
+# $dir; $null when there is no such command or it fails. Application commands only: the extensionless sh script and the
+# .ps1 shim npm writes beside the .cmd are not what a plugin's spawn runs.
+function Get-TypescriptLspVersionText([string]$dir = '') {
+  $exe = $null
+  if ($dir) {
+    $p = Join-Path $dir 'typescript-language-server.cmd'
+    if (Test-Path -LiteralPath $p) { $exe = $p }
+  } else {
+    $c = Get-Command typescript-language-server -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c) { $exe = $c.Source }
+  }
+  if (-not $exe) { return $null }
+  try { return (& $exe --version 2>$null | Out-String) } catch { return $null }
+}
+
+# Puts $dir on the USER Path (registry, written raw so %VARS% in other entries stay unexpanded; never the machine Path)
+# and on this process's Path. An entry that expands to $dir (npm's own %APPDATA%\npm) counts as present. Returns $true
+# when the registry changed.
+function Add-UserPathDir([string]$dir) {
+  $changed = $false
+  $want = Format-DirKey $dir
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
   try {
-    $json = (& $npm ls -g --depth=0 --json 2>$null | Out-String) | ConvertFrom-Json
-    if ($json -and $json.dependencies) {
-      foreach ($p in $json.dependencies.PSObject.Properties) { $have[$p.Name] = [string]$p.Value.version }
+    $cur = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    $has = @($cur -split ';' | Where-Object { $_.Trim() -and (Format-DirKey ([Environment]::ExpandEnvironmentVariables($_))) -eq $want })
+    if ($has.Count -eq 0) {
+      $key.SetValue('Path', (Add-PathEntry $cur $dir), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+      $changed = $true
     }
-  } catch { return 'kept (npm not available)' }
-  $lsp = $have['typescript-language-server']; $ts = $have['typescript']
-  if (-not $lsp -and -not $ts) { return 'kept (not installed)' }
-  if ($lsp -ne $version -or $ts -ne $version) { return "kept (installed by hand: server $lsp, typescript $ts)" }
+  } finally { $key.Close() }
+  if (@($env:Path -split ';' | Where-Object { $_.Trim() -and (Format-DirKey $_) -eq $want }).Count -eq 0) { $env:Path = "$env:Path;$dir" }
+  return $changed
+}
+
+# Makes `typescript-language-server` at $lspVersion or newer resolve: nothing to do when the command on Path already is
+# (an older copy, or none, is replaced by an npm global install of typescript-language-server@$lspVersion and
+# typescript@$tsVersion, and a newer one stays). The version comes from the command itself, not `npm ls -g`: npm's prefix
+# folder may not exist (npm config prefix %APPDATA%\npm on a PC that never ran a global install, where `npm ls -g` fails
+# with ENOENT) while a copy installed by hand sits in the Node folder. A copy at the right version in npm's own global
+# folder counts too (the Node-folder copy may sit earlier on Path and win), and that folder goes on the user Path.
+# $npm runs npm (a scriptblock that gets the arguments; the default calls npm.cmd: npm 11's npm.ps1, which PowerShell
+# would pick first, rebuilds its arguments from the calling line and gets none through @args). $probe gets a folder
+# ('' = Path) and returns the version text. Returns what happened; throws when npm is missing or the install fails.
+# -SkipPath leaves the registry and $env:Path alone (tests).
+function Install-TypescriptLsp([string]$lspVersion, [string]$tsVersion, [scriptblock]$npm = { & npm.cmd @args },
+                               [scriptblock]$probe = { param([string]$dir) Get-TypescriptLspVersionText $dir }, [switch]$SkipPath) {
+  $want = ConvertTo-SemVer $lspVersion
+  $onPath = ConvertTo-SemVer ([string](& $probe ''))
+  if ($onPath -and $onPath -ge $want) { return "already $onPath on Path" }
   $global:LASTEXITCODE = 0
-  & $npm uninstall -g --no-fund --no-audit typescript-language-server typescript 2>&1 | Out-Null
-  if ($LASTEXITCODE -ne 0) { return "kept (npm uninstall failed with exit code $LASTEXITCODE)" }
-  return 'removed'
+  try { $prefix = ([string](& $npm prefix -g 2>$null | Out-String)).Trim() } catch { throw 'npm was not found on Path (install Node.js first)' }
+  if ($LASTEXITCODE -ne 0 -or -not $prefix) { throw "npm prefix -g failed with exit code $LASTEXITCODE" }
+  $inPrefix = ConvertTo-SemVer ([string](& $probe $prefix))
+  if ($inPrefix -and $inPrefix -ge $want) {
+    $result = "already $inPrefix in $prefix"
+  } else {
+    $global:LASTEXITCODE = 0
+    & $npm install -g --no-fund --no-audit "typescript-language-server@$lspVersion" "typescript@$tsVersion" | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "npm install -g failed with exit code $LASTEXITCODE" }
+    $result = "installed $lspVersion with typescript $tsVersion in $prefix"
+  }
+  if (-not $SkipPath -and (Add-UserPathDir $prefix)) { $result += '; added to the user Path (open a new terminal)' }
+  $now = ConvertTo-SemVer ([string](& $probe ''))
+  if (-not $now) { $result += '; not on Path yet (open a new terminal)' }
+  elseif ($now -lt $want) { $result += "; note: $now earlier on Path still wins" }
+  return $result
+}
+
+# Adds the rust-analyzer component to every installed rustup toolchain that lacks it. All of them, not just the default:
+# rustup's `rust-analyzer` proxy resolves the toolchain per directory (a repo can override to GNU while the default is
+# MSVC) and fails with "Unknown binary 'rust-analyzer.exe' in official toolchain" where the component is missing. A
+# toolchain that has it gets no `component add` call. $rustup runs rustup (a scriptblock that gets the arguments);
+# $Available is whether rustup is on Path. Returns Skipped (no rustup) and the toolchains Added, already Present, Failed.
+function Install-RustAnalyzerComponent([scriptblock]$rustup = { & rustup @args }, [bool]$Available = [bool](Get-Command rustup -ErrorAction SilentlyContinue)) {
+  $r = [pscustomobject]@{ Skipped = (-not $Available); Added = @(); Present = @(); Failed = @() }
+  if (-not $Available) { return $r }
+  $global:LASTEXITCODE = 0
+  $toolchains = @()
+  foreach ($line in @(& $rustup toolchain list 2>$null)) {
+    $t = ([string]$line -replace '\s*\(.*\)\s*$', '').Trim()   # "stable-x86_64-pc-windows-msvc (active, default)"
+    if ($t -and $t -notmatch '\s') { $toolchains += $t }       # "no installed toolchains" has spaces
+  }
+  foreach ($t in $toolchains) {
+    $global:LASTEXITCODE = 0
+    $have = @(& $rustup component list --installed --toolchain $t 2>$null | ForEach-Object { [string]$_ })
+    if (@($have | Where-Object { $_ -match '^rust-analyzer(-|$)' }).Count -gt 0) { $r.Present += $t; continue }
+    $global:LASTEXITCODE = 0
+    & $rustup component add rust-analyzer --toolchain $t 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { $r.Added += $t } else { $r.Failed += $t }
+  }
+  return $r
 }
 
 # ---- Nerd Font (kept for a later visual rebuild) ----
@@ -1346,6 +1439,7 @@ if (-not $Check) {
   if ($KeepScheme) { $ranWith += '-KeepScheme' }
   if ($SkipFont) { $ranWith += '-SkipFont' }
   if ($SkipKotlinLsp) { $ranWith += '-SkipKotlinLsp' }
+  if ($SkipLsp) { $ranWith += '-SkipLsp' }
   Set-StateRepo (Join-Path $claudeDir 'claude-setup-state.json') $repo $ranWith
 
   # 4d. Nerd Font. Best effort: a failure here warns and never fails the install.
@@ -1508,15 +1602,37 @@ if (-not $Check) {
     }
   }
 
-  # 4i. The global TypeScript language server (typescript-language-server + typescript) is retired: the TypeScript LSP
-  # is per project now. Removed only when npm shows both at the pinned 6.0.3 an earlier install put there.
-  # -SkipPlugins skips it. It never fails the install.
-  if (-not $SkipPlugins) {
-    Write-Step 'Retiring the global TypeScript language server'
+  # 4i. TypeScript language server for Claude Code's typescript-lsp plugin (command `typescript-language-server`): the
+  # pinned version installed with npm -g when the command is missing or older. -SkipLsp skips it. A failure is reported as
+  # a failed step and never aborts the rest.
+  if (-not $SkipLsp) {
+    Write-Step "TypeScript language server $typescriptLspVersion"
+    $savedEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'   # 5.1 throws on a native command's stderr under 'Stop'
+    try {
+      $r = Install-TypescriptLsp $typescriptLspVersion $typescriptVersion
+      Write-Host "    $r"
+    } catch {
+      Write-Color "    $($_.Exception.Message)" 203
+      $failures += "typescript-language-server: $($_.Exception.Message)"
+    } finally { $ErrorActionPreference = $savedEap }
+
+    # 4j. rust-analyzer for the rust-analyzer-lsp plugin (command `rust-analyzer`): the rustup component on every toolchain.
+    # No rustup is a skip, not a failure; a toolchain that refuses the component (a nightly without it) is a warning.
+    Write-Step 'rust-analyzer component for every rustup toolchain'
     $savedEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    $r = Remove-RetiredTypescriptLsp
-    $ErrorActionPreference = $savedEap
-    Write-Host "    $r"
+    try {
+      $ra = Install-RustAnalyzerComponent
+      if ($ra.Skipped) { Write-Color '    rustup not found; skipped (install Rust from https://rustup.rs, then re-run)' 244 }
+      else {
+        foreach ($t in $ra.Added) { Write-Host "    added rust-analyzer to $t" }
+        foreach ($t in $ra.Failed) { Write-Color "    rustup could not add rust-analyzer to $t" 228 }
+        if ($ra.Present.Count -gt 0) { Write-Color "    already there: $($ra.Present -join ', ')" 244 }
+        if (@($ra.Added + $ra.Present + $ra.Failed).Count -eq 0) { Write-Color '    no toolchains installed' 244 }
+      }
+    } catch {
+      Write-Color "    $($_.Exception.Message)" 203
+      $failures += "rust-analyzer: $($_.Exception.Message)"
+    } finally { $ErrorActionPreference = $savedEap }
   }
 }
 
