@@ -248,6 +248,9 @@ Everything else is per project: plugins, LSPs, MCP servers, hooks, built-in tool
 `.claude/settings.json` (MCP in `.mcp.json`). A plugin that is installed but not core is pinned `false` in the template, so no session loads it unless
 its project switches it on; `playwright`, `context7`, `frontend-design`, `mattpocock-skills`, `modern-web-guidance`,
 `supabase`, `adobe-for-creativity`, `kotlin-lsp`, `security-guidance`, `good-css` and the synced `humanizer` are in that state.
+`install.ps1` installs each of those that a PC doesn't have yet, then disables it, so a project can switch it on
+on every PC. A PC whose only copy was a retired `anthropic-plugin-directory` one would otherwise have none. The synced
+claude.ai plugins and the pinned-off `anthropic-plugin-directory` ids are never installed.
 
 Built-in tools and skills Claude Code ships, and how to get each one back:
 

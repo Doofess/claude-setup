@@ -9,7 +9,8 @@
   3. Merges settings.json keys into the existing file (machine-local keys survive)
   4. Uninstalls the retired plugins (user scope) and the retired user skills, drops retired plugin ids from the merged
      enabledPlugins, adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in
-     enabledPlugins, updates them, then disables every plugin marked false
+     enabledPlugins, updates them, installs any plugin marked false that is missing (not the synced or
+     anthropic-plugin-directory ones), then disables every plugin marked false
   5. Turns the claude.ai Adobe connector off in each known project once (see mcp_off.py; /mcp turns it back on); turns Claude in Chrome
      off by default once (see chrome_off.py; /chrome or claude --chrome turns it on)
   6. Removes the retired visual setup (custom theme, status line, readable-session mod, keybinding, Windows Terminal
@@ -356,6 +357,40 @@ function Remove-RetiredPlugins([string[]]$ids, [scriptblock]$claude = { & claude
     if ($LASTEXITCODE -eq 0) { $removed += $id } elseif ($null -ne $failed) { $failed.Add($id) }
   }
   return $removed
+}
+
+# The plugins a project may switch on: every enabledPlugins entry the template pins false, except the synced claude.ai
+# plugins (claude.ai owns them) and the anthropic-plugin-directory copies (pinned off only so that copy stays off).
+function Get-KeptPlugins($enabledPlugins) {
+  if (-not (Test-IsObject $enabledPlugins)) { return @() }
+  return @($enabledPlugins.PSObject.Properties |
+    Where-Object { $_.Value -eq $false -and $_.Name -notmatch '@(synced|anthropic-plugin-directory)$' } |
+    ForEach-Object { $_.Name })
+}
+
+# Installs each kept plugin that `claude plugin list --json` doesn't show at user scope, then disables it, so every PC
+# has it ready for a project's enabledPlugins. A PC whose only copy was a retired anthropic-plugin-directory one would
+# otherwise have none (RotemsDesktop, 2026-11-05). Returns the ids it installed; an id whose install fails is added to
+# $failed and not disabled. An unreadable list installs nothing.
+function Install-KeptPlugins([string[]]$ids, [scriptblock]$claude = { & claude @args }, $failed = $null) {
+  $installed = @()
+  try {
+    $parsed = (& $claude plugin list --json 2>$null | Out-String) | ConvertFrom-Json
+    $listed = @($parsed | ForEach-Object { $_ })   # Windows PowerShell 5.1 returns a JSON array as one object
+  } catch { return @() }
+  $present = @($listed | Where-Object { $_ -and $_.id -and $_.scope -eq 'user' } | ForEach-Object { [string]$_.id })
+  foreach ($id in $ids) {
+    if ($present -contains $id) { continue }
+    $global:LASTEXITCODE = 0
+    $out = & $claude plugin install $id --scope user 2>&1
+    if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') {
+      if ($null -ne $failed) { $failed.Add($id) }
+      continue
+    }
+    & $claude plugin disable $id --scope user 2>&1 | Out-Null
+    $installed += $id
+  }
+  return $installed
 }
 
 # Deletes each retired skill folder under $skillsDir. Returns the names it removed.
@@ -1236,6 +1271,13 @@ if (-not $Check) {
       $ver = ($upd | Out-String).Trim() -replace '\s+', ' '
       Write-Host "    $name  $ver"
     }
+    # The plugins pinned false are off at user level, but a project can only switch on a plugin the PC has.
+    Write-Step 'Installing the project plugins, off until a project switches one on'
+    $keptFailed = New-Object 'System.Collections.Generic.List[string]'
+    $newKept = @(Install-KeptPlugins (Get-KeptPlugins $template.enabledPlugins) { & claude @args } $keptFailed)
+    foreach ($id in $newKept) { Write-Host "    installed $id (off)" }
+    foreach ($id in $keptFailed) { $failures += "install $id" }
+    if ($newKept.Count -eq 0 -and $keptFailed.Count -eq 0) { Write-Color '    all installed' 244 }
     # --scope user: auto-detect would write into a project's .claude/settings.json when run inside a repo that has one.
     # Enabling a plugin by name also flips on a same-named copy from another marketplace, so pin the false ones off afterwards.
     foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
