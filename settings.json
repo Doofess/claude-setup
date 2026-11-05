@@ -10,6 +10,8 @@
     "supabase@claude-plugins-official": false,
     "adobe-for-creativity@claude-plugins-official": false,
     "kotlin-lsp@claude-plugins-official": false,
+    "typescript-lsp@claude-plugins-official": false,
+    "rust-analyzer-lsp@claude-plugins-official": false,
     "security-guidance@claude-plugins-official": false,
     "good-css@good-css": false,
     "claude-md-management@anthropic-plugin-directory": false,

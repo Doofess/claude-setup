@@ -15,20 +15,12 @@ $in = [IO.File]::ReadAllText($InFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
 $env:FAKE_LOG = [string]$in.log
 $env:FAKE_LIST = [string]$in.list
 $env:FAKE_FAIL = [string]$in.fail
-$env:FAKE_NPM_LS = [string]$in.npmLs
-$env:FAKE_NPM_LS_FILE = [string]$in.npmLsFile
 
 $fakeClaude = {
   Add-Content -LiteralPath $env:FAKE_LOG -Value ('claude ' + ($args -join ' '))
   if ($args[0] -eq 'plugin' -and $args[1] -eq 'list') { Write-Output $env:FAKE_LIST; $global:LASTEXITCODE = 0; return }
   $global:LASTEXITCODE = if ($env:FAKE_FAIL) { 1 } else { 0 }
 }
-$fakeNpm = {
-  Add-Content -LiteralPath $env:FAKE_LOG -Value ('npm ' + ($args -join ' '))
-  if ($args[0] -eq 'ls') { Write-Output $env:FAKE_NPM_LS; $global:LASTEXITCODE = 0; return }
-  $global:LASTEXITCODE = if ($env:FAKE_FAIL) { 1 } else { 0 }
-}
-$missingNpm = { & (Join-Path ([IO.Path]::GetDirectoryName($env:FAKE_LOG)) 'no-such-npm') @args }
 
 $result = $null
 switch ($in.mode) {
@@ -56,14 +48,6 @@ switch ($in.mode) {
     $removed = @(Remove-RetiredSkills @($in.names) $in.dir)
     $result = [pscustomobject]@{ Removed = $removed }
   }
-  'npm' {
-    $npm = if ($in.missing) { $missingNpm } else { $fakeNpm }
-    $result = [pscustomobject]@{ Result = [string](Remove-RetiredTypescriptLsp $npm) }
-  }
-  'npm-default' {
-    $env:PATH = [string]$in.shimDir + [IO.Path]::PathSeparator + $env:PATH
-    $result = [pscustomobject]@{ Result = [string](Remove-RetiredTypescriptLsp) }
-  }
 }
 [Console]::Out.Write(($result | ConvertTo-Json -Compress -Depth 10))
 """
@@ -71,7 +55,7 @@ switch ($in.mode) {
 RETIRED = [
     "chrome-devtools-mcp", "hookify", "mcp-server-dev", "claude-code-setup", "claude-md-management", "claude-security",
     "cloudflare", "code-review", "code-simplifier", "feature-dev", "github", "ralph-loop", "shopify-ai-toolkit",
-    "skill-creator", "telegram", "vercel", "pyright-lsp", "rust-analyzer-lsp", "typescript-lsp",
+    "skill-creator", "telegram", "vercel", "pyright-lsp",
 ]
 HOOKIFY = "hookify@claude-plugins-official"
 FRONTEND = "frontend-design@claude-plugins-official"
@@ -79,14 +63,14 @@ GOOD_CSS = "good-css@good-css"
 KEPT = [
     "%s@claude-plugins-official" % n
     for n in ("playwright", "context7", "frontend-design", "mattpocock-skills", "modern-web-guidance", "supabase",
-              "adobe-for-creativity", "kotlin-lsp", "security-guidance")
+              "adobe-for-creativity", "kotlin-lsp", "typescript-lsp", "rust-analyzer-lsp", "security-guidance")
 ] + [GOOD_CSS]
 
 
 def functions_source():
     source = read("install.ps1").replace("\r\n", "\n")
     out = [re.search(r"^function Test-IsObject[^\n]*\}$", source, re.MULTILINE).group(0)]
-    for name in ("Remove-RetiredPlugins", "Remove-RetiredSkills", "Remove-RetiredSettingsPlugins", "Remove-RetiredTypescriptLsp",
+    for name in ("Remove-RetiredPlugins", "Remove-RetiredSkills", "Remove-RetiredSettingsPlugins",
                  "Get-KeptPlugins", "Install-KeptPlugins"):
         m = re.search(r"^function %s.*?^}" % name, source, re.DOTALL | re.MULTILINE)
         assert m is not None, name
@@ -96,15 +80,6 @@ def functions_source():
 
 def plugin_list(*entries):
     return json.dumps([{"id": i, "scope": s, "enabled": True} for i, s in entries])
-
-
-def ls_json(lsp=None, ts=None):
-    deps = {}
-    if lsp:
-        deps["typescript-language-server"] = {"version": lsp}
-    if ts:
-        deps["typescript"] = {"version": ts}
-    return json.dumps({"name": "node", "dependencies": deps})
 
 
 class RetireBase:
@@ -244,7 +219,7 @@ class RetireBase:
         }
         out, _ = self.run_driver(
             mode="settings", settings=settings,
-            ids=["pyright-lsp@claude-plugins-official", "typescript-lsp@claude-plugins-official"],
+            ids=["pyright-lsp@claude-plugins-official", "vercel@claude-plugins-official"],
         )
         self.assertEqual(out["Removed"], ["pyright-lsp@claude-plugins-official"])
         self.assertEqual(
@@ -277,62 +252,6 @@ class RetireBase:
         out, _ = self.run_driver(mode="skills", names=["find-skills"], dir=os.path.join(self.tmp, "none"))
         self.assertEqual(out["Removed"], [])
 
-    # npm
-
-    def npm_uninstalls(self, calls):
-        return [c for c in calls if c.startswith("npm uninstall")]
-
-    def test_pinned_versions_are_uninstalled(self):
-        out, calls = self.run_driver(mode="npm", npmLs=ls_json("6.0.3", "6.0.3"))
-        self.assertEqual(out["Result"], "removed")
-        self.assertEqual(
-            self.npm_uninstalls(calls),
-            ["npm uninstall -g --no-fund --no-audit typescript-language-server typescript"],
-        )
-
-    def test_a_hand_installed_version_is_kept(self):
-        out, calls = self.run_driver(mode="npm", npmLs=ls_json("5.0.0", "6.0.3"))
-        self.assertTrue(out["Result"].startswith("kept"), out)
-        self.assertEqual(self.npm_uninstalls(calls), [])
-
-    def test_a_different_typescript_version_is_kept(self):
-        out, calls = self.run_driver(mode="npm", npmLs=ls_json("6.0.3", "7.0.0"))
-        self.assertTrue(out["Result"].startswith("kept"), out)
-        self.assertEqual(self.npm_uninstalls(calls), [])
-
-    def test_nothing_installed_is_kept(self):
-        out, calls = self.run_driver(mode="npm", npmLs=ls_json())
-        self.assertTrue(out["Result"].startswith("kept"), out)
-        self.assertEqual(self.npm_uninstalls(calls), [])
-
-    def test_missing_npm_is_kept(self):
-        out, calls = self.run_driver(mode="npm", missing=True)
-        self.assertTrue(out["Result"].startswith("kept"), out)
-
-    def test_the_default_runs_npm_cmd_not_the_npm_ps1_shim(self):
-        # npm 11's npm.ps1 rebuilds its arguments from the calling line, so `& npm @args` inside a scriptblock reached
-        # it with none: it printed its usage text and the retire step said "kept (npm not available)" (2026-11-04).
-        # PowerShell picks npm.ps1 over npm.cmd in the same folder, so the fake npm.ps1 below drops its arguments too.
-        shims = os.path.join(self.tmp, "npm-shims")
-        os.makedirs(shims, exist_ok=True)
-        ls = os.path.join(self.tmp, "npm-ls.json")
-        with open(ls, "w", encoding="utf-8") as f:
-            f.write(ls_json("6.0.3", "6.0.3"))
-        with open(os.path.join(shims, "npm.ps1"), "w", encoding="utf-8") as f:
-            f.write("Add-Content -LiteralPath $env:FAKE_LOG -Value 'npm.ps1 without arguments'\nWrite-Output 'npm <command>'\n")
-        with open(os.path.join(shims, "npm.cmd"), "w", encoding="ascii", newline="\r\n") as f:
-            f.write('@echo off\necho npm %*>>"%FAKE_LOG%"\nif "%1"=="ls" type "%FAKE_NPM_LS_FILE%"\nexit /b 0\n')
-        out, calls = self.run_driver(mode="npm-default", shimDir=shims, npmLsFile=ls)
-        self.assertEqual(out["Result"], "removed", calls)
-        self.assertEqual(
-            self.npm_uninstalls(calls),
-            ["npm uninstall -g --no-fund --no-audit typescript-language-server typescript"],
-        )
-
-    def test_failed_npm_uninstall_is_kept(self):
-        out, calls = self.run_driver(mode="npm", npmLs=ls_json("6.0.3", "6.0.3"), fail="1")
-        self.assertTrue(out["Result"].startswith("kept"), out)
-
 
 per_engine(RetireBase, globals())
 
@@ -347,7 +266,7 @@ class RetireTemplateTest(unittest.TestCase):
 
     def test_kept_project_plugins_are_pinned_off(self):
         official = ["playwright", "context7", "frontend-design", "mattpocock-skills", "modern-web-guidance", "supabase",
-                    "adobe-for-creativity", "kotlin-lsp", "security-guidance"]
+                    "adobe-for-creativity", "kotlin-lsp", "typescript-lsp", "rust-analyzer-lsp", "security-guidance"]
         for name in official:
             self.assertIs(self.plugins.get("%s@claude-plugins-official" % name), False, name)
         self.assertIs(self.plugins.get("good-css@good-css"), False)
@@ -386,11 +305,15 @@ class RetireInstallerTest(unittest.TestCase):
         self.assertIsNotNone(m)
         self.assertEqual(re.findall(r"'([^']+)'", m.group(1)), ["underwater-photoshop", "find-skills"])
 
-    def test_step_4i_is_gone(self):
-        for needle in ("Install-TypescriptLsp", "SkipTypescriptLsp", "$typescriptLspVersion", "$typescriptVersion", "4i. TypeScript"):
-            self.assertNotIn(needle, self.text, needle)
-        here = os.path.dirname(os.path.abspath(__file__))
-        self.assertFalse(os.path.exists(os.path.join(here, "test_typescript_lsp.py")))
+    def test_the_language_server_plugins_are_not_retired(self):
+        # typescript-lsp and rust-analyzer-lsp are pinned off in the template and installed disabled on every PC (their
+        # binaries come from test_lsp_servers.py's steps), so uninstalling them every run would undo the install.
+        m = re.search(r"\$retiredPlugins = @\((.*?)\)", self.text, re.DOTALL)
+        ids = re.findall(r"'([^']+)'", m.group(1))
+        for name in ("typescript-lsp", "rust-analyzer-lsp"):
+            self.assertNotIn("%s@claude-plugins-official" % name, ids)
+        self.assertIn("pyright-lsp@claude-plugins-official", ids)
+        self.assertNotIn("Remove-RetiredTypescriptLsp", self.text)
 
 
 if __name__ == "__main__":

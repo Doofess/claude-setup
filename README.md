@@ -139,6 +139,7 @@ font and colour scheme, and removes hooks this repo has retired. Options:
 | `-SkipFont` | skip the font install and the font change |
 | `-SkipPlugins` | skip installing and updating plugins (faster when only config changed) |
 | `-SkipKotlinLsp` | skip the Kotlin language server install |
+| `-SkipLsp` | skip the TypeScript language server install and the rust-analyzer components |
 
 It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` on every run.
 
@@ -151,6 +152,25 @@ JetBrains publishes next to the archive, and extracts it to `%LOCALAPPDATA%\Prog
 Path) runs it. The archive bundles its own JetBrains Runtime, so no JDK is needed. Re-running skips it when the pinned
 version is there and replaces an older version. Open a new terminal (and restart Claude Code) after the first install.
 On macOS use Homebrew instead; this installer is Windows only.
+
+### TypeScript and Rust language servers
+
+Claude Code's `typescript-lsp` plugin launches `typescript-language-server --stdio` and its `rust-analyzer-lsp` plugin
+launches `rust-analyzer`; both plugins are pinned off in the template, so a project switches them on and the installer
+provides the binaries (`-SkipLsp` skips both).
+
+- **TypeScript.** The installer reads the version from the command itself (`typescript-language-server --version`), not
+  from `npm ls -g`: on a PC whose npm prefix folder (`%APPDATA%\npm`) was never created `npm ls -g` fails, while a copy
+  installed by hand can sit in the Node folder. When no copy on Path is at the pin (6.0.3 in `install.ps1`) or newer, it
+  runs `npm.cmd install -g typescript-language-server@<pin> typescript@<pin>`; a newer copy stays. `typescript` is the
+  server's fallback for a project without its own and is pinned to 6.0.3 because TypeScript 7 no longer ships the
+  `tsserver.js` the server needs. npm's global folder is added to the user Path (never the machine Path); if an older
+  copy earlier on Path still wins, the install says so. Open a new terminal after the first install.
+- **Rust.** With `rustup` on Path, the installer runs `rustup component add rust-analyzer --toolchain <t>` for every
+  installed toolchain that lacks it, not only the default: rustup's `rust-analyzer` proxy resolves the toolchain per
+  directory (a repo can override to GNU while the default is MSVC) and fails with `Unknown binary 'rust-analyzer.exe'
+  in official toolchain` where the component is missing. A re-run with every toolchain covered makes no `component add`
+  call. Without rustup it prints a skip line.
 
 ### Check a machine
 
@@ -247,7 +267,8 @@ The user level (`settings.json` here, merged into `~/.claude/settings.json`) kee
 Everything else is per project: plugins, LSPs, MCP servers, hooks, built-in tools and skills go in the repo's
 `.claude/settings.json` (MCP in `.mcp.json`). A plugin that is installed but not core is pinned `false` in the template, so no session loads it unless
 its project switches it on; `playwright`, `context7`, `frontend-design`, `mattpocock-skills`, `modern-web-guidance`,
-`supabase`, `adobe-for-creativity`, `kotlin-lsp`, `security-guidance`, `good-css` and the synced `humanizer` are in that state.
+`supabase`, `adobe-for-creativity`, `kotlin-lsp`, `typescript-lsp`, `rust-analyzer-lsp`, `security-guidance`, `good-css`
+and the synced `humanizer` are in that state.
 `install.ps1` installs each of those that a PC doesn't have yet, then disables it, so a project can switch it on
 on every PC. A PC whose only copy was a retired `anthropic-plugin-directory` one would otherwise have none. The synced
 claude.ai plugins and the pinned-off `anthropic-plugin-directory` ids are never installed.
@@ -270,10 +291,10 @@ skill names and affects only Claude Code's bundled skills and synced claude.ai s
 
 Tools that nothing on this PC ever used are uninstalled by `install.ps1` (user-scope plugins in `$retiredPlugins`, the
 skills in `$retiredSkills`: `underwater-photoshop`, which is now the `photo-edit` plugin, and `find-skills`), and their
-ids leave `~/.claude/settings.json`. The global `typescript-language-server` and `typescript` an earlier install put on
-the machine are removed only when `npm ls -g` shows both at exactly 6.0.3; a copy installed by hand at another version
-stays. A re-run on a machine where all of this is gone makes no uninstall call. `-SkipPlugins` skips the plugin and npm
-retire steps. An id installed only at project scope (for example `expo` for a deleted worktree) is not touched.
+ids leave `~/.claude/settings.json`. A re-run on a machine where all of this is gone makes no uninstall call.
+`-SkipPlugins` skips the plugin steps. An id installed only at project scope (for example `expo` for a deleted
+worktree) is not touched. The global TypeScript language server is not retired: the `typescript-lsp` plugin launches it
+(see [TypeScript and Rust language servers](#typescript-and-rust-language-servers)).
 
 ### Project-level plugins
 
