@@ -39,6 +39,14 @@ switch ($in.mode) {
     if ($in.twice) { $second = @(Remove-RetiredPlugins @($in.ids) $fakeClaude $failed) }
     $result = [pscustomobject]@{ First = $first; Second = $second; Failed = @($failed) }
   }
+  'kept' {
+    $failed = New-Object 'System.Collections.Generic.List[string]'
+    $installed = @(Install-KeptPlugins @($in.ids) $fakeClaude $failed)
+    $result = [pscustomobject]@{ Installed = $installed; Failed = @($failed) }
+  }
+  'kept-ids' {
+    $result = [pscustomobject]@{ Ids = @(Get-KeptPlugins $in.enabledPlugins) }
+  }
   'settings' {
     $settings = $in.settings
     $removed = @(Remove-RetiredSettingsPlugins $settings @($in.ids))
@@ -66,12 +74,20 @@ RETIRED = [
     "skill-creator", "telegram", "vercel", "pyright-lsp", "rust-analyzer-lsp", "typescript-lsp",
 ]
 HOOKIFY = "hookify@claude-plugins-official"
+FRONTEND = "frontend-design@claude-plugins-official"
+GOOD_CSS = "good-css@good-css"
+KEPT = [
+    "%s@claude-plugins-official" % n
+    for n in ("playwright", "context7", "frontend-design", "mattpocock-skills", "modern-web-guidance", "supabase",
+              "adobe-for-creativity", "kotlin-lsp", "security-guidance")
+] + [GOOD_CSS]
 
 
 def functions_source():
     source = read("install.ps1").replace("\r\n", "\n")
     out = [re.search(r"^function Test-IsObject[^\n]*\}$", source, re.MULTILINE).group(0)]
-    for name in ("Remove-RetiredPlugins", "Remove-RetiredSkills", "Remove-RetiredSettingsPlugins", "Remove-RetiredTypescriptLsp"):
+    for name in ("Remove-RetiredPlugins", "Remove-RetiredSkills", "Remove-RetiredSettingsPlugins", "Remove-RetiredTypescriptLsp",
+                 "Get-KeptPlugins", "Install-KeptPlugins"):
         m = re.search(r"^function %s.*?^}" % name, source, re.DOTALL | re.MULTILINE)
         assert m is not None, name
         out.append(m.group(0))
@@ -165,6 +181,55 @@ class RetireBase:
         out, calls = self.run_driver(mode="plugins", list="not json", ids=[HOOKIFY])
         self.assertEqual(out["First"], [])
         self.assertEqual(self.uninstalls(calls), [])
+
+    # Kept plugins: pinned off in the template, but installed on every PC so a project can switch one on
+
+    def installs(self, calls):
+        return [c for c in calls if c.startswith(("claude plugin install", "claude plugin disable"))]
+
+    def test_a_missing_kept_plugin_is_installed_then_disabled(self):
+        # RotemsDesktop, 2026-11-05: frontend-design existed only as the retired anthropic-plugin-directory copy, so an
+        # install that only installed `true` plugins left no copy for a project to switch on.
+        listing = plugin_list(
+            ("frontend-design@anthropic-plugin-directory", "user"), ("superpowers@claude-plugins-official", "user"),
+        )
+        out, calls = self.run_driver(mode="kept", list=listing, ids=[FRONTEND, GOOD_CSS])
+        self.assertEqual(out["Installed"], [FRONTEND, GOOD_CSS])
+        self.assertEqual(
+            self.installs(calls),
+            [
+                "claude plugin install %s --scope user" % FRONTEND,
+                "claude plugin disable %s --scope user" % FRONTEND,
+                "claude plugin install %s --scope user" % GOOD_CSS,
+                "claude plugin disable %s --scope user" % GOOD_CSS,
+            ],
+        )
+        self.assertEqual(out["Failed"], [])
+
+    def test_an_installed_kept_plugin_gets_no_install_call(self):
+        out, calls = self.run_driver(mode="kept", list=plugin_list((GOOD_CSS, "user")), ids=[GOOD_CSS])
+        self.assertEqual(out["Installed"], [])
+        self.assertEqual(self.installs(calls), [])
+
+    def test_a_project_scope_copy_still_gets_a_user_install(self):
+        out, calls = self.run_driver(mode="kept", list=plugin_list((FRONTEND, "project")), ids=[FRONTEND])
+        self.assertEqual(out["Installed"], [FRONTEND])
+
+    def test_a_failed_install_is_reported_and_not_disabled(self):
+        out, calls = self.run_driver(mode="kept", list=plugin_list(), ids=[FRONTEND], fail="1")
+        self.assertEqual(out["Installed"], [])
+        self.assertEqual(out["Failed"], [FRONTEND])
+        self.assertEqual(self.installs(calls), ["claude plugin install %s --scope user" % FRONTEND])
+
+    def test_unreadable_plugin_list_installs_nothing(self):
+        out, calls = self.run_driver(mode="kept", list="not json", ids=[FRONTEND])
+        self.assertEqual(out["Installed"], [])
+        self.assertEqual(self.installs(calls), [])
+
+    def test_kept_ids_are_the_templates_false_entries_without_synced_and_directory_copies(self):
+        plugins = json.loads(read("settings.json"))["enabledPlugins"]
+        out, _ = self.run_driver(mode="kept-ids", enabledPlugins=plugins)
+        self.assertEqual(sorted(out["Ids"]), sorted(KEPT))
 
     # Settings
 
@@ -308,6 +373,13 @@ class RetireInstallerTest(unittest.TestCase):
             self.assertIn("%s@anthropic-plugin-directory" % name, ids)
         for kept in ("superpowers@claude-plugins-official", "remember@claude-plugins-official"):
             self.assertNotIn(kept, ids)
+
+    def test_kept_plugins_are_installed_after_the_retire_step_and_before_the_pin_off(self):
+        retire = self.text.index("Remove-RetiredPlugins $retiredPlugins")
+        kept = self.text.index("Install-KeptPlugins (Get-KeptPlugins $template.enabledPlugins)")
+        pin_off = self.text.index("pin the false ones off afterwards")
+        self.assertLess(retire, kept)
+        self.assertLess(kept, pin_off)
 
     def test_retired_skills(self):
         m = re.search(r"\$retiredSkills = @\((.*?)\)", self.text)
