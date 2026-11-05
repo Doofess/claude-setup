@@ -852,8 +852,8 @@ def merge_helpers():
 MERGE_DRIVER = """param([string]$Current, [string]$Template, [string]$Repo, [string]$Out)
 $ErrorActionPreference = 'Stop'
 {HELPERS}
-$cur = Get-Content $Current -Raw | ConvertFrom-Json
-$tpl = Get-Content $Template -Raw | ConvertFrom-Json
+$cur = [IO.File]::ReadAllText($Current, [Text.Encoding]::UTF8) | ConvertFrom-Json   # as Read-Utf8 does: 5.1's
+$tpl = [IO.File]::ReadAllText($Template, [Text.Encoding]::UTF8) | ConvertFrom-Json  # Get-Content reads ANSI
 $merged = Merge-ClaudeSettings $cur $tpl $Repo
 [IO.File]::WriteAllText($Out, ($merged | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
 """
