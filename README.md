@@ -86,8 +86,8 @@ Nothing to look at here, but it shapes every session:
 - **`global/CLAUDE.md`**: global rules for how Claude plans, delegates, verifies and uses git.
 - **Two agents**: `Explore` (Haiku, read-only search, replaces the built-in one) and `worker` (Sonnet at medium effort,
   for implementation briefs).
-- **Plugins and connectors**: a short always-on list, with everything project-specific kept per project (see
-  [Plugin and MCP policy](#plugin-and-mcp-policy)).
+- **Tools, plugins and connectors**: a short always-on list, with everything else switched on per project or per
+  session (see [Tool policy](#tool-policy)).
 - **`advisor-switch`**: turns Claude Code's advisor on (Opus, or Fable when Opus is stuck) and off for one project, in
   its `.claude/settings.local.json`. Claude runs it itself before and after a plan with workers; the installer removes a
   user-level `advisorModel`, so the advisor is never on in every project at once.
@@ -208,6 +208,7 @@ git -C C:/dev/claude-setup pull && powershell -ExecutionPolicy Bypass -File C:/d
 | `mods/session-cards/` | stays in the repo; `install.ps1` adds its folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` and checks it with `claude plugin validate` |
 | `terminal/profile.json` | not copied; its font and `colorScheme` are written into Windows Terminal's `profiles.defaults`, and a `colorScheme` on the default profile itself is removed (see [`terminal/README.md`](terminal/README.md)) |
 | `mcp_off.py` | not copied; the installer runs it to turn the claude.ai Adobe connector off in each known project in `~/.claude.json` |
+| `chrome_off.py` | not copied; the installer runs it to set Claude in Chrome's "Enabled by default" off in `~/.claude.json`, once per machine |
 | `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see [its README](mcp-presets/README.md)) |
 
 Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers), `.credentials.json`, `history.jsonl`,
@@ -243,10 +244,26 @@ The user level (`settings.json` here, merged into `~/.claude/settings.json`) kee
 - agents: `worker` and `Explore`;
 - the status line, permissions, mods and the global `CLAUDE.md`.
 
-Everything else is per project: plugins, LSPs, MCP servers and hooks go in the repo's `.claude/settings.json` (MCP in
-`.mcp.json`). A plugin that is installed but not core is pinned `false` in the template, so no session loads it unless
+Everything else is per project: plugins, LSPs, MCP servers, hooks, built-in tools and skills go in the repo's
+`.claude/settings.json` (MCP in `.mcp.json`). A plugin that is installed but not core is pinned `false` in the template, so no session loads it unless
 its project switches it on; `playwright`, `context7`, `frontend-design`, `mattpocock-skills`, `modern-web-guidance`,
-`supabase`, `adobe-for-creativity`, `kotlin-lsp`, `security-guidance` and `good-css` are in that state.
+`supabase`, `adobe-for-creativity`, `kotlin-lsp`, `security-guidance`, `good-css` and the synced `humanizer` are in that state.
+
+Built-in tools and skills Claude Code ships, and how to get each one back:
+
+| Off at user level | Rough tokens a turn | To use it |
+| --- | --- | --- |
+| Artifact tool and the `artifact-*` skills (`enableArtifact: false`) | 7k | No project can turn it back on (an off in user settings wins). `/config` → Artifacts turns it on until the next install |
+| Claude in Chrome (`claudeInChromeDefaultEnabled: false` in `~/.claude.json`, set once by `chrome_off.py`) | 1.4k | `claude --chrome` or `/chrome` for the session. A project can't turn it on. `/chrome` → Enabled by default is yours: the installer never sets it again |
+| Workflow tool and `workflow-authoring` (`enableWorkflows: false`) | 0.7k | `claude --settings '{"enableWorkflows":true}'` for one session, or `/config` → Dynamic workflows until the next install. A project's `"enableWorkflows": true` also works |
+| SendFeedback (`feedbackDrafts: "off"`) | 0.7k | Set `feedbackDrafts` to `"notify"` in the template |
+| `dataviz`, `claude-api` (`skillOverrides: "off"`) | a few hundred each | Project: `"skillOverrides": { "dataviz": "on" }` |
+| `loop`, `schedule`, `init`, `security-review`, `simplify`, `keybindings-help`, `update-config`, `fewer-permission-prompts`, `plugin-authoring` (`"user-invocable-only"`) | 0.6k together | Still on the `/` menu; Claude can't call them on its own. Project: `"skillOverrides": { "<name>": "on" }` (this repo turns `plugin-authoring` on) |
+
+`skillOverrides` merges per key across settings files, so a project's `"on"` beats the user `"off"`. It takes bare
+skill names and affects only Claude Code's bundled skills and synced claude.ai skills (`docx` covers
+`anthropic-skills:docx`). Plugin skills ignore it: a plugin is on or off as a whole (`enabledPlugins`). Kept on:
+`code-review`, `run`, and the `ScheduleWakeup` and `ReportFindings` tools that `/loop` and `/code-review` use.
 
 Tools that nothing on this PC ever used are uninstalled by `install.ps1` (user-scope plugins in `$retiredPlugins`, the
 skills in `$retiredSkills`: `underwater-photoshop`, which is now the `photo-edit` plugin, and `find-skills`), and their
@@ -284,16 +301,21 @@ machine's own folders stay, ours (`<repo>/mods/session-cards`, with `<repo>` bei
 added once, and an existing entry ending in `/mods/session-cards` (from an older clone or worktree) is replaced by it.
 Entries are compared ignoring slash style, trailing slash and case.
 
-### Plugin and MCP policy
+### Tool policy
 
+- The rule: tools are switched on where they are used. Everything a session loads costs tokens on every turn, so the
+  user level carries only the workflow core and each project (or session) switches on the rest.
 - Always on (user scope): superpowers and remember. Every other plugin is pinned off in the template and switched on in
-  a project's `.claude/settings.json` (see [User level vs project level](#user-level-vs-project-level)). The synced
-  docs/docx/pdf/pptx/xlsx skills and the browser and computer-use skills load by name only (`skillOverrides`).
-- Superpowers' brainstorming, diagnosing-superpowers, dispatching-parallel-agents, receiving-code-review,
-  requesting-code-review, verification-before-completion and writing-skills are off (`skillOverrides`): CLAUDE.md asks
-  design questions through `AskUserQuestion`, reviews with the built-in `/code-review`, and keeps "run the check before
-  saying done" as a rule of its own. `good-css` is declared in `extraKnownMarketplaces`
-  (`vojtaholik/good-css`); a project that wants it switches it on.
+  a project's `.claude/settings.json`, and built-in tools and skills follow the same rule (see
+  [User level vs project level](#user-level-vs-project-level)). The synced docs/docx/pdf/pptx/xlsx and deep-research
+  skills and the browser and computer-use skills load by name only (`skillOverrides`).
+- All of superpowers' skills load, brainstorming and writing-skills included: Claude Code has no per-skill switch for
+  plugin skills (`skillOverrides` ignores them, and a `Skill(...)` deny rule blocks the call but leaves the skill in
+  the list). CLAUDE.md asks design questions through `AskUserQuestion` instead of brainstorming, reviews with the
+  built-in `/code-review`, and keeps "run the check before saying done" as a rule of its own. `good-css` is declared in
+  `extraKnownMarketplaces` (`vojtaholik/good-css`); a project that wants it switches it on.
+- Deny rules only for what no project will ever want: `permissions.deny` unions across settings files, so a project
+  can't lift a user-level deny.
 - Anything tied to one project (databases, deploy target, observability, Kubernetes) is project scope: `mcp-presets/`.
 - The GitHub MCP server stays off; `gh` does the same job with far less context.
 - `deniedMcpServers` blocks every claude.ai connector except Adobe, Supabase and Cloudflare (Slack, Linear, Atlassian,
