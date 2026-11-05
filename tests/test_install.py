@@ -1000,6 +1000,7 @@ class SetupCheckStaticTest(unittest.TestCase):
         block = text[start:end]
         self.assertRegex(block, r"(?m)^\s*Set-StateRepo\b.*\$repo")
         self.assertLess(block.index("mcp_off.py"), block.index("Set-StateRepo"))
+        self.assertLess(block.index("chrome_off.py"), block.index("Set-StateRepo"))
 
     def test_installer_passes_the_keep_flags_to_the_state_file(self):
         text = read("install.ps1")
