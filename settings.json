@@ -14,7 +14,8 @@
     "good-css@good-css": false,
     "claude-md-management@anthropic-plugin-directory": false,
     "design@synced": false,
-    "engineering@synced": false
+    "engineering@synced": false,
+    "humanizer@synced": false
   },
   "extraKnownMarketplaces": {
     "good-css": { "source": { "source": "github", "repo": "vojtaholik/good-css" } }
@@ -76,6 +77,9 @@
     }
   },
   "autoCompactWindow": 300000,
+  "enableArtifact": false,
+  "enableWorkflows": false,
+  "feedbackDrafts": "off",
   "skillOverrides": {
     "chrome-browser": "name-only",
     "built-in-browser": "name-only",
@@ -85,13 +89,21 @@
     "pdf": "name-only",
     "pptx": "name-only",
     "xlsx": "name-only",
-    "brainstorming": "off",
-    "diagnosing-superpowers": "off",
-    "dispatching-parallel-agents": "off",
-    "receiving-code-review": "off",
-    "requesting-code-review": "off",
-    "verification-before-completion": "off",
-    "writing-skills": "off"
+    "deep-research": "name-only",
+    "loop": "user-invocable-only",
+    "schedule": "user-invocable-only",
+    "init": "user-invocable-only",
+    "security-review": "user-invocable-only",
+    "simplify": "user-invocable-only",
+    "keybindings-help": "user-invocable-only",
+    "update-config": "user-invocable-only",
+    "fewer-permission-prompts": "user-invocable-only",
+    "plugin-authoring": "user-invocable-only",
+    "dataviz": "off",
+    "claude-api": "off",
+    "artifact-design": "off",
+    "artifact-diagramming": "off",
+    "artifact-capabilities": "off"
   },
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
