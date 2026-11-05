@@ -264,7 +264,7 @@ def compare(results):
     for shell, r in here.items():
         for err in r.get("errors", []):
             lines.append(f"{shell}: {err}")
-    # Failures the table has no row for (the status bar check, `claude plugin validate`, mcp_off.py). The
+    # Failures the table has no row for (the status bar check, `claude plugin validate`, mcp_off.py, chrome_off.py). The
     # "same experience:" ones are rows already.
     seen = {}
     for shell, r in here.items():

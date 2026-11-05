@@ -852,8 +852,8 @@ def merge_helpers():
 MERGE_DRIVER = """param([string]$Current, [string]$Template, [string]$Repo, [string]$Out)
 $ErrorActionPreference = 'Stop'
 {HELPERS}
-$cur = Get-Content $Current -Raw | ConvertFrom-Json
-$tpl = Get-Content $Template -Raw | ConvertFrom-Json
+$cur = [IO.File]::ReadAllText($Current, [Text.Encoding]::UTF8) | ConvertFrom-Json   # as Read-Utf8 does: 5.1's
+$tpl = [IO.File]::ReadAllText($Template, [Text.Encoding]::UTF8) | ConvertFrom-Json  # Get-Content reads ANSI
 $merged = Merge-ClaudeSettings $cur $tpl $Repo
 [IO.File]::WriteAllText($Out, ($merged | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
 """
@@ -1000,6 +1000,7 @@ class SetupCheckStaticTest(unittest.TestCase):
         block = text[start:end]
         self.assertRegex(block, r"(?m)^\s*Set-StateRepo\b.*\$repo")
         self.assertLess(block.index("mcp_off.py"), block.index("Set-StateRepo"))
+        self.assertLess(block.index("chrome_off.py"), block.index("Set-StateRepo"))
 
     def test_installer_passes_the_keep_flags_to_the_state_file(self):
         text = read("install.ps1")

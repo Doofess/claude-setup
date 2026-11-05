@@ -6,10 +6,7 @@
     "rust-analyzer-lsp@claude-plugins-official": false
   },
   "skillOverrides": {
-    "dataviz": "off",
-    "artifact-design": "off",
-    "artifact-diagramming": "off",
-    "artifact-capabilities": "off",
+    "plugin-authoring": "on",
     "docx": "off",
     "pdf": "off",
     "pptx": "off",
@@ -18,8 +15,7 @@
     "built-in-browser": "off",
     "chrome-browser": "off",
     "computer-use": "off",
-    "underwater-photoshop": "off",
-    "claude-api": "off"
+    "underwater-photoshop": "off"
   },
   "hooks": {
     "PostToolUse": [

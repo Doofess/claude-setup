@@ -10,7 +10,8 @@
   4. Uninstalls the retired plugins (user scope) and the retired user skills, drops retired plugin ids from the merged
      enabledPlugins, adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in
      enabledPlugins, updates them, then disables every plugin marked false
-  5. Turns the claude.ai Adobe connector off in each known project once (see mcp_off.py; /mcp turns it back on)
+  5. Turns the claude.ai Adobe connector off in each known project once (see mcp_off.py; /mcp turns it back on); turns Claude in Chrome
+     off by default once (see chrome_off.py; /chrome or claude --chrome turns it on)
   6. Removes the retired visual setup (custom theme, status line, readable-session mod, keybinding, Windows Terminal
      Readable scheme) from the machine
   7. Installs a Nerd Font through winget when the machine has none, and sets terminal/profile.json's font (face and
@@ -1295,6 +1296,9 @@ if (-not $Check) {
   if (Test-Path $claudeJson) { Copy-Item $claudeJson (Join-Path $backup 'claude.json') }
   & python -S (Join-Path $repo 'mcp_off.py') $claudeJson (Join-Path $claudeDir 'claude-setup-state.json') 'claude.ai Adobe'
   if ($LASTEXITCODE -ne 0) { $failures += 'mcp_off.py failed' }
+  Write-Step 'Claude in Chrome off by default, once (/chrome or claude --chrome turns it on)'
+  & python -S (Join-Path $repo 'chrome_off.py') $claudeJson (Join-Path $claudeDir 'claude-setup-state.json')
+  if ($LASTEXITCODE -ne 0) { $failures += 'chrome_off.py failed' }
   $ranWith = @()
   if ($KeepFont) { $ranWith += '-KeepFont' }
   if ($KeepScheme) { $ranWith += '-KeepScheme' }
