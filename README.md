@@ -146,7 +146,7 @@ It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` 
 ### Kotlin language server
 
 Claude Code's `kotlin-lsp` plugin launches the command `kotlin-lsp`. The installer downloads JetBrains' standalone
-Kotlin language server (pinned in `install.ps1`, now 263.7084.0; x64 or arm64 by processor), checks the SHA-256
+Kotlin language server (pinned in `install.ps1`, now 271.2085.0; x64 or arm64 by processor), checks the SHA-256
 JetBrains publishes next to the archive, and extracts it to `%LOCALAPPDATA%\Programs\kotlin-lsp\<version>`. A
 `kotlin-lsp.cmd` shim in `%LOCALAPPDATA%\Programs\kotlin-lsp\bin` (added once to your user Path, never the machine
 Path) runs it. The archive bundles its own JetBrains Runtime, so no JDK is needed. Re-running skips it when the pinned
