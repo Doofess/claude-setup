@@ -96,7 +96,8 @@ Nothing to look at here, but it shapes every session:
   (`skills/pre-merge-review/gate.py check`) refuses `gh pr merge` until the review is recorded for the PR's current head
   (`gate.py record`, which also posts the summary as a PR comment, writes the record in `~/.claude/pre-merge-review/`)
   and the merge names that head with `--match-head-commit`, and refuses any `git push` from a branch whose open PR has
-  auto-merge on, whatever it pushes. It runs on every Bash and PowerShell command in every project (about 70 ms, mostly
+  auto-merge on, whatever it pushes. A merge it cannot check is refused; a push it cannot check (`gh` fails or is slow,
+  a folder it cannot follow) goes through, so a new branch stays pushable. It runs on every Bash and PowerShell command in every project (about 70 ms, mostly
   Python starting); a merge or a push adds one `gh pr view`. A command that pushes and merges together is
   refused. The gate checks that a review was recorded, not that it ran: it stops a merge that skipped the procedure by
   mistake, and the PR comment is what says what the review found. Not covered: merges through `gh api` or the web page,

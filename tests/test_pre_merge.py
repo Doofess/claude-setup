@@ -274,17 +274,22 @@ class MergeTest(GateCase):
                           ('"C:\\Program Files\\GitHub CLI\\gh.exe" pr merge 7', "Bash"),
                           ("pwsh -Command 'gh pr merge 7'", "PowerShell"),
                           ("& 'C:\\Program Files\\GitHub CLI\\gh.exe' pr merge 7", "PowerShell"),
-                          ('Invoke-Expression "gh pr merge 7"', "PowerShell")):
-            self.assertIn("#7", self.denial(cmd, tool=tool), cmd)
+                          ('Invoke-Expression "gh pr merge 7"', "PowerShell"),
+                          ('echo "now gh pr merge 7"', "Bash"), ('echo "$(true && gh pr merge 7 --squash)"', "Bash"),
+                          # an apostrophe in a heredoc, here-string or comment must not hide what follows
+                          ("git commit -F - <<'EOF'\nit's done\nEOF\ngh pr merge 7 --squash", "Bash"),
+                          ("echo hi # it's\ngh pr merge 7 --squash", "Bash"),
+                          ("git commit -m @'\nit's fixed\n'@; gh pr merge 7", "PowerShell")):
+            self.assertIn("Merge refused", self.denial(cmd, tool=tool), cmd)
 
-    def test_a_merge_in_quoted_text_that_is_not_run_passes(self):
-        for cmd in ("grep -n 'gh pr merge' README.md", 'git commit -m "docs: gh pr merge needs a review"',
-                    'echo "now gh pr merge 7"', "rg \"gh pr merge\" skills",
-                    "gh pr create --title t --body \"$(cat <<'EOF'\nThen gh pr merge 7 --squash.\nEOF\n)\""):
-            self.assertIsNone(self.check(cmd), cmd)
-        self.assertEqual(self.calls(), [])
-        # quoted text before a real merge does not hide it
-        self.assertIn("#7", self.denial('git commit -m "gh pr merge" && gh pr merge 7'))
+    def test_quoted_text_counts_too(self):
+        # the choice: telling run commands from text needs a real shell parser, so a mention is refused as well
+        for cmd in ("grep -n 'gh pr merge' README.md", 'git commit -m "docs: gh pr merge needs a review"'):
+            self.assertIn("Merge refused", self.denial(cmd), cmd)
+
+    def test_a_misread_quote_cannot_cut_a_disable_auto_merge_short(self):
+        self.assertIn("#7", self.denial("echo hi # it's\ngh pr merge 7 --disable-auto --body 'x' --auto"))
+        self.assertIsNone(self.check("echo hi # it's\ngh pr merge 7 --disable-auto"))
 
     def test_a_corrupt_record_does_not_count(self):
         self.record()
@@ -392,11 +397,12 @@ class MergeTest(GateCase):
         self.assertEqual(self.calls(), [])
         self.assertIsNone(self.check('(cd "%s"); gh pr merge %s' % (other, URL) + PIN))
 
-    def test_a_cd_in_quoted_text_does_not_move_the_lookup(self):
+    def test_a_cd_in_quoted_text_needs_the_pr_url(self):
         self.record()
         os.remove(self.calls_path)
-        self.assertIsNone(self.check('git commit -m "cd elsewhere, then sl" && gh pr merge 7' + PIN))
-        self.assertEqual(os.path.normcase(self.view_calls()[0]["cwd"]), os.path.normcase(self.cwd))
+        self.assertIn("by its URL", self.denial('git commit -m "cd elsewhere" && gh pr merge 7' + PIN))
+        self.assertEqual(self.calls(), [])
+        self.assertIsNone(self.check('git commit -m "cd elsewhere" && gh pr merge %s' % URL + PIN))
 
     @unittest.skipUnless(os.name == "nt", "a drive-less rooted path is Windows-only")
     def test_a_rooted_path_without_a_drive_needs_the_pr_url(self):
@@ -483,15 +489,20 @@ class PushTest(GateCase):
 
     def test_other_git_commands_are_not_pushes(self):
         self.set_state([pr(auto={"mergeMethod": "MERGE"})])
-        for cmd in ("git status", "git pull", "git pushd", "git log --oneline", "echo git-push",
-                    'git commit -m "then git push"', "grep -n 'git push' README.md"):
+        for cmd in ("git status", "git pull", "git pushd", "git log --oneline", "echo git-push"):
             self.assertIsNone(self.check(cmd), cmd)
         self.assertEqual(self.calls(), [])
-        self.assertIn("--disable-auto", self.denial("bash -c 'git push'"))
 
-    def test_a_push_in_quoted_text_does_not_join_a_merge(self):
+    def test_a_quoted_push_or_one_after_a_here_string_is_checked(self):
+        self.set_state([pr(auto={"mergeMethod": "MERGE"})])
+        for cmd, tool in (("bash -c 'git push'", "Bash"), ("git commit -m @'\nit's fixed\n'@; git push", "PowerShell"),
+                          ("git commit -F - <<'EOF'\nit's done\nEOF\ngit push", "Bash")):
+            self.assertIn("--disable-auto", self.denial(cmd, tool=tool), cmd)
+
+    def test_a_push_in_quoted_text_still_joins_a_merge(self):
         self.record()
-        self.assertIsNone(self.check('git commit -m "push with git push" && gh pr merge 7' + PIN))
+        self.assertIn("pushes and merges together",
+                      self.denial('git commit -m "push with git push" && gh pr merge 7' + PIN))
 
     def test_norm_dir(self):
         gate = load_gate()

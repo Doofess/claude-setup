@@ -5,9 +5,9 @@ check   PreToolUse hook (Bash and PowerShell). Refuses `gh pr merge` unless the 
 record  `gate.py record <pr> --head <sha> --summary <file> [-R repo]`: posts the review summary as a PR comment and
         writes the record for the PR's head, provided that head is still the commit the review saw (--head).
 
-Choices: a `gh pr merge` counts when it is run: outside quotes, as a quoted program path, in `"$(...)"`, or in the
-quoted command of `bash -c`, `cmd /c`, `pwsh -Command`, `eval` and the like; text in `git commit -m "..."` or
-`grep '...'` does not. When unsure it counts (a false refusal is cheap, a missed merge is not). A merge fails closed
+Choices: a `gh pr merge` or `git push` is found anywhere in the command text, quoted or not, so `bash -c "gh pr merge 3"`
+is caught and `grep 'gh pr merge' README.md` is refused too (a false refusal is cheap, a missed merge is not; telling
+run commands from quoted text would need a real shell parser: heredocs, here-strings, comments). A merge fails closed
 (no answer from gh, a crash, or the time budget used up = refused); a push fails open (a new branch has no PR yet and
 must be pushable). A `cd` earlier in the command moves where the PR is looked up, as it moves where gh runs.
 """
@@ -127,67 +127,39 @@ def valid_sha(sha):
 # ---- command parsing ----
 
 def scan(text, esc):
-    """Per position (and one past the end): (the quote open there or None, the parenthesis depth there, where that
-    quote opened). `esc` is the shell's escape character (`\\` in Bash, backtick in PowerShell): it makes the next
-    character literal outside single quotes, so `\\"` inside `bash -c "..."` does not close the string."""
+    """Per position (and one past the end): (the quote open there or None, the parenthesis depth there). `esc` is
+    the shell's escape character (`\\` in Bash, backtick in PowerShell): it makes the next character literal outside
+    single quotes, so `\\"` inside `bash -c "..."` does not close the string. Heredocs, here-strings and comments are
+    not understood (an apostrophe in one flips the state), so the state never decides whether a merge or a push is
+    checked: it bounds a merge's arguments (a wrong selector meets GitHub's `--match-head-commit` check; a
+    `--disable-auto` exemption needs the reading past the quote to agree) and makes a folder unknown."""
     states = []
     quote = None
-    opened = None
     depth = 0
     skip = False
-    for i, c in enumerate(text):
-        states.append((quote, depth, opened))
+    for c in text:
+        states.append((quote, depth))
         if skip:
             skip = False
         elif c == esc and quote != "'":
             skip = True
         elif quote:
             if c == quote:
-                quote = opened = None
+                quote = None
         elif c in "\"'":
-            quote, opened = c, i
+            quote = c
         elif c == "(":
             depth += 1
         elif c == ")":
             depth = max(0, depth - 1)
-    states.append((quote, depth, opened))
+    states.append((quote, depth))
     return states
 
 
-SHELL_ARG_RE = re.compile(  # what a quoted string must follow for a shell to run it: bash -c, pwsh -Command, cmd /c...
-    r"""(?:^|[\s;&|(])(?:-\w*c|-command|/c|/k|eval|iex|invoke-expression)\s*$""", re.IGNORECASE)
-NAME_RE = re.compile(r"""(?:gh|git|cd|chdir|pushd|popd|sl|set-location|push-location|pop-location)(?:\.exe)?""",
-                     re.IGNORECASE)
-
-
-SUBST_RE = re.compile(r"""(?:\$\(|`)\s*$""")  # `"$(gh pr merge 3)"`: a command substitution inside double quotes
-
-
-def runs(command, pos, states):
-    """Whether the command word at `pos` (gh, git, cd...) is run, not just text: it is outside quotes, it is a
-    quoted program path (`"C:\\...\\gh.exe" pr merge`), it opens a command substitution in double quotes
-    (`"$(gh ...)"`), or its quoted string is a shell's command argument (`bash -c "..."`, `pwsh -Command '...'`).
-    Text in `git commit -m "..."`, `grep '...'` or `echo "..."` is not run."""
-    quote, _, opened = states[pos]
-    if quote is None:
-        return True
-    name = NAME_RE.match(command, pos)
-    if name and command[name.end():name.end() + 1] == quote and (pos - 1 == opened or command[pos - 1] in "\\/"):
-        return True  # the whole quoted word is the program: `"gh"`, `'C:\...\gh.exe'`
-    if quote == '"' and SUBST_RE.search(command, opened + 1, pos):
-        return True
-    return SHELL_ARG_RE.search(command, 0, opened) is not None
-
-
-def run_matches(regex, command, states):
-    """The matches of `regex` (MERGE_RE, PUSH_RE) whose command word is run, not just quoted text."""
-    return [m for m in regex.finditer(command) if runs(command, m.start(), states)]
-
-
 def region_end(text, start, limit, esc, outer=None):
-    """End of a command's arguments: the first separator, `)` or `#` comment outside quotes (a Bash backtick too:
-    in PowerShell it is the escape), the closing `outer` quote when the command sits inside a quoted string
-    (`bash -c "gh pr merge 3"`), or `limit`. The `&` of a redirect (`2>&1`, `&>file`) is not a separator."""
+    """End of a command's arguments: the first separator, `)` (`"$(gh pr merge 3)"`) or `#` comment outside quotes,
+    the closing `outer` quote when the command sits inside a quoted string (`bash -c "gh pr merge 3"`), or `limit`.
+    The `&` of a redirect (`2>&1`, `&>file`) is not a separator."""
     quote = None
     skip = False
     n = min(len(text), limit)
@@ -206,7 +178,7 @@ def region_end(text, start, limit, esc, outer=None):
             quote = c
         elif c == "&" and (text[i - 1] == ">" or text[i + 1:i + 2] == ">"):
             continue
-        elif c in ";|&\n\r)`":
+        elif c in ";|&\n\r)":
             return i
         elif c == "#" and text[i - 1].isspace():
             return i
@@ -280,13 +252,18 @@ def parse_merge(region):
 
 def find_merges(command, states, esc):
     """One dict per `gh pr merge`, with `pos`, where it starts in the command."""
-    matches = run_matches(MERGE_RE, command, states)
+    matches = list(MERGE_RE.finditer(command))
     out = []
     for k, m in enumerate(matches):
         limit = matches[k + 1].start() if k + 1 < len(matches) else len(command)
         # the quote open after `merge`: a quoted command's (`bash -c "gh pr merge 3"`), not a quoted gh.exe path's
-        end = region_end(command, m.end(), limit, esc, outer=states[m.end()][0])
-        merge = parse_merge((m.group("pre") or "") + " " + command[m.end():end])
+        pre = (m.group("pre") or "") + " "
+        outer = states[m.end()][0]
+        merge = parse_merge(pre + command[m.end():region_end(command, m.end(), limit, esc, outer)])
+        if outer:  # the quote may be misread (an apostrophe in a heredoc or comment): the arguments past it must
+            # agree before `--disable-auto` exempts the merge (no pin backs that exemption up, unlike the selector)
+            wide = parse_merge(pre + command[m.end():region_end(command, m.end(), limit, esc)])
+            merge["disable_only"] = merge["disable_only"] and wide["disable_only"]
         merge["pos"] = m.start()
         out.append(merge)
     return out
@@ -315,16 +292,13 @@ def norm_dir(path, cwd):
 def dir_at(command, pos, cwd, states):
     """The folder a command at `pos` runs in: cwd, moved by each `cd`/`Set-Location` before it. UNKNOWN when one of
     them goes somewhere the gate cannot resolve (`cd -`, a variable, `/tmp` on Windows), or is not a plain statement
-    of its own: inside parentheses (a subshell in Bash, not in PowerShell), inside a quoted command
-    (`bash -c "cd x && ..."`), `popd`, or a `cd` the gate cannot parse. A `cd` in quoted text that is not run
-    (`git commit -m "cd x"`) does not count."""
+    of its own: inside parentheses (a subshell in Bash, not in PowerShell), inside quotes (`bash -c "cd x && ..."`,
+    or text such as `git commit -m "cd x"`), `popd`, or a `cd` the gate cannot parse."""
     plain = {m.start("word"): m for m in CD_RE.finditer(command, 0, pos)}
     d = cwd
     for w in CD_WORD_RE.finditer(command, 0, pos):
-        if not runs(command, w.start(), states):
-            continue
         m = plain.get(w.start())
-        quote, depth, _ = states[w.start()]
+        quote, depth = states[w.start()]
         if m is None or quote or depth:
             d = UNKNOWN
             continue
@@ -371,7 +345,7 @@ def push_dir(options, d):
 def find_push_dirs(command, cwd, states):
     """One folder per `git push`, deduplicated. A push from a folder the gate cannot resolve is skipped (fail open)."""
     dirs = []
-    for m in run_matches(PUSH_RE, command, states):
+    for m in PUSH_RE.finditer(command):
         d = dir_at(command, m.start(), cwd, states)
         if d == UNKNOWN:
             continue
@@ -439,7 +413,7 @@ def check_command(command, cwd, esc="\\"):
     states = scan(command, esc)
     reasons = []
     merges = [m for m in find_merges(command, states, esc) if not m["disable_only"]]
-    if merges and run_matches(PUSH_RE, command, states):
+    if merges and PUSH_RE.search(command):
         reasons.append("Merge refused: a command that pushes and merges together would merge unreviewed commits. "
                        "Push in one command, use %s, then merge in another." % SKILL)
     else:
