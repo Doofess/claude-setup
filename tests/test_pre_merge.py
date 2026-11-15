@@ -1,0 +1,438 @@
+"""skills/pre-merge-review/gate.py: the PreToolUse gate and the record command, against a fake `gh`."""
+import hashlib
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GATE = os.path.join(ROOT, "skills", "pre-merge-review", "gate.py")
+
+SHA_A = "a" * 40
+SHA_B = "b" * 40
+URL = "https://github.com/o/r/pull/7"
+
+# The fake gh. State (PRs, switches) is a JSON file the test rewrites; every call is appended to calls.jsonl.
+FAKE_GH = r'''
+import json, os, sys
+
+state_path = os.environ["FAKE_GH_STATE"]
+with open(state_path, encoding="utf-8") as f:
+    state = json.load(f)
+args = sys.argv[1:]
+call = {"args": args, "cwd": os.getcwd()}
+if args[:2] == ["pr", "comment"]:
+    with open(args[args.index("--body-file") + 1], encoding="utf-8") as f:
+        call["body"] = f.read()
+with open(os.path.join(os.path.dirname(state_path), "calls.jsonl"), "a", encoding="utf-8") as f:
+    f.write(json.dumps(call) + "\n")
+if state.get("fail"):
+    sys.stderr.write("gh: network down\nsecond line\n")
+    sys.exit(1)
+if args[:2] == ["pr", "view"]:
+    rest = args[2:]
+    selector = None
+    i = 0
+    while i < len(rest):
+        if rest[i] in ("-R", "--json"):
+            i += 2
+            continue
+        selector = rest[i]
+        i += 1
+    fields = rest[rest.index("--json") + 1].split(",")
+    for pr in state["prs"]:
+        if selector is None and pr.get("current") or selector in (str(pr["number"]), pr["url"], pr.get("branch")):
+            print(json.dumps({k: pr.get(k) for k in fields}))
+            sys.exit(0)
+    sys.stderr.write('no pull requests found for "%s"\n' % selector)
+    sys.exit(1)
+if args[:2] == ["pr", "comment"]:
+    if state.get("comment_fail"):
+        sys.stderr.write("gh: comment refused\n")
+        sys.exit(1)
+    sys.exit(0)
+sys.stderr.write("fake gh: unexpected %r\n" % args)
+sys.exit(2)
+'''
+
+
+def pr(number=7, sha=SHA_A, state="OPEN", auto=None, current=True, branch="feat/x", url=None):
+    return {"number": number, "url": url or "https://github.com/o/r/pull/%d" % number, "headRefOid": sha,
+            "state": state, "autoMergeRequest": auto, "current": current, "branch": branch}
+
+
+def load_gate():
+    spec = importlib.util.spec_from_file_location("pre_merge_gate", GATE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class GateCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="pre merge ")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.records = os.path.join(self.tmp, "records")
+        self.cwd = os.path.join(self.tmp, "my repo")
+        os.makedirs(self.cwd)
+        self.state_path = os.path.join(self.tmp, "state.json")
+        self.calls_path = os.path.join(self.tmp, "calls.jsonl")
+        self.fake = os.path.join(self.tmp, "fake_gh.py")
+        with open(self.fake, "w", encoding="utf-8") as f:
+            f.write(FAKE_GH)
+        self.set_state([pr()])
+
+    def set_state(self, prs, **extra):
+        with open(self.state_path, "w", encoding="utf-8") as f:
+            json.dump(dict(prs=prs, **extra), f)
+
+    def env(self):
+        env = dict(os.environ)
+        env.update(PRE_MERGE_REVIEW_DIR=self.records, PRE_MERGE_REVIEW_GH=self.fake, FAKE_GH_STATE=self.state_path)
+        return env
+
+    def run_gate(self, argv, stdin=None):
+        return subprocess.run([sys.executable, "-I", "-S", GATE] + argv, input=stdin, capture_output=True, text=True,
+                              encoding="utf-8", env=self.env())
+
+    def check(self, command, tool="Bash", cwd=None):
+        payload = {"tool_name": tool, "tool_input": {"command": command}, "cwd": cwd or self.cwd}
+        p = self.run_gate(["check"], json.dumps(payload))
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stderr, "")
+        return json.loads(p.stdout) if p.stdout.strip() else None
+
+    def denial(self, command, **kw):
+        out = self.check(command, **kw)
+        self.assertIsNotNone(out, "expected a refusal for: " + command)
+        hso = out["hookSpecificOutput"]
+        self.assertEqual(hso["hookEventName"], "PreToolUse")
+        self.assertEqual(hso["permissionDecision"], "deny")
+        return hso["permissionDecisionReason"]
+
+    def calls(self):
+        if not os.path.exists(self.calls_path):
+            return []
+        with open(self.calls_path, encoding="utf-8") as f:
+            return [json.loads(ln) for ln in f if ln.strip()]
+
+    def view_calls(self):
+        return [c for c in self.calls() if c["args"][:2] == ["pr", "view"]]
+
+    def write_summary(self, text="Two findings, both fixed."):
+        path = os.path.join(self.tmp, "summary.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def record(self, pr_ref="7", head=SHA_A, summary=None, *extra):
+        return self.run_gate(["record", pr_ref, "--head", head, "--summary", summary or self.write_summary(), *extra])
+
+    def record_files(self):
+        return sorted(os.listdir(self.records)) if os.path.isdir(self.records) else []
+
+
+class MergeTest(GateCase):
+    def test_refused_without_a_record(self):
+        reason = self.denial("gh pr merge --auto --merge")
+        self.assertIn("#7", reason)
+        self.assertIn(URL, reason)
+        self.assertIn("aaaaaaa", reason)
+        self.assertNotIn("a" * 8, reason)
+        self.assertIn("pre-merge-review skill", reason)
+
+    def test_allowed_with_a_record_and_refused_again_after_the_head_moves(self):
+        p = self.record()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIsNone(self.check("gh pr merge 7 --squash --delete-branch"))
+        self.set_state([pr(sha=SHA_B)])
+        reason = self.denial("gh pr merge 7 --squash --delete-branch")
+        self.assertIn("bbbbbbb", reason)
+
+    def test_the_record_belongs_to_one_pr(self):
+        self.record()
+        self.set_state([pr(), pr(number=8, current=False)])
+        self.assertIn("#8", self.denial("gh pr merge 8"))
+
+    def test_disable_auto_passes_without_asking_gh(self):
+        self.assertIsNone(self.check("gh pr merge 7 --disable-auto"))
+        self.assertIsNone(self.check("gh pr merge --disable-auto"))
+        self.assertEqual(self.calls(), [])
+
+    def test_merge_chained_with_a_push_is_refused(self):
+        self.record()
+        for cmd in ("git push && gh pr merge 7 --auto", "gh pr merge 7; git push origin HEAD",
+                    "git -C . push | gh pr merge 7"):
+            self.assertIn("pushes and merges", self.denial(cmd), cmd)
+
+    def test_selector_forms(self):
+        self.set_state([pr(), pr(number=8, current=False, branch="fix/y")])
+        self.record()
+        cases = [
+            ("gh pr merge", None, None),
+            ("gh pr merge --squash", None, None),
+            ("gh pr merge 8", "8", None),
+            ("gh pr merge --squash 8 --delete-branch", "8", None),
+            ("gh pr merge https://github.com/o/r/pull/8", "https://github.com/o/r/pull/8", None),
+            ("gh pr merge fix/y", "fix/y", None),
+            ("gh pr merge 8 -R o/r", "8", "o/r"),
+            ("gh pr merge -R o/r 8", "8", "o/r"),
+            ("gh pr merge 8 --repo o/r", "8", "o/r"),
+            ("gh pr merge 8 --repo=o/r", "8", "o/r"),
+            ("gh pr merge -Ro/r 8", "8", "o/r"),
+            ("gh pr merge --body 'two words' 8", "8", None),
+            ("gh pr merge --body \"a; b\" 8", "8", None),
+            ("gh.exe pr merge 8", "8", None),
+            ('"C:\\Program Files\\GitHub CLI\\gh.exe" pr merge 8', "8", None),
+        ]
+        for cmd, selector, repo in cases:
+            with self.subTest(cmd=cmd):
+                os.path.exists(self.calls_path) and os.remove(self.calls_path)
+                self.check(cmd)
+                views = self.view_calls()
+                self.assertEqual(len(views), 1)
+                args = views[0]["args"]
+                self.assertEqual(args[:2], ["pr", "view"])
+                self.assertEqual(args[2] if selector else None, selector)
+                self.assertEqual(args[args.index("-R") + 1] if "-R" in args else None, repo)
+                self.assertEqual(args[args.index("--json") + 1], "url,number,headRefOid,state")
+
+    def test_the_current_branch_pr_is_resolved_in_cwd(self):
+        self.check("gh pr merge")
+        self.assertEqual(os.path.normcase(self.view_calls()[0]["cwd"]), os.path.normcase(self.cwd))
+
+    def test_several_merges_in_one_command(self):
+        self.set_state([pr(), pr(number=8, current=False)])
+        self.record("7")
+        reason = self.denial("gh pr merge 7 --squash && gh pr merge 8 --squash")
+        self.assertIn("#8", reason)
+        self.assertNotIn("#7 ", reason)
+        self.record("8")
+        self.assertIsNone(self.check("gh pr merge 7 --squash && gh pr merge 8 --squash"))
+        self.assertIsNone(self.check("gh pr merge 7\ngh pr merge 8"))
+        # a disable-auto on one does not excuse the other
+        self.set_state([pr(number=9, current=False), pr(number=10, current=False)])
+        self.assertIn("#9", self.denial("gh pr merge 9 && gh pr merge 10 --disable-auto"))
+        self.assertIn("#10", self.denial("gh pr merge 9 --disable-auto; gh pr merge 10"))
+
+    def test_merge_inside_a_powershell_command(self):
+        self.assertIn("#7", self.denial("& gh.exe pr merge 7 --auto --merge", tool="PowerShell"))
+        self.assertIn("#7", self.denial("gh pr create --fill; gh pr merge --auto --merge", tool="PowerShell"))
+        self.record()
+        self.assertIsNone(self.check("gh pr merge 7 --squash", tool="PowerShell"))
+
+    def test_gh_failing_refuses_the_merge(self):
+        self.record()
+        self.set_state([pr()], fail=True)
+        reason = self.denial("gh pr merge 7")
+        self.assertIn("network down", reason)
+        self.assertNotIn("second line", reason)
+        self.assertIn("pre-merge-review skill", reason)
+
+    def test_an_unknown_pr_refuses_the_merge(self):
+        self.assertIn("no pull requests found", self.denial("gh pr merge 99"))
+
+    def test_a_missing_gh_refuses_the_merge(self):
+        env = self.env()
+        env["PRE_MERGE_REVIEW_GH"] = os.path.join(self.tmp, "nope.py")
+        p = subprocess.run([sys.executable, "-I", "-S", GATE, "check"], capture_output=True, text=True, env=env,
+                           input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "gh pr merge 7"},
+                                             "cwd": self.cwd}))
+        self.assertEqual(json.loads(p.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_a_nonexistent_cwd_refuses_the_merge(self):
+        self.assertIn("pre-merge-review skill", self.denial("gh pr merge 7", cwd=os.path.join(self.tmp, "gone")))
+
+    def test_a_merge_inside_another_command_or_quotes_is_still_caught(self):
+        # the choice: a false refusal is acceptable, a missed merge is not
+        self.assertIn("#7", self.denial('bash -c "gh pr merge 7 --auto"'))
+        self.assertIn("#7", self.denial('cmd /c "gh pr merge 7"'))
+        self.assertIn("#7", self.denial('echo "now gh pr merge 7"'))
+
+    def test_a_corrupt_record_does_not_count(self):
+        self.record()
+        (name,) = self.record_files()
+        with open(os.path.join(self.records, name), "w") as f:
+            f.write("{not json")
+        self.assertIn("#7", self.denial("gh pr merge 7"))
+
+
+class PushTest(GateCase):
+    def test_refused_for_an_open_pr_with_auto_merge_on(self):
+        self.set_state([pr(auto={"enabledBy": {"login": "x"}, "mergeMethod": "MERGE"})])
+        reason = self.denial("git push")
+        self.assertIn("gh pr merge 7 --disable-auto", reason)
+        self.assertIn("pre-merge-review skill", reason)
+        self.assertEqual(self.view_calls()[0]["args"][-1], "url,number,state,autoMergeRequest")
+
+    def test_allowed_when_auto_merge_is_null_off_or_the_pr_is_not_open(self):
+        self.set_state([pr(auto=None)])
+        self.assertIsNone(self.check("git push -u origin feat/x"))
+        self.set_state([pr(state="MERGED", auto={"mergeMethod": "MERGE"})])
+        self.assertIsNone(self.check("git push"))
+        self.set_state([pr(state="CLOSED", auto={"mergeMethod": "MERGE"})])
+        self.assertIsNone(self.check("git push"))
+        self.assertEqual(len(self.view_calls()), 3)
+
+    def test_allowed_when_gh_fails_or_there_is_no_pr(self):
+        self.set_state([pr(auto={"mergeMethod": "MERGE"})], fail=True)
+        self.assertIsNone(self.check("git push"))
+        self.set_state([])
+        self.assertIsNone(self.check("git push -u origin new-branch"))
+
+    def test_git_dash_C_and_dash_c_before_push(self):
+        other = os.path.join(self.tmp, "other repo")
+        os.makedirs(other)
+        self.set_state([pr(auto={"mergeMethod": "MERGE"})])
+        for cmd in ('git -C "%s" push' % other, "git -C '%s' push origin x" % other):
+            with self.subTest(cmd=cmd):
+                os.path.exists(self.calls_path) and os.remove(self.calls_path)
+                self.assertIn("--disable-auto", self.denial(cmd))
+                self.assertEqual(os.path.normcase(self.view_calls()[0]["cwd"]), os.path.normcase(other))
+        os.remove(self.calls_path)
+        self.assertIn("--disable-auto", self.denial("git -c push.default=current push"))
+        self.assertEqual(os.path.normcase(self.view_calls()[0]["cwd"]), os.path.normcase(self.cwd))
+        os.remove(self.calls_path)
+        os.makedirs(os.path.join(self.cwd, "sub"))
+        self.denial("git -C sub -c k=v push")
+        self.assertEqual(os.path.normcase(self.view_calls()[0]["cwd"]), os.path.normcase(os.path.join(self.cwd, "sub")))
+
+    def test_the_push_is_in_a_chain_or_powershell(self):
+        self.set_state([pr(auto={"mergeMethod": "MERGE"})])
+        self.assertIn("--disable-auto", self.denial("git add -A && git commit -m x && git push"))
+        self.assertIn("--disable-auto", self.denial("git commit -m x; git push", tool="PowerShell"))
+
+    def test_other_git_commands_are_not_pushes(self):
+        self.set_state([pr(auto={"mergeMethod": "MERGE"})])
+        for cmd in ("git status", "git pull", "git pushd", "git log --oneline", "echo git-push"):
+            self.assertIsNone(self.check(cmd), cmd)
+        self.assertEqual(self.calls(), [])
+
+    def test_norm_dir(self):
+        gate = load_gate()
+        self.assertEqual(gate.norm_dir('"C:\\a b"', "X:\\cwd"), "C:\\a b" if os.name == "nt" else os.path.join("X:\\cwd", "C:\\a b"))
+        if os.name == "nt":
+            self.assertEqual(gate.norm_dir("/c/dev/x", "C:\\cwd"), "c:/dev/x")
+            self.assertEqual(gate.norm_dir("sub", "C:\\cwd"), os.path.join("C:\\cwd", "sub"))
+
+
+class PassThroughTest(GateCase):
+    def test_non_shell_tools_pass_with_no_output(self):
+        for tool in ("Read", "Edit", "Task", ""):
+            p = self.run_gate(["check"], json.dumps({"tool_name": tool, "tool_input": {"command": "gh pr merge 7"},
+                                                     "cwd": self.cwd}))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, "", ""), tool)
+
+    def test_unrelated_commands_pass_with_no_output(self):
+        for cmd in ("ls -la", "gh pr view 7", "gh pr create --fill", "gh pr checks 7", "gh pr comment 7 -b merge",
+                    "gh issue merge", "echo gh pr", "git status && git diff", "mygh pr merge 7", "python -m unittest"):
+            p = self.run_gate(["check"], json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd},
+                                                     "cwd": self.cwd}))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, "", ""), cmd)
+        self.assertEqual(self.calls(), [])
+
+    def test_bad_input_passes(self):
+        for stdin in ("", "not json", "[]", "{}", json.dumps({"tool_name": "Bash"}),
+                      json.dumps({"tool_name": "Bash", "tool_input": {"command": None}})):
+            p = self.run_gate(["check"], stdin)
+            self.assertEqual((p.returncode, p.stdout), (0, ""), stdin)
+
+
+class RecordTest(GateCase):
+    def test_posts_the_comment_and_writes_the_record(self):
+        p = self.record("7", SHA_A, self.write_summary("Found two things.\nBoth fixed."))
+        self.assertEqual((p.returncode, p.stderr), (0, ""))
+        self.assertEqual(p.stdout.strip(), "recorded %s at aaaaaaa" % URL)
+        (comment,) = [c for c in self.calls() if c["args"][:2] == ["pr", "comment"]]
+        self.assertEqual(comment["args"][2], "7")
+        first, _, rest = comment["body"].partition("\n")
+        self.assertEqual(first, "**Pre-merge review** of %s (built-in `/code-review high`)" % SHA_A)
+        self.assertIn("Found two things.\nBoth fixed.", rest)
+        name = "%s-%s.json" % (hashlib.sha256(URL.encode()).hexdigest()[:16], SHA_A)
+        self.assertEqual(self.record_files(), [name])
+        with open(os.path.join(self.records, name), encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual((data["url"], data["sha"]), (URL, SHA_A))
+        self.assertIn("recorded_at", data)
+
+    def test_the_comment_goes_through_the_repo_flag(self):
+        self.assertEqual(self.record("7", SHA_A, None, "-R", "o/r").returncode, 0)
+        for c in self.calls():
+            self.assertEqual(c["args"][c["args"].index("-R") + 1], "o/r")
+
+    def test_a_matching_full_sha_and_a_short_prefix_both_work(self):
+        self.assertEqual(self.record("7", SHA_A).returncode, 0)
+        os.remove(os.path.join(self.records, self.record_files()[0]))
+        p = self.record("7", SHA_A[:7].upper())
+        self.assertEqual((p.returncode, p.stderr), (0, ""))
+        # the record and the comment carry the PR's full head, not the prefix
+        self.assertEqual(len(self.record_files()), 1)
+        self.assertIn(SHA_A, self.record_files()[0])
+        self.assertIn(SHA_A, [c for c in self.calls() if "body" in c][-1]["body"].splitlines()[0])
+        self.assertIsNone(self.check("gh pr merge 7"))
+
+    def test_a_moved_head_is_refused_with_no_comment_and_no_record(self):
+        self.set_state([pr(sha=SHA_B)])
+        for head in (SHA_A, SHA_A[:7]):
+            p = self.record("7", head)
+            self.assertEqual(p.returncode, 1)
+            self.assertIn("head moved", p.stderr)
+            self.assertIn("pre-merge-review skill", p.stderr)
+        self.assertEqual([c for c in self.calls() if c["args"][:2] == ["pr", "comment"]], [])
+        self.assertEqual(self.record_files(), [])
+
+    def test_a_prefix_shorter_than_seven_is_refused(self):
+        p = self.record("7", SHA_A[:6])
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("--head", p.stderr)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.record_files(), [])
+
+    def test_head_is_required_and_must_be_hex(self):
+        p = self.run_gate(["record", "7", "--summary", self.write_summary()])
+        self.assertNotEqual(p.returncode, 0)
+        self.assertEqual(self.record("7", "zzzzzzzz").returncode, 1)
+        self.assertEqual(self.record_files(), [])
+
+    def test_a_closed_pr_is_refused(self):
+        for state in ("CLOSED", "MERGED"):
+            self.set_state([pr(state=state)])
+            p = self.record()
+            self.assertEqual(p.returncode, 1, state)
+            self.assertIn(state, p.stderr)
+            self.assertIn("pre-merge-review skill", p.stderr)
+        self.assertEqual(self.record_files(), [])
+        self.assertEqual([c for c in self.calls() if c["args"][:2] == ["pr", "comment"]], [])
+
+    def test_an_empty_summary_is_refused(self):
+        for text in ("", "  \n\n"):
+            p = self.record("7", SHA_A, self.write_summary(text))
+            self.assertEqual(p.returncode, 1)
+            self.assertIn("pre-merge-review skill", p.stderr)
+        p = self.record("7", SHA_A, os.path.join(self.tmp, "missing.md"))
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual(self.record_files(), [])
+        self.assertEqual(self.calls(), [])
+
+    def test_nothing_is_recorded_when_the_comment_fails(self):
+        self.set_state([pr()], comment_fail=True)
+        p = self.record()
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("comment refused", p.stderr)
+        self.assertEqual(self.record_files(), [])
+        self.assertIn("#7", self.denial("gh pr merge 7"))
+
+    def test_gh_failing_on_the_view_records_nothing(self):
+        self.set_state([pr()], fail=True)
+        p = self.record()
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("network down", p.stderr)
+        self.assertEqual(self.record_files(), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -35,6 +35,16 @@
     "CLAUDE_CODE_DISABLE_FAST_MODE": "1",
     "CLAUDE_CODE_PLUGIN_DIRS": "<repo>/mods/session-cards"
   },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          { "type": "command", "command": "python -I -S ~/.claude/skills/pre-merge-review/gate.py check", "timeout": 30 }
+        ]
+      }
+    ]
+  },
   "statusLine": {
     "type": "command",
     "command": "python -I -S ~/.claude/statusbar.py",

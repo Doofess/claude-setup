@@ -91,6 +91,13 @@ Nothing to look at here, but it shapes every session:
 - **`advisor-switch`**: turns Claude Code's advisor on (Opus, or Fable when Opus is stuck) and off for one project, in
   its `.claude/settings.local.json`. Claude runs it itself before and after a plan with workers; the installer removes a
   user-level `advisorModel`, so the advisor is never on in every project at once.
+- **`pre-merge-review`**: the review a pull request gets before it is merged: the built-in `/code-review` at `high`, Claude
+  triages the findings and fixes the real ones, new commits are reviewed again, then it merges. A `PreToolUse` hook
+  (`skills/pre-merge-review/gate.py check`) refuses `gh pr merge` until the review is recorded for the PR's current head
+  (`gate.py record`, which also posts the summary as a PR comment, writes the record in `~/.claude/pre-merge-review/`),
+  and refuses `git push` while the branch's open PR has auto-merge on. A command that pushes and merges together is
+  refused. Not covered: merges through `gh api` or the web page, pushes of another branch than the current one, and your
+  own `!` commands (hooks never see those).
 - **`codex`**: hands a task to OpenAI's Codex CLI in the background (`codex exec`, read-only unless it works in a
   worktree), on the OpenAI subscription: questions about Codex, independent research, second opinions. Its sibling
   setup is [codex-setup](https://github.com/Doofess/codex-setup).
@@ -260,8 +267,9 @@ Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers)
 The user level (`settings.json` here, merged into `~/.claude/settings.json`) keeps only the workflow core:
 
 - plugins: `superpowers` and `remember` (both from `claude-plugins-official`);
-- skills: `advisor-switch`, `codex` and `setup-check`;
+- skills: `advisor-switch`, `codex`, `setup-check` and `pre-merge-review`;
 - agents: `worker` and `Explore`;
+- one hook: the `pre-merge-review` gate (a `PreToolUse` hook on `Bash` and `PowerShell`);
 - the status line, permissions, mods and the global `CLAUDE.md`.
 
 Everything else is per project: plugins, LSPs, MCP servers, hooks, built-in tools and skills go in the repo's

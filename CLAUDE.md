@@ -13,7 +13,7 @@
 - `install.ps1` must parse under Windows PowerShell 5.1. A hook checks.
 
 ## Flow
-- Work in worktrees under `.claude/worktrees/`, open a PR, then `gh pr merge N --squash --delete-branch`.
+- Work in worktrees under `.claude/worktrees/`, open a PR, run the `pre-merge-review` skill, then `gh pr merge N --squash --delete-branch` (its gate hook refuses the merge until the review is recorded for the PR's head).
 - Leave the worktree directory before merging, or its removal fails.
 
 ## Engine facts
