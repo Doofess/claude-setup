@@ -64,7 +64,7 @@ was left and why); when GitHub has merged it, that it merged.
 | the PR could not be read (`gh` failed) | fix `gh` (auth, network, the selector); do not merge another way |
 | it cannot tell which repository (`GH_REPO`, `cd -`, a variable, a subshell) | name the PR by its URL |
 | `--match-head-commit` is missing or names another commit | add the full `headRefOid` the refusal names (the recorded head) |
-| the command only mentions `gh pr merge` or `git push` (a grep, a commit message, a heredoc) | write text with the file-writing tool, commit with `git commit -F <file>`, grep for `'gh pr merg[e]'` |
+| the command only mentions `gh pr merge` or `git push` (a grep, a commit message, a heredoc) | write text with the file-writing tool, commit with `git commit -F <file>`, grep for `'gh pr merg[e]'` or `'git pus[h]'` |
 
 ## Red flags
 

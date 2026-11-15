@@ -668,7 +668,10 @@ class SetupCheckProbeTest(GateCase):
         self.assertEqual(json.loads(payload)["tool_input"]["command"], "gh pr merge 1")
         p = self.run_gate(["check"], payload)
         self.assertEqual(p.returncode, 0)
-        self.assertEqual(json.loads(p.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+        out = json.loads(p.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertIn("could not read PR 1 (", out["permissionDecisionReason"])  # the merge rule, not the crash path
+        self.assertNotIn("gate failed", out["permissionDecisionReason"])
 
 
 class PatternTimeTest(unittest.TestCase):
