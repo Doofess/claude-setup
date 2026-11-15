@@ -237,7 +237,7 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
 
 # ---- Kotlin language server (Claude Code's kotlin-lsp plugin launches the command `kotlin-lsp`) ----
 # JetBrains' standalone build bundles its own JBR, so no JDK is needed. The pure helpers below are tested without a machine.
-$kotlinLspVersion = '263.7084.0'
+$kotlinLspVersion = '271.2085.0'
 
 # Download URLs for one processor architecture ('AMD64' / 'ARM64', as in PROCESSOR_ARCHITECTURE; anything else -> $null).
 function Get-KotlinLspUrls([string]$version, [string]$arch) {

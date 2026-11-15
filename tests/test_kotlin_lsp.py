@@ -8,7 +8,7 @@ import unittest
 from test_install import per_engine, read, run_engine
 
 HASH = "be3bc4ef430cde315e6a83900ffb5d9cc454a36aabe9dd3ba7d4141b2d628164"
-BASE = "https://download.jetbrains.com/language-server/kotlin-server/263.7084.0/kotlin-server-263.7084.0"
+BASE = "https://download.jetbrains.com/language-server/kotlin-server/271.2085.0/kotlin-server-271.2085.0"
 
 DRIVER = r"""
 param([string]$InFile)
@@ -58,18 +58,18 @@ class KotlinHelpersBase:
 
     def test_amd64_picks_the_x64_archive(self):
         for arch in ("AMD64", "amd64", "x64"):
-            urls = self.run_driver(mode="urls", version="263.7084.0", arch=arch)
+            urls = self.run_driver(mode="urls", version="271.2085.0", arch=arch)
             self.assertEqual(urls, {"Zip": BASE + ".win.zip", "Sha256": BASE + ".win.zip.sha256"})
 
     def test_arm64_picks_the_aarch64_archive(self):
-        urls = self.run_driver(mode="urls", version="263.7084.0", arch="ARM64")
+        urls = self.run_driver(mode="urls", version="271.2085.0", arch="ARM64")
         self.assertEqual(urls, {"Zip": BASE + "-aarch64.win.zip", "Sha256": BASE + "-aarch64.win.zip.sha256"})
 
     def test_an_unknown_architecture_has_no_urls(self):
-        self.assertIsNone(self.run_driver(mode="urls", version="263.7084.0", arch="x86"))
+        self.assertIsNone(self.run_driver(mode="urls", version="271.2085.0", arch="x86"))
 
     def test_hash_is_read_from_the_published_file(self):
-        text = "%s *kotlin-server-263.7084.0.win.zip\n" % HASH.upper()
+        text = "%s *kotlin-server-271.2085.0.win.zip\n" % HASH.upper()
         self.assertEqual(self.run_driver(mode="hash", text=text), {"Hash": HASH})
         self.assertEqual(self.run_driver(mode="hash", text=HASH), {"Hash": HASH})
 
@@ -111,7 +111,7 @@ per_engine(KotlinHelpersBase, globals())
 class KotlinInstallerTest(unittest.TestCase):
     def test_pinned_version_and_step(self):
         text = read("install.ps1")
-        self.assertIn("$kotlinLspVersion = '263.7084.0'", text)
+        self.assertIn("$kotlinLspVersion = '271.2085.0'", text)
         self.assertIn("-SkipKotlinLsp", text)
         self.assertIn("4h. Kotlin language server", text)
 
