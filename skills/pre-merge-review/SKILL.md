@@ -40,10 +40,10 @@ steps below and the gate never has to refuse.
 
    It refuses when the PR's head is no longer the reviewed commit (review the new head). Otherwise it posts the summary
    as a PR comment headed with the reviewed commit, records that commit, and prints `recorded <url> at <sha7>`.
-7. **Merge** with the project's usual command plus `--match-head-commit <headRefOid>` (for example
+7. **Merge** with the project's usual command plus `--match-head-commit <full headRefOid>` (for example
    `gh pr merge <n> --auto --merge --match-head-commit <headRefOid>`), so GitHub itself refuses the merge if the head
-   moves after the gate's check. The gate lets it through only for the recorded head. With `--auto`, the PR is not
-   merged yet: say so, and watch it until GitHub merges it or CI fails.
+   moves after the gate's check. The gate lets it through only for the recorded head, with that flag naming it in full.
+   With `--auto`, the PR is not merged yet: say so, and watch it until GitHub merges it or CI fails.
 8. **New commits after the merge is on** (a failed CI run, a late fix): commit locally as needed, but run
    `gh pr merge <n> --disable-auto` as its own command before the push (the gate reads auto-merge before a command runs,
    so `--disable-auto && git push` is still refused), then push and go back to step 2 for the new head. A lint-only or
@@ -61,8 +61,8 @@ was left and why); when GitHub has merged it, that it merged.
 | `gh pr merge` and `git push` in one command | run them separately, with the review between |
 | push refused: auto-merge is on | step 8 |
 | the PR could not be read (`gh` failed) | fix `gh` (auth, network, the selector); do not merge another way |
-| it cannot tell which repository (`GH_REPO`, `cd -`, a variable) | name the PR by its URL |
-| `--match-head-commit` names another commit | use the `headRefOid` of step 2; if the head moved, step 2 again |
+| it cannot tell which repository (`GH_REPO`, `cd -`, a variable, a subshell) | name the PR by its URL |
+| `--match-head-commit` is missing or names another commit | add the full `headRefOid` the refusal names (the recorded head) |
 
 ## Red flags
 

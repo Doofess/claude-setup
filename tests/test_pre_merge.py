@@ -17,6 +17,7 @@ GATE = os.path.join(ROOT, "skills", "pre-merge-review", "gate.py")
 SHA_A = "a" * 40
 SHA_B = "b" * 40
 URL = "https://github.com/o/r/pull/7"
+PIN = " --match-head-commit " + SHA_A  # every allowed merge names the reviewed head
 
 # The fake gh. State (PRs, switches) is a JSON file the test rewrites; every call is appended to calls.jsonl.
 FAKE_GH = r'''
@@ -151,7 +152,7 @@ class MergeTest(GateCase):
     def test_allowed_with_a_record_and_refused_again_after_the_head_moves(self):
         p = self.record()
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertIsNone(self.check("gh pr merge 7 --squash --delete-branch"))
+        self.assertIsNone(self.check("gh pr merge 7 --squash --delete-branch" + PIN))
         self.set_state([pr(sha=SHA_B)])
         reason = self.denial("gh pr merge 7 --squash --delete-branch")
         self.assertIn("bbbbbbb", reason)
@@ -215,8 +216,8 @@ class MergeTest(GateCase):
         self.assertIn("#8", reason)
         self.assertNotIn("#7 ", reason)
         self.record("8")
-        self.assertIsNone(self.check("gh pr merge 7 --squash && gh pr merge 8 --squash"))
-        self.assertIsNone(self.check("gh pr merge 7\ngh pr merge 8"))
+        self.assertIsNone(self.check("gh pr merge 7 --squash" + PIN + " && gh pr merge 8 --squash" + PIN))
+        self.assertIsNone(self.check("gh pr merge 7" + PIN + "\ngh pr merge 8" + PIN))
         # a disable-auto on one does not excuse the other
         self.set_state([pr(number=9, current=False), pr(number=10, current=False)])
         self.assertIn("#9", self.denial("gh pr merge 9 && gh pr merge 10 --disable-auto"))
@@ -226,7 +227,7 @@ class MergeTest(GateCase):
         self.assertIn("#7", self.denial("& gh.exe pr merge 7 --auto --merge", tool="PowerShell"))
         self.assertIn("#7", self.denial("gh pr create --fill; gh pr merge --auto --merge", tool="PowerShell"))
         self.record()
-        self.assertIsNone(self.check("gh pr merge 7 --squash", tool="PowerShell"))
+        self.assertIsNone(self.check("gh pr merge 7 --squash" + PIN, tool="PowerShell"))
 
     def test_gh_failing_refuses_the_merge(self):
         self.record()
@@ -279,7 +280,7 @@ class MergeTest(GateCase):
         for cmd, where in cases:
             with self.subTest(cmd=cmd):
                 os.path.exists(self.calls_path) and os.remove(self.calls_path)
-                self.assertIsNone(self.check(cmd))
+                self.assertIsNone(self.check(cmd.replace("gh pr merge 7", "gh pr merge 7" + PIN)))
                 self.assertEqual(os.path.normcase(os.path.normpath(self.view_calls()[0]["cwd"])),
                                  os.path.normcase(os.path.normpath(where)))
 
@@ -289,7 +290,7 @@ class MergeTest(GateCase):
         for cmd in ("cd - && gh pr merge 7", 'cd "$REPO" && gh pr merge', "cd $env:X; gh pr merge 7"):
             self.assertIn("by its URL", self.denial(cmd), cmd)
         self.assertEqual(self.calls(), [])
-        self.assertIsNone(self.check("cd - && gh pr merge %s --squash" % URL))
+        self.assertIsNone(self.check("cd - && gh pr merge %s --squash" % URL + PIN))
         self.assertEqual(os.path.normcase(self.view_calls()[0]["cwd"]), os.path.normcase(self.cwd))
 
     def test_line_continuations_keep_the_selector_and_the_repo(self):
@@ -307,16 +308,40 @@ class MergeTest(GateCase):
         self.assertIn("GH_REPO", self.denial("GH_REPO=a/b gh pr merge 7"))
         self.assertIn("GH_REPO", self.denial("$env:GH_REPO = 'a/b'; gh pr merge", tool="PowerShell"))
         self.assertEqual(self.calls(), [])
-        self.assertIsNone(self.check("GH_REPO=o/r gh pr merge 7 -R o/r"))
-        self.assertIsNone(self.check("GH_REPO=o/r gh pr merge %s" % URL))
+        self.assertIsNone(self.check("GH_REPO=o/r gh pr merge 7 -R o/r" + PIN))
+        self.assertIsNone(self.check("GH_REPO=o/r gh pr merge %s" % URL + PIN))
 
-    def test_match_head_commit_must_name_the_head(self):
+    def test_match_head_commit_must_name_the_full_reviewed_head(self):
         self.record()
-        self.assertIsNone(self.check("gh pr merge 7 --auto --merge --match-head-commit aaaaaaa"))
+        self.assertIsNone(self.check("gh pr merge 7 --auto --merge --match-head-commit " + SHA_A.upper()))
         self.assertIsNone(self.check("gh pr merge 7 --match-head-commit=" + SHA_A))
-        reason = self.denial("gh pr merge 7 --match-head-commit bbbbbbb")
-        self.assertIn("--match-head-commit names bbbbbbb", reason)
-        self.assertIn("aaaaaaa", reason)
+        for cmd, said in (("gh pr merge 7 --auto --merge", "is missing"),
+                          ("gh pr merge 7 --match-head-commit aaaaaaa", "names aaaaaaa, not"),
+                          ("gh pr merge 7 --match-head-commit bbbbbbb", "names bbbbbbb, not")):
+            reason = self.denial(cmd)
+            self.assertIn(said, reason, cmd)
+            self.assertIn("--match-head-commit " + SHA_A, reason, cmd)
+        # with no record, the missing review comes first
+        self.set_state([pr(sha=SHA_B)])
+        self.assertIn("no pre-merge review", self.denial("gh pr merge 7"))
+
+    def test_a_disable_auto_counts_only_on_a_merge_that_does_nothing_else(self):
+        for cmd in ("gh pr merge 7 --auto --merge # --disable-auto", "gh pr merge 7 --squash --disable-auto",
+                    "gh pr merge 7 -s --disable-auto", "gh pr merge 7 --disable-auto --admin",
+                    'bash -c "gh pr merge 7 --auto" && echo x --disable-auto'):
+            self.assertIn("#7", self.denial(cmd), cmd)
+        self.assertIsNone(self.check("gh pr merge 7 --disable-auto -d"))
+
+    def test_a_cd_in_a_subshell_or_quotes_needs_the_pr_url(self):
+        other = os.path.join(self.tmp, "other repo")
+        os.makedirs(other)
+        self.record()
+        os.remove(self.calls_path)
+        for cmd in ('(cd "%s"); gh pr merge 7' % other, "bash -c \"cd '%s' && gh pr merge 7\"" % other,
+                    "popd; gh pr merge 7", "echo cd; gh pr merge 7"):
+            self.assertIn("by its URL", self.denial(cmd + PIN), cmd)
+        self.assertEqual(self.calls(), [])
+        self.assertIsNone(self.check('(cd "%s"); gh pr merge %s' % (other, URL) + PIN))
 
 
 class PushTest(GateCase):
@@ -460,7 +485,7 @@ class RecordTest(GateCase):
         self.assertEqual(len(self.record_files()), 1)
         self.assertIn(SHA_A, self.record_files()[0])
         self.assertIn(SHA_A, [c for c in self.calls() if "body" in c][-1]["body"].splitlines()[0])
-        self.assertIsNone(self.check("gh pr merge 7"))
+        self.assertIsNone(self.check("gh pr merge 7" + PIN))
 
     def test_a_moved_head_is_refused_with_no_comment_and_no_record(self):
         self.set_state([pr(sha=SHA_B)])

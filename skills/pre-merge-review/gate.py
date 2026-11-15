@@ -23,6 +23,7 @@ import time
 SKILL = "the pre-merge-review skill"
 GH_TIMEOUT = 10  # one gh call
 GH_BUDGET = 20  # all gh calls of one check, under the hook's own 30 s timeout (a killed hook lets the command run)
+RECORD_TIMEOUT = 60  # record has no hook around it; a slow comment that times out would be posted twice on a retry
 VIEW_MERGE = "url,number,headRefOid,state"
 VIEW_PUSH = "url,number,state,autoMergeRequest"
 UNKNOWN = "?"  # a folder the gate cannot resolve (`cd -`, a variable)
@@ -38,11 +39,13 @@ PUSH_RE = re.compile(
     re.IGNORECASE,
 )
 CD_ARG = r"""(?:"[^"]*"|'[^']*'|[^\s;&|)]+)"""  # stops at a separator: `cd sub; x`
-CD_RE = re.compile(
-    r"""(?:^|[;&|\n\r(])\s*(?:cd|chdir|pushd|sl|set-location|push-location)(?![\w.-])"""
-    r"""(?:\s+/d|\s+-(?:path|literalpath))?(?:\s+(%s))?""" % CD_ARG,
+CD_WORDS = r"""cd|chdir|pushd|popd|sl|set-location|push-location|pop-location"""
+CD_RE = re.compile(  # a folder change the gate can follow: a plain statement of its own
+    r"""(?:^|[;&|\n\r(])\s*(?P<word>cd|chdir|pushd|sl|set-location|push-location)(?![\w./\\-])"""
+    r"""(?:\s+/d|\s+-(?:path|literalpath))?(?:\s+(?P<arg>%s))?""" % CD_ARG,
     re.IGNORECASE,
 )
+CD_WORD_RE = re.compile(r"""(?<![\w.$/\\-])(?:%s)(?![\w./\\-])""" % CD_WORDS, re.IGNORECASE)  # any folder change
 CONTINUATION_RE = re.compile(r"(?:\\|`)\r?\n")  # Bash `\` and PowerShell backtick line continuations
 
 # gh pr merge flags that take a value (the next token, or after "=").
@@ -74,28 +77,33 @@ def gh_command():
     return [sys.executable, override] if override else ["gh"]
 
 
-def run_gh(args, cwd=None):
-    """(returncode, stdout, first stderr line). Any failure to run gh is returncode -1."""
-    timeout = GH_TIMEOUT
+def run_gh(args, cwd=None, timeout=GH_TIMEOUT):
+    """(returncode, stdout, first stderr line). Any failure to run gh is returncode -1.
+
+    Output goes to temporary files, not pipes: on a timeout, subprocess kills gh and then reads its pipes with no
+    timeout, which on Windows can hang while a child of gh still holds them."""
     if _deadline is not None:
         timeout = min(timeout, _deadline - time.monotonic())
         if timeout < 1:
             return -1, "", "the gate's gh calls used up their %d s budget" % GH_BUDGET
     try:
-        p = subprocess.run(
-            gh_command() + list(args), cwd=cwd or None, stdin=subprocess.DEVNULL, capture_output=True,
-            text=True, encoding="utf-8", errors="replace", timeout=timeout,
-        )
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            p = subprocess.run(gh_command() + list(args), cwd=cwd or None, stdin=subprocess.DEVNULL, stdout=out,
+                               stderr=err, timeout=timeout)
+            out.seek(0)
+            err.seek(0)
+            stdout = out.read().decode("utf-8", errors="replace")
+            stderr = err.read().decode("utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError, ValueError) as e:
         return -1, "", "gh could not run (%s)" % type(e).__name__
-    lines = [ln.strip() for ln in p.stderr.splitlines() if ln.strip()]
-    return p.returncode, p.stdout, (lines[0] if lines else "gh exited with code %d" % p.returncode)
+    lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+    return p.returncode, stdout, (lines[0] if lines else "gh exited with code %d" % p.returncode)
 
 
-def view_pr(selector, repo, fields, cwd=None):
+def view_pr(selector, repo, fields, cwd=None, timeout=GH_TIMEOUT):
     """(dict, None) or (None, reason)."""
     args = ["pr", "view"] + ([selector] if selector else []) + (["-R", repo] if repo else []) + ["--json", fields]
-    code, out, err = run_gh(args, cwd)
+    code, out, err = run_gh(args, cwd, timeout)
     if code != 0:
         return None, err
     try:
@@ -113,21 +121,44 @@ def valid_sha(sha):
 
 # ---- command parsing ----
 
-def region_end(text, start, limit):
-    """End of a command's arguments: the first separator outside quotes, or `limit`."""
+def scan(text):
+    """Per position (and one past the end): (the quote open there or None, the parenthesis depth there)."""
+    states = []
     quote = None
-    i = start
-    n = min(len(text), limit)
-    while i < n:
-        c = text[i]
+    depth = 0
+    for c in text:
+        states.append((quote, depth))
         if quote:
             if c == quote:
                 quote = None
         elif c in "\"'":
             quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth = max(0, depth - 1)
+    states.append((quote, depth))
+    return states
+
+
+def region_end(text, start, limit, outer=None):
+    """End of a command's arguments: the first separator or `#` comment outside quotes, the closing `outer` quote
+    when the command sits inside a quoted string (`bash -c "gh pr merge 3"`), or `limit`."""
+    quote = None
+    n = min(len(text), limit)
+    for i in range(start, n):
+        c = text[i]
+        if quote:
+            if c == quote:
+                quote = None
+        elif c == outer:
+            return i
+        elif c in "\"'":
+            quote = c
         elif c in ";|&\n\r":
             return i
-        i += 1
+        elif c == "#" and text[i - 1].isspace():
+            return i
     return n
 
 
@@ -147,9 +178,10 @@ def tokens(region):
 
 
 def parse_merge(region):
-    """{selector, repo, disable_auto, match_head} from the text after `gh pr merge`."""
+    """{selector, repo, disable_only, match_head} from the text after `gh pr merge`. `disable_only`: it has
+    `--disable-auto` and nothing that merges or turns auto-merge on (--auto, --merge, --squash, --rebase, --admin)."""
     selector = repo = match_head = None
-    disable_auto = False
+    disable_auto = merges = False
     toks = tokens(region)
     i = 0
     while i < len(toks):
@@ -159,6 +191,8 @@ def parse_merge(region):
             name, eq, val = t.partition("=")
             if name == "--disable-auto":
                 disable_auto = True
+            elif name in ("--auto", "--merge", "--squash", "--rebase", "--admin"):
+                merges = True
             elif name in VALUE_LONG:
                 if not eq and i < len(toks):
                     val = toks[i]
@@ -175,19 +209,21 @@ def parse_merge(region):
         elif t.startswith("-R") and len(t) > 2:
             repo = t[2:]
         elif t.startswith("-"):
-            continue
+            if any(c in t[1:] for c in "msr"):  # -m, -s, -r, alone or in a cluster such as -sd
+                merges = True
         elif selector is None:
             selector = t
-    return {"selector": selector, "repo": repo, "disable_auto": disable_auto, "match_head": match_head}
+    return {"selector": selector, "repo": repo, "disable_only": disable_auto and not merges, "match_head": match_head}
 
 
-def find_merges(command):
+def find_merges(command, states):
     """One dict per `gh pr merge`, with `pos`, where it starts in the command."""
     matches = list(MERGE_RE.finditer(command))
     out = []
     for k, m in enumerate(matches):
         limit = matches[k + 1].start() if k + 1 < len(matches) else len(command)
-        merge = parse_merge(command[m.end():region_end(command, m.end(), limit)])
+        end = region_end(command, m.end(), limit, outer=states[m.start()][0])
+        merge = parse_merge(command[m.end():end])
         merge["pos"] = m.start()
         out.append(merge)
     return out
@@ -207,12 +243,20 @@ def norm_dir(path, cwd):
     return path
 
 
-def dir_at(command, pos, cwd):
+def dir_at(command, pos, cwd, states):
     """The folder a command at `pos` runs in: cwd, moved by each `cd`/`Set-Location` before it. UNKNOWN when one of
-    them goes somewhere the gate cannot resolve (`cd -`, a variable)."""
+    them goes somewhere the gate cannot resolve (`cd -`, a variable), or is not a plain statement of its own: inside
+    parentheses (a subshell in Bash, not in PowerShell), inside quotes (`bash -c "cd x && ..."`), `popd`, or a `cd`
+    the gate cannot parse."""
+    plain = {m.start("word"): m for m in CD_RE.finditer(command, 0, pos)}
     d = cwd
-    for m in CD_RE.finditer(command, 0, pos):
-        arg = m.group(1)
+    for w in CD_WORD_RE.finditer(command, 0, pos):
+        m = plain.get(w.start())
+        quote, depth = states[w.start()]
+        if m is None or quote or depth:
+            d = UNKNOWN
+            continue
+        arg = m.group("arg")
         if arg is None:  # a bare `cd` goes home
             d = os.path.expanduser("~")
         elif arg == "-" or "$" in arg or "%" in arg:
@@ -252,11 +296,11 @@ def push_dir(options, d):
     return d
 
 
-def find_push_dirs(command, cwd):
+def find_push_dirs(command, cwd, states):
     """One folder per `git push`, deduplicated. A push from a folder the gate cannot resolve is skipped (fail open)."""
     dirs = []
     for m in PUSH_RE.finditer(command):
-        d = dir_at(command, m.start(), cwd)
+        d = dir_at(command, m.start(), cwd, states)
         if d == UNKNOWN:
             continue
         d = push_dir(m.group(1) or "", d)
@@ -282,9 +326,9 @@ def check_merge(merge, directory, cwd, sets_gh_repo):
             return ("Merge refused: the command sets GH_REPO, so the gate cannot be sure it checks the PR gh would "
                     "merge. Name the PR by its URL (or -R owner/repo), and use %s before merging." % SKILL)
         if directory == UNKNOWN:
-            return ("Merge refused: the command changes to a folder the gate cannot resolve (`cd -` or a variable), so "
-                    "it cannot tell which repository's PR this is. Name the PR by its URL, and use %s before merging."
-                    % SKILL)
+            return ("Merge refused: the command changes folder in a way the gate cannot follow (`cd -`, a variable, a "
+                    "subshell or a quoted command), so it cannot tell which repository's PR this is. Name the PR by its "
+                    "URL, and use %s before merging." % SKILL)
     pr, err = view_pr(selector, repo, VIEW_MERGE, cwd if directory == UNKNOWN else directory)
     if pr is None:
         return ("Merge refused: could not read %s (%s). Fix that or name the PR explicitly, then use %s before merging."
@@ -292,14 +336,15 @@ def check_merge(merge, directory, cwd, sets_gh_repo):
     url, sha = pr.get("url"), pr.get("headRefOid")
     if not url or not valid_sha(sha):
         return "Merge refused: gh gave no URL or head commit for %s. Use %s before merging." % (where, SKILL)
-    if match_head and not sha.lower().startswith(match_head.strip().lower()):
-        return ("Merge refused: --match-head-commit names %s, but PR #%s's head is %s. Use the reviewed head, and %s "
-                "if the head moved." % (match_head[:7], pr.get("number"), sha[:7], SKILL))
-    if has_record(url, sha):
-        return None
-    return ("Merge refused: PR #%s (%s) has no pre-merge review at head %s. Use %s: review this head, fix the real "
-            "findings, record the review, then merge. If the head changes, the review has to be done again."
-            % (pr.get("number"), url, sha[:7], SKILL))
+    if not has_record(url, sha):
+        return ("Merge refused: PR #%s (%s) has no pre-merge review at head %s. Use %s: review this head, fix the real "
+                "findings, record the review, then merge. If the head changes, the review has to be done again."
+                % (pr.get("number"), url, sha[:7], SKILL))
+    if (match_head or "").strip().lower() != sha.lower():
+        found = "names %s, not" % match_head[:7] if match_head else "is missing; it must name"
+        return ("Merge refused: --match-head-commit %s the reviewed head. Add `--match-head-commit %s` to the merge, so "
+                "GitHub refuses it if the head moves after this check." % (found, sha))
+    return None
 
 
 def check_push(directory):
@@ -317,8 +362,9 @@ def check_push(directory):
 def check_command(command, cwd):
     """The refusal reasons for one shell command (empty = allowed)."""
     command = CONTINUATION_RE.sub(" ", command)
+    states = scan(command)
     reasons = []
-    merges = [m for m in find_merges(command) if not m["disable_auto"]]
+    merges = [m for m in find_merges(command, states) if not m["disable_only"]]
     if merges and PUSH_RE.search(command):
         reasons.append("Merge refused: a command that pushes and merges together would merge unreviewed commits. "
                        "Push in one command, use %s, then merge in another." % SKILL)
@@ -326,7 +372,7 @@ def check_command(command, cwd):
         sets_gh_repo = "GH_REPO" in command
         seen = set()
         for merge in merges:
-            directory = dir_at(command, merge["pos"], cwd)
+            directory = dir_at(command, merge["pos"], cwd, states)
             key = (merge["selector"], merge["repo"], merge["match_head"], directory)
             if key in seen:
                 continue
@@ -334,7 +380,7 @@ def check_command(command, cwd):
             reason = check_merge(merge, directory, cwd, sets_gh_repo)
             if reason:
                 reasons.append(reason)
-    for directory in find_push_dirs(command, cwd):
+    for directory in find_push_dirs(command, cwd, states):
         reason = check_push(directory)
         if reason:
             reasons.append(reason)
@@ -390,7 +436,7 @@ def record(argv):
     seen = args.head.strip().lower()
     if re.fullmatch(r"[0-9a-f]{7,40}", seen) is None:
         return fail("--head must be the reviewed commit, 7 to 40 hex characters, got %r" % args.head)
-    pr, err = view_pr(args.pr, args.repo, VIEW_MERGE)
+    pr, err = view_pr(args.pr, args.repo, VIEW_MERGE, timeout=RECORD_TIMEOUT)
     if pr is None:
         return fail("could not read the PR (%s)" % err)
     url, sha = pr.get("url"), pr.get("headRefOid")
@@ -408,7 +454,7 @@ def record(argv):
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(body)
         code, _, err = run_gh(["pr", "comment", args.pr] + (["-R", args.repo] if args.repo else [])
-                              + ["--body-file", tmp])
+                              + ["--body-file", tmp], timeout=RECORD_TIMEOUT)
     finally:
         try:
             os.remove(tmp)

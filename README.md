@@ -94,8 +94,9 @@ Nothing to look at here, but it shapes every session:
 - **`pre-merge-review`**: the review a pull request gets before it is merged: the built-in `/code-review` at `high`, Claude
   triages the findings and fixes the real ones, new commits are reviewed again, then it merges. A `PreToolUse` hook
   (`skills/pre-merge-review/gate.py check`) refuses `gh pr merge` until the review is recorded for the PR's current head
-  (`gate.py record`, which also posts the summary as a PR comment, writes the record in `~/.claude/pre-merge-review/`),
-  and refuses `git push` while the branch's open PR has auto-merge on. A command that pushes and merges together is
+  (`gate.py record`, which also posts the summary as a PR comment, writes the record in `~/.claude/pre-merge-review/`)
+  and the merge names that head with `--match-head-commit`, and refuses `git push` while the branch's open PR has
+  auto-merge on. A command that pushes and merges together is
   refused. The gate checks that a review was recorded, not that it ran: it stops a merge that skipped the procedure by
   mistake, and the PR comment is what says what the review found. Not covered: merges through `gh api` or the web page,
   pushes of another branch than the current one, `gh` aliases, and your own `!` commands (hooks never see those).
