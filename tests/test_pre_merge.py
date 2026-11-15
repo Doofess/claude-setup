@@ -652,6 +652,25 @@ class RecordTest(GateCase):
         self.assertEqual(self.record_files(), [])
 
 
+class SetupCheckProbeTest(GateCase):
+    """setup-check step 7 runs the gate once through the PowerShell tool, so the installed gate sees its text too."""
+
+    def probe(self):
+        with open(os.path.join(ROOT, "skills", "setup-check", "SKILL.md"), encoding="utf-8") as f:
+            (line,) = [ln.strip() for ln in f if 'gate.py" check' in ln]
+        self.assertTrue(line.startswith("`") and line.endswith("`"), line)
+        return line[1:-1]
+
+    def test_the_gate_lets_the_probe_run_and_refuses_its_payload(self):
+        command = self.probe()
+        self.assertIsNone(self.check(command, tool="PowerShell"))  # the text itself holds no merge
+        payload = command[command.index("'") + 1:command.index("' |")]
+        self.assertEqual(json.loads(payload)["tool_input"]["command"], "gh pr merge 1")
+        p = self.run_gate(["check"], payload)
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(json.loads(p.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+
 class PatternTimeTest(unittest.TestCase):
     """A failed search must stay fast: a hook killed at its timeout lets the command run. 24 repeats took the old,
     ambiguous patterns about 5 s (doubling with each one), so a regression fails here instead of hanging."""

@@ -44,8 +44,9 @@ the machine is fixed by the installer, not by editing the repo.
    `underwater-photoshop` or `find-skills`; `~/.claude/settings.json` must have, under `hooks.PreToolUse`, the
    `Bash|PowerShell` entry running `~/.claude/skills/pre-merge-review/gate.py check`. Anything else means the last
    install was skipped or failed: repair with step 5 (never `-SkipPlugins`). Then prove the gate runs, outside any
-   repository so no PR is read:
-   `'{"tool_name":"Bash","tool_input":{"command":"gh pr merge 1"},"cwd":"C:\\"}' | python -I -S "$HOME\.claude\skills\pre-merge-review\gate.py" check`
+   repository so no PR is read (`\u006d` is JSON for `m`: the gate refuses any command whose text holds a merge, this
+   one included, so the payload spells it escaped):
+   `'{"tool_name":"Bash","tool_input":{"command":"gh pr \u006derge 1"},"cwd":"C:\\"}' | python -I -S "$HOME\.claude\skills\pre-merge-review\gate.py" check`
    must print a line with `"permissionDecision": "deny"`. No output means Python or `gate.py` is missing, and because
    the hook command ends with `; exit 0`, every merge would then pass unchecked: install Python
    (`winget install Python.Python.3.14`) or repair with step 5.
