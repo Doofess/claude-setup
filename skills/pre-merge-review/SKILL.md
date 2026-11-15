@@ -15,13 +15,16 @@ steps below and the gate never has to refuse.
 
 ## Steps
 
-1. **Auto-merge off.** Check it even on a PR you just opened: `gh pr view <n> --json autoMergeRequest,headRefOid`. If
-   `autoMergeRequest` is not null, run `gh pr merge <n> --disable-auto`.
-2. **Everything pushed.** `git status -sb` shows no `ahead`; push if it does. Note the PR's `headRefOid`: it is the commit
-   the review sees, and `record` needs it. Do not push again until step 5.
-3. **Review.** Skill tool, skill `code-review`, args `high <n>` (no `--comment`: `record` posts the summary). It runs in
-   the background: wait for its result notification. Do not merge, and do not start a second review, while it runs. If
-   it fails or never reports, run it once more; if that fails too, stop and tell the user. Never merge without it.
+1. **Auto-merge off.** Check it even on a PR you just opened: `gh pr view <n> --json url,autoMergeRequest,headRefOid`.
+   If `autoMergeRequest` is not null, run `gh pr merge <n> --disable-auto`.
+2. **Everything pushed.** `git status -sb` shows no `ahead`; push if it does. Note the PR's `url` and `headRefOid`: the
+   head is the commit the review sees, and `record` needs it. Do not push again until step 5.
+3. **Review.** Skill tool, skill `code-review`, args `high <the PR's url>` (the full URL, never the bare number: the
+   review resolves a number against the session's own repository, which may be another one; no `--comment`: `record`
+   posts the summary). It runs in the background: wait for its result notification. Do not merge, and do not start a
+   second review, while it runs. Check that its findings name files the PR changes (`gh pr diff <n> --name-only`); if
+   they don't, it reviewed something else: run it again. If it fails or never reports, run it once more; if that fails
+   too, stop and tell the user. Never merge without it.
 4. **Triage.** Check every finding against the code (superpowers:receiving-code-review). Each one ends as **fixed** or
    **not changed** with the reason you found in the code, never "the reviewer said so" or "probably fine".
 5. **Fixes.** Commit them, run the project's checks, push. New commits are a new head: back to step 2 for it (note the
