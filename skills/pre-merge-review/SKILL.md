@@ -30,9 +30,10 @@ steps below and the gate never has to refuse.
 5. **Fixes.** Commit them, run the project's checks, push. New commits are a new head: back to step 2 for it (note the
    new `headRefOid`), however small the change. Stop when a review leaves nothing that needs a change. If a third round
    still finds something that needs a change, stop and ask the user how to go on.
-6. **Record.** Write the triage to a file outside the repository (the system temp folder): one line per finding
-   (`fixed` or `not changed`, `file:line`, what changed or why not), every round, newest round last; for a review with no
-   findings, the line `no findings`. Then, from inside the repository:
+6. **Record.** Write the triage to a file outside the repository (the system temp folder) with the file-writing tool,
+   not a shell heredoc or `echo`: the gate refuses any shell command whose text holds `gh pr merge`, even as data.
+   One line per finding (`fixed` or `not changed`, `file:line`, what changed or why not), every round, newest
+   round last; for a review with no findings, the line `no findings`. Then, from inside the repository:
 
    ```bash
    python "<this skill's folder>/gate.py" record <n> --head <headRefOid from step 2> --summary <file>
@@ -63,6 +64,7 @@ was left and why); when GitHub has merged it, that it merged.
 | the PR could not be read (`gh` failed) | fix `gh` (auth, network, the selector); do not merge another way |
 | it cannot tell which repository (`GH_REPO`, `cd -`, a variable, a subshell) | name the PR by its URL |
 | `--match-head-commit` is missing or names another commit | add the full `headRefOid` the refusal names (the recorded head) |
+| the command only mentions `gh pr merge` or `git push` (a grep, a commit message, a heredoc) | write text with the file-writing tool, commit with `git commit -F <file>`, grep for `'gh pr merg[e]'` or `'git pus[h]'` |
 
 ## Red flags
 
