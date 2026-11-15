@@ -95,8 +95,9 @@ Nothing to look at here, but it shapes every session:
   triages the findings and fixes the real ones, new commits are reviewed again, then it merges. A `PreToolUse` hook
   (`skills/pre-merge-review/gate.py check`) refuses `gh pr merge` until the review is recorded for the PR's current head
   (`gate.py record`, which also posts the summary as a PR comment, writes the record in `~/.claude/pre-merge-review/`)
-  and the merge names that head with `--match-head-commit`, and refuses `git push` while the branch's open PR has
-  auto-merge on. A command that pushes and merges together is
+  and the merge names that head with `--match-head-commit`, and refuses any `git push` from a branch whose open PR has
+  auto-merge on, whatever it pushes. It runs on every Bash and PowerShell command in every project (about 70 ms, mostly
+  Python starting); a merge or a push adds one `gh pr view`. A command that pushes and merges together is
   refused. The gate checks that a review was recorded, not that it ran: it stops a merge that skipped the procedure by
   mistake, and the PR comment is what says what the review found. Not covered: merges through `gh api` or the web page,
   pushes of another branch than the current one, `gh` aliases, and your own `!` commands (hooks never see those).
@@ -274,7 +275,7 @@ The user level (`settings.json` here, merged into `~/.claude/settings.json`) kee
 - one hook: the `pre-merge-review` gate (a `PreToolUse` hook on `Bash` and `PowerShell`);
 - the status line, permissions, mods and the global `CLAUDE.md`.
 
-Everything else is per project: plugins, LSPs, MCP servers, hooks (but the gate above), built-in tools and skills go in the repo's
+Everything else is per project: plugins, LSPs, MCP servers, hooks (all but the gate above), built-in tools and skills go in the repo's
 `.claude/settings.json` (MCP in `.mcp.json`). A plugin that is installed but not core is pinned `false` in the template, so no session loads it unless
 its project switches it on; `playwright`, `context7`, `frontend-design`, `mattpocock-skills`, `modern-web-guidance`,
 `supabase`, `adobe-for-creativity`, `kotlin-lsp`, `typescript-lsp`, `rust-analyzer-lsp`, `security-guidance`, `good-css`

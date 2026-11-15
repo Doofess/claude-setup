@@ -192,6 +192,16 @@ class MergeTest(GateCase):
             ("gh pr merge --body \"a; b\" 8", "8", None),
             ("gh.exe pr merge 8", "8", None),
             ('"C:\\Program Files\\GitHub CLI\\gh.exe" pr merge 8', "8", None),
+            # `pr`'s own -R/--repo before `merge`, and quoted words: gh takes them all
+            ("gh pr -R o/r merge 8 --auto", "8", "o/r"),
+            ("gh pr -Ro/r merge 8", "8", "o/r"),
+            ("gh pr --repo o/r merge 8", "8", "o/r"),
+            ("gh pr --repo=o/r merge 8", "8", "o/r"),
+            ('gh "pr" merge 8', "8", None),
+            ("gh pr 'merge' 8", "8", None),
+            # a redirect's & does not end the arguments; an escaped quote does not end a quoted command
+            ("gh pr merge 2>&1 8 -R o/r", "8", "o/r"),
+            ('bash -c "gh pr merge 8 --subject \\"a b\\" -R o/r"', "8", "o/r"),
         ]
         for cmd, selector, repo in cases:
             with self.subTest(cmd=cmd):
@@ -328,9 +338,15 @@ class MergeTest(GateCase):
     def test_a_disable_auto_counts_only_on_a_merge_that_does_nothing_else(self):
         for cmd in ("gh pr merge 7 --auto --merge # --disable-auto", "gh pr merge 7 --squash --disable-auto",
                     "gh pr merge 7 -s --disable-auto", "gh pr merge 7 --disable-auto --admin",
-                    'bash -c "gh pr merge 7 --auto" && echo x --disable-auto'):
+                    'bash -c "gh pr merge 7 --auto" && echo x --disable-auto',
+                    "gh pr merge 7 --disable-auto 2>&1 --auto"):
             self.assertIn("#7", self.denial(cmd), cmd)
         self.assertIsNone(self.check("gh pr merge 7 --disable-auto -d"))
+
+    def test_a_powershell_backtick_escape_does_not_end_a_quoted_command(self):
+        reason = self.denial('bash -c "gh pr merge 8 --subject `"a b`" -R o/r"', tool="PowerShell")
+        self.assertIn("no pull requests found", reason)  # the fake gh was asked for 8 in o/r: the -R was seen
+        self.assertEqual(self.view_calls()[0]["args"][2:5], ["8", "-R", "o/r"])
 
     def test_a_cd_in_a_subshell_or_quotes_needs_the_pr_url(self):
         other = os.path.join(self.tmp, "other repo")
@@ -497,6 +513,13 @@ class RecordTest(GateCase):
         self.assertEqual([c for c in self.calls() if c["args"][:2] == ["pr", "comment"]], [])
         self.assertEqual(self.record_files(), [])
 
+    def test_a_sha256_head_can_be_recorded(self):
+        sha256 = "c" * 64
+        self.set_state([pr(sha=sha256)])
+        p = self.record("7", sha256)
+        self.assertEqual((p.returncode, p.stderr), (0, ""))
+        self.assertIsNone(self.check("gh pr merge 7 --match-head-commit " + sha256))
+
     def test_a_prefix_shorter_than_seven_is_refused(self):
         p = self.record("7", SHA_A[:6])
         self.assertEqual(p.returncode, 1)
@@ -563,9 +586,10 @@ class FailClosedTest(unittest.TestCase):
             raise RuntimeError("parser bug")
 
         gate.find_merges = boom
-        out = self.run_check(gate, "gh pr merge 7 --squash")
-        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
-        self.assertIn("RuntimeError: parser bug", out["hookSpecificOutput"]["permissionDecisionReason"])
+        for command in ("gh pr merge 7 --squash", "gh pr \\\n  merge 7", "gh pr -R o/r merge 7"):
+            out = self.run_check(gate, command)
+            self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny", command)
+            self.assertIn("RuntimeError: parser bug", out["hookSpecificOutput"]["permissionDecisionReason"])
         gate = load_gate()
         gate.find_push_dirs = boom
         self.assertIsNone(self.run_check(gate, "git push"))
@@ -577,6 +601,58 @@ class FailClosedTest(unittest.TestCase):
         out = self.run_check(gate, "gh pr merge 7")
         self.assertIn("budget", out["hookSpecificOutput"]["permissionDecisionReason"])
         self.assertIsNone(self.run_check(gate, "git push"))
+
+
+def git_bash():
+    """Git's own bash (on Windows, `bash` on PATH may be WSL's launcher), or None."""
+    if os.name != "nt":
+        return shutil.which("bash")
+    git = shutil.which("git")
+    if not git:
+        return None
+    path = os.path.join(os.path.dirname(os.path.dirname(git)), "bin", "bash.exe")
+    return path if os.path.exists(path) else None
+
+
+class HookCommandTest(unittest.TestCase):
+    """The template's hook command: a missing or broken gate lets commands through instead of blocking every one
+    (Claude Code takes exit 2 as a refusal, and Python exits 2 when it cannot open the script)."""
+
+    def setUp(self):
+        with open(os.path.join(ROOT, "settings.json"), encoding="utf-8") as f:
+            (entry,) = json.load(f)["hooks"]["PreToolUse"]
+        self.command = entry["hooks"][0]["command"]
+        self.tmp = tempfile.mkdtemp(prefix="hook cmd ")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def run_with(self, shell, script):
+        path = os.path.join(self.tmp, "gate.py").replace("\\", "/")
+        if script is not None:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(script)
+        command = self.command.replace("~/.claude/skills/pre-merge-review/gate.py", '"%s"' % path)
+        self.assertNotEqual(command, self.command)
+        return subprocess.run(shell + [command], input="{}", capture_output=True, text=True, timeout=60)
+
+    def shells(self):
+        found = []
+        bash = git_bash()
+        if bash:
+            found.append([bash, "-c"])
+        pwsh = shutil.which("pwsh")
+        if pwsh:
+            found.append([pwsh, "-NoProfile", "-NonInteractive", "-Command"])
+        if not found:
+            self.skipTest("no bash or pwsh")
+        return found
+
+    def test_a_missing_or_failing_gate_exits_0_and_a_refusal_still_reaches_claude_code(self):
+        for shell in self.shells():
+            with self.subTest(shell=shell[0]):
+                self.assertEqual(self.run_with(shell, None).returncode, 0, "missing gate")
+                self.assertEqual(self.run_with(shell, "import sys; sys.exit(2)").returncode, 0, "exit 2")
+                p = self.run_with(shell, 'print(\'{"hookSpecificOutput": "deny"}\')')
+                self.assertEqual((p.returncode, p.stdout.strip()), (0, '{"hookSpecificOutput": "deny"}'))
 
 
 if __name__ == "__main__":

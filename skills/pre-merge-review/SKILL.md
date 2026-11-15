@@ -40,9 +40,9 @@ steps below and the gate never has to refuse.
 
    It refuses when the PR's head is no longer the reviewed commit (review the new head). Otherwise it posts the summary
    as a PR comment headed with the reviewed commit, records that commit, and prints `recorded <url> at <sha7>`.
-7. **Merge** with the project's usual command plus `--match-head-commit <full headRefOid>` (for example
-   `gh pr merge <n> --auto --merge --match-head-commit <headRefOid>`), so GitHub itself refuses the merge if the head
-   moves after the gate's check. The gate lets it through only for the recorded head, with that flag naming it in full.
+7. **Merge** with the project's usual command, the PR's URL as the selector and `--match-head-commit <full headRefOid>`
+   (for example `gh pr merge <url> --auto --merge --match-head-commit <headRefOid>`): the URL needs no folder to find
+   the PR, and GitHub itself refuses the merge if the head moves after the gate's check. The gate lets it through only for the recorded head, with that flag naming it in full.
    With `--auto`, the PR is not merged yet: say so, and watch it until GitHub merges it or CI fails.
 8. **New commits after the merge is on** (a failed CI run, a late fix): commit locally as needed, but run
    `gh pr merge <n> --disable-auto` as its own command before the push (the gate reads auto-merge before a command runs,

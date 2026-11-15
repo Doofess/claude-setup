@@ -30,8 +30,12 @@ UNKNOWN = "?"  # a folder the gate cannot resolve (`cd -`, a variable)
 
 _deadline = None  # set by check(); record() has no budget
 
-MERGE_RE = re.compile(r"""(?<![A-Za-z0-9_-])gh(?:\.exe)?["']?\s+pr\s+merge(?![\w-])""", re.IGNORECASE)
 ARG = r"""(?:"[^"]*"|'[^']*'|\S+)"""
+MERGE_RE = re.compile(  # `gh pr merge`, also with quoted words and `pr`'s own -R/--repo before `merge` (gh takes both)
+    r"""(?<![A-Za-z0-9_-])gh(?:\.exe)?["']?\s+["']?pr["']?"""
+    r"""(?P<pre>(?:\s+(?:-R\s*%s|--repo(?:=|\s+)%s))*)\s+["']?merge["']?(?![\w-])""" % (ARG, ARG),
+    re.IGNORECASE,
+)
 PUSH_RE = re.compile(
     r"""(?<![A-Za-z0-9_-])git(?:\.exe)?["']?"""
     r"""((?:\s+(?:-C\s+%s|-c\s+%s|--(?:git-dir|work-tree|namespace)\s+%s|--[A-Za-z][\w-]*(?:=%s)?|-p|-P))*)"""
@@ -121,14 +125,21 @@ def valid_sha(sha):
 
 # ---- command parsing ----
 
-def scan(text):
-    """Per position (and one past the end): (the quote open there or None, the parenthesis depth there)."""
+def scan(text, esc):
+    """Per position (and one past the end): (the quote open there or None, the parenthesis depth there). `esc` is
+    the shell's escape character (`\\` in Bash, backtick in PowerShell): it makes the next character literal outside
+    single quotes, so `\\"` inside `bash -c "..."` does not close the string."""
     states = []
     quote = None
     depth = 0
+    skip = False
     for c in text:
         states.append((quote, depth))
-        if quote:
+        if skip:
+            skip = False
+        elif c == esc and quote != "'":
+            skip = True
+        elif quote:
             if c == quote:
                 quote = None
         elif c in "\"'":
@@ -141,20 +152,28 @@ def scan(text):
     return states
 
 
-def region_end(text, start, limit, outer=None):
+def region_end(text, start, limit, esc, outer=None):
     """End of a command's arguments: the first separator or `#` comment outside quotes, the closing `outer` quote
-    when the command sits inside a quoted string (`bash -c "gh pr merge 3"`), or `limit`."""
+    when the command sits inside a quoted string (`bash -c "gh pr merge 3"`), or `limit`. The `&` of a redirect
+    (`2>&1`, `&>file`) is not a separator."""
     quote = None
+    skip = False
     n = min(len(text), limit)
     for i in range(start, n):
         c = text[i]
-        if quote:
+        if skip:
+            skip = False
+        elif c == esc and quote != "'":
+            skip = True
+        elif quote:
             if c == quote:
                 quote = None
         elif c == outer:
             return i
         elif c in "\"'":
             quote = c
+        elif c == "&" and (text[i - 1] == ">" or text[i + 1:i + 2] == ">"):
+            continue
         elif c in ";|&\n\r":
             return i
         elif c == "#" and text[i - 1].isspace():
@@ -163,6 +182,7 @@ def region_end(text, start, limit, outer=None):
 
 
 TOKEN_RE = re.compile(r"""(?:[^\s"']|"[^"]*"|'[^']*')+""")
+REDIRECT_RE = re.compile(r"""^(?:[0-9]*|&)(?:>>?|<)&?""")
 QUOTED_RE = re.compile(r""""([^"]*)"|'([^']*)'""")
 
 
@@ -187,6 +207,11 @@ def parse_merge(region):
     while i < len(toks):
         t = toks[i]
         i += 1
+        redirect = REDIRECT_RE.match(t)
+        if redirect:  # `2>&1`, `>out.txt`; a bare `>` or `2>` takes the next word as its file
+            if redirect.end() == len(t) and not t.endswith("&"):
+                i += 1
+            continue
         if t.startswith("--"):
             name, eq, val = t.partition("=")
             if name == "--disable-auto":
@@ -216,14 +241,14 @@ def parse_merge(region):
     return {"selector": selector, "repo": repo, "disable_only": disable_auto and not merges, "match_head": match_head}
 
 
-def find_merges(command, states):
+def find_merges(command, states, esc):
     """One dict per `gh pr merge`, with `pos`, where it starts in the command."""
     matches = list(MERGE_RE.finditer(command))
     out = []
     for k, m in enumerate(matches):
         limit = matches[k + 1].start() if k + 1 < len(matches) else len(command)
-        end = region_end(command, m.end(), limit, outer=states[m.start()][0])
-        merge = parse_merge(command[m.end():end])
+        end = region_end(command, m.end(), limit, esc, outer=states[m.start()][0])
+        merge = parse_merge((m.group("pre") or "") + " " + command[m.end():end])
         merge["pos"] = m.start()
         out.append(merge)
     return out
@@ -359,12 +384,12 @@ def check_push(directory):
     return None
 
 
-def check_command(command, cwd):
-    """The refusal reasons for one shell command (empty = allowed)."""
+def check_command(command, cwd, esc="\\"):
+    """The refusal reasons for one shell command (empty = allowed). `esc`: the shell's escape character."""
     command = CONTINUATION_RE.sub(" ", command)
-    states = scan(command)
+    states = scan(command, esc)
     reasons = []
-    merges = [m for m in find_merges(command, states) if not m["disable_only"]]
+    merges = [m for m in find_merges(command, states, esc) if not m["disable_only"]]
     if merges and PUSH_RE.search(command):
         reasons.append("Merge refused: a command that pushes and merges together would merge unreviewed commits. "
                        "Push in one command, use %s, then merge in another." % SKILL)
@@ -399,9 +424,10 @@ def check(stdin_bytes):
     if tool not in ("Bash", "PowerShell") or not isinstance(command, str):
         return 0
     _deadline = time.monotonic() + GH_BUDGET
+    command = CONTINUATION_RE.sub(" ", command)  # before the try, so the crash path sees a continued merge too
     try:
-        reasons = check_command(command, cwd)
-    except Exception as e:  # a crash exits non-zero, which Claude Code takes as allow: never for a merge
+        reasons = check_command(command, cwd, "`" if tool == "PowerShell" else "\\")
+    except Exception as e:  # a crash would exit 1, which Claude Code takes as allow: never for a merge
         reasons = []
         if MERGE_RE.search(command):
             reasons.append("Merge refused: the pre-merge gate failed (%s: %s). Fix gate.py, or merge after %s with "
@@ -434,8 +460,8 @@ def record(argv):
         return fail("the summary file is empty. Write the review's findings and what was done about each, as %s says."
                     % SKILL)
     seen = args.head.strip().lower()
-    if re.fullmatch(r"[0-9a-f]{7,40}", seen) is None:
-        return fail("--head must be the reviewed commit, 7 to 40 hex characters, got %r" % args.head)
+    if re.fullmatch(r"[0-9a-f]{7,64}", seen) is None:  # 40 for SHA-1, 64 for SHA-256 repositories
+        return fail("--head must be the reviewed commit, 7 to 64 hex characters, got %r" % args.head)
     pr, err = view_pr(args.pr, args.repo, VIEW_MERGE, timeout=RECORD_TIMEOUT)
     if pr is None:
         return fail("could not read the PR (%s)" % err)

@@ -881,7 +881,7 @@ class MergeParityTest(unittest.TestCase):
             self.assertEqual(doc["env"]["MACHINE_ONLY_KEY"], "Home Office ✔", name)
 
 
-GATE_COMMAND = "python -I -S ~/.claude/skills/pre-merge-review/gate.py check"
+GATE_COMMAND = "python -I -S ~/.claude/skills/pre-merge-review/gate.py check; exit 0"
 
 HOOK_DRIVER = """param([string]$Current, [string]$Template, [string]$Repo, [string]$Out)
 $ErrorActionPreference = 'Stop'

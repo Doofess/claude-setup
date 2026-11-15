@@ -40,7 +40,7 @@
       {
         "matcher": "Bash|PowerShell",
         "hooks": [
-          { "type": "command", "command": "python -I -S ~/.claude/skills/pre-merge-review/gate.py check", "timeout": 30 }
+          { "type": "command", "command": "python -I -S ~/.claude/skills/pre-merge-review/gate.py check; exit 0", "timeout": 30 }
         ]
       }
     ]
