@@ -881,6 +881,73 @@ class MergeParityTest(unittest.TestCase):
             self.assertEqual(doc["env"]["MACHINE_ONLY_KEY"], "Home Office ✔", name)
 
 
+GATE_COMMAND = "python -I -S ~/.claude/skills/pre-merge-review/gate.py check; exit 0"
+
+HOOK_DRIVER = """param([string]$Current, [string]$Template, [string]$Repo, [string]$Out)
+$ErrorActionPreference = 'Stop'
+{HELPERS}
+{RETIRED}
+$cur = [IO.File]::ReadAllText($Current, [Text.Encoding]::UTF8) | ConvertFrom-Json
+$tpl = [IO.File]::ReadAllText($Template, [Text.Encoding]::UTF8) | ConvertFrom-Json
+$merged = Merge-ClaudeSettings $cur $tpl $Repo
+$merged = Remove-RetiredHooks $merged $retiredHooks
+$tpl = [IO.File]::ReadAllText($Template, [Text.Encoding]::UTF8) | ConvertFrom-Json
+$merged = Merge-ClaudeSettings $merged $tpl $Repo   # a second install changes nothing
+$merged = Remove-RetiredHooks $merged $retiredHooks
+[IO.File]::WriteAllText($Out, ($merged | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+"""
+
+
+def hook_commands(settings, event):
+    return [h["command"] for g in settings["hooks"][event] for h in g["hooks"]]
+
+
+@unittest.skipUnless(ENGINES, "no PowerShell engine on PATH")
+class TemplateHookTest(unittest.TestCase):
+    """The template's PreToolUse gate survives the merge and the retired-hook cleanup, with machine hooks beside it."""
+
+    def test_template_has_the_gate(self):
+        group = json.loads(read("settings.json"))["hooks"]["PreToolUse"][0]
+        self.assertEqual(group["matcher"], "Bash|PowerShell")
+        self.assertEqual(group["hooks"], [{"type": "command", "command": GATE_COMMAND, "timeout": 30}])
+
+    def test_merge_keeps_the_gate_and_machine_hooks_and_drops_retired_ones(self):
+        source = read("install.ps1").replace("\r\n", "\n")
+        retired = re.search(r"^\$retiredHooks = .*$", source, re.MULTILINE)
+        self.assertIsNotNone(retired)
+        remover = re.search(r"^function Remove-RetiredHooks.*?^}", source, re.DOTALL | re.MULTILINE)
+        self.assertIsNotNone(remover)
+        machine = {"hooks": {
+            "PreToolUse": [{"matcher": "Bash", "hooks": [
+                {"type": "command", "command": "bash ~/.claude/hooks/block-dangerous-git.sh"},
+                {"type": "command", "command": "bash ~/.claude/hooks/mine.sh"}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "python mine.py"}]}]}}
+        for label, current in (("no hooks", {"env": {}}), ("empty hooks", {"hooks": {}}), ("machine hooks", machine)):
+            results = {}
+            with tempfile.TemporaryDirectory() as tmp:
+                script = os.path.join(tmp, "hooks.ps1")
+                with open(script, "w", encoding="utf-8") as f:
+                    f.write(HOOK_DRIVER.replace("{HELPERS}", merge_helpers() + "\n" + remover.group(0))
+                            .replace("{RETIRED}", retired.group(0)))
+                cur = os.path.join(tmp, "current.json")
+                with open(cur, "w", encoding="utf-8") as f:
+                    json.dump(current, f)
+                for engine in ENGINES:
+                    out = os.path.join(tmp, engine[0] + ".json")
+                    r = run_engine(engine, script, cur, os.path.join(ROOT, "settings.json"), ROOT, out)
+                    self.assertEqual(r.returncode, 0, "%s %s: %s%s" % (label, engine[0], r.stdout, r.stderr))
+                    with open(out, encoding="utf-8") as f:
+                        results[engine[0]] = json.load(f)
+            for name, doc in results.items():
+                with self.subTest(case=label, engine=name):
+                    cmds = hook_commands(doc, "PreToolUse")
+                    self.assertEqual(cmds.count(GATE_COMMAND), 1)
+                    self.assertFalse([c for c in cmds if "block-dangerous-git" in c])
+                    if label == "machine hooks":
+                        self.assertIn("bash ~/.claude/hooks/mine.sh", cmds)
+                        self.assertEqual(hook_commands(doc, "Stop"), ["python mine.py"])
+
+
 @unittest.skipUnless(PWSH, "pwsh is not on PATH")
 class UserAdvisorTest(unittest.TestCase):
     """The advisor is per project (skills/advisor-switch); the installer takes it out of the user settings."""
