@@ -5,8 +5,9 @@ check   PreToolUse hook (Bash and PowerShell). Refuses `gh pr merge` unless the 
 record  `gate.py record <pr> --head <sha> --summary <file> [-R repo]`: posts the review summary as a PR comment and
         writes the record for the PR's head, provided that head is still the commit the review saw (--head).
 
-Choices: a `gh pr merge` is found anywhere in the command text, quoted or not, so `bash -c "gh pr merge 3"` is caught
-and `echo "gh pr merge 3"` is refused too (a false refusal is cheap, a missed merge is not). A merge fails closed
+Choices: a `gh pr merge` counts when it is run: outside quotes, as a quoted program path, in `"$(...)"`, or in the
+quoted command of `bash -c`, `cmd /c`, `pwsh -Command`, `eval` and the like; text in `git commit -m "..."` or
+`grep '...'` does not. When unsure it counts (a false refusal is cheap, a missed merge is not). A merge fails closed
 (no answer from gh, a crash, or the time budget used up = refused); a push fails open (a new branch has no PR yet and
 must be pushable). A `cd` earlier in the command moves where the PR is looked up, as it moves where gh runs.
 """
@@ -126,36 +127,67 @@ def valid_sha(sha):
 # ---- command parsing ----
 
 def scan(text, esc):
-    """Per position (and one past the end): (the quote open there or None, the parenthesis depth there). `esc` is
-    the shell's escape character (`\\` in Bash, backtick in PowerShell): it makes the next character literal outside
-    single quotes, so `\\"` inside `bash -c "..."` does not close the string."""
+    """Per position (and one past the end): (the quote open there or None, the parenthesis depth there, where that
+    quote opened). `esc` is the shell's escape character (`\\` in Bash, backtick in PowerShell): it makes the next
+    character literal outside single quotes, so `\\"` inside `bash -c "..."` does not close the string."""
     states = []
     quote = None
+    opened = None
     depth = 0
     skip = False
-    for c in text:
-        states.append((quote, depth))
+    for i, c in enumerate(text):
+        states.append((quote, depth, opened))
         if skip:
             skip = False
         elif c == esc and quote != "'":
             skip = True
         elif quote:
             if c == quote:
-                quote = None
+                quote = opened = None
         elif c in "\"'":
-            quote = c
+            quote, opened = c, i
         elif c == "(":
             depth += 1
         elif c == ")":
             depth = max(0, depth - 1)
-    states.append((quote, depth))
+    states.append((quote, depth, opened))
     return states
 
 
+SHELL_ARG_RE = re.compile(  # what a quoted string must follow for a shell to run it: bash -c, pwsh -Command, cmd /c...
+    r"""(?:^|[\s;&|(])(?:-\w*c|-command|/c|/k|eval|iex|invoke-expression)\s*$""", re.IGNORECASE)
+NAME_RE = re.compile(r"""(?:gh|git|cd|chdir|pushd|popd|sl|set-location|push-location|pop-location)(?:\.exe)?""",
+                     re.IGNORECASE)
+
+
+SUBST_RE = re.compile(r"""(?:\$\(|`)\s*$""")  # `"$(gh pr merge 3)"`: a command substitution inside double quotes
+
+
+def runs(command, pos, states):
+    """Whether the command word at `pos` (gh, git, cd...) is run, not just text: it is outside quotes, it is a
+    quoted program path (`"C:\\...\\gh.exe" pr merge`), it opens a command substitution in double quotes
+    (`"$(gh ...)"`), or its quoted string is a shell's command argument (`bash -c "..."`, `pwsh -Command '...'`).
+    Text in `git commit -m "..."`, `grep '...'` or `echo "..."` is not run."""
+    quote, _, opened = states[pos]
+    if quote is None:
+        return True
+    name = NAME_RE.match(command, pos)
+    if name and command[name.end():name.end() + 1] == quote and (pos - 1 == opened or command[pos - 1] in "\\/"):
+        return True  # the whole quoted word is the program: `"gh"`, `'C:\...\gh.exe'`
+    if quote == '"' and SUBST_RE.search(command, opened + 1, pos):
+        return True
+    return SHELL_ARG_RE.search(command, 0, opened) is not None
+
+
+def run_matches(regex, command, states):
+    """The matches of `regex` (MERGE_RE, PUSH_RE) whose command word is run, not just quoted text."""
+    return [m for m in regex.finditer(command) if runs(command, m.start(), states)]
+
+
 def region_end(text, start, limit, esc, outer=None):
-    """End of a command's arguments: the first separator or `#` comment outside quotes, the closing `outer` quote
-    when the command sits inside a quoted string (`bash -c "gh pr merge 3"`), or `limit`. The `&` of a redirect
-    (`2>&1`, `&>file`) is not a separator."""
+    """End of a command's arguments: the first separator, `)` or `#` comment outside quotes (a Bash backtick too:
+    in PowerShell it is the escape), the closing `outer` quote when the command sits inside a quoted string
+    (`bash -c "gh pr merge 3"`), or `limit`. The `&` of a redirect (`2>&1`, `&>file`) is not a separator."""
     quote = None
     skip = False
     n = min(len(text), limit)
@@ -174,7 +206,7 @@ def region_end(text, start, limit, esc, outer=None):
             quote = c
         elif c == "&" and (text[i - 1] == ">" or text[i + 1:i + 2] == ">"):
             continue
-        elif c in ";|&\n\r":
+        elif c in ";|&\n\r)`":
             return i
         elif c == "#" and text[i - 1].isspace():
             return i
@@ -226,16 +258,21 @@ def parse_merge(region):
                     repo = val or repo
                 elif name == "--match-head-commit":
                     match_head = val or match_head
-        elif t in VALUE_SHORT:
-            val = toks[i] if i < len(toks) else ""
-            i += 1
-            if t == "-R":
-                repo = val or repo
-        elif t.startswith("-R") and len(t) > 2:
-            repo = t[2:]
-        elif t.startswith("-"):
-            if any(c in t[1:] for c in "msr"):  # -m, -s, -r, alone or in a cluster such as -sd
-                merges = True
+        elif t.startswith("-") and len(t) > 1:
+            # short flags, alone or in a cluster (`-sd`); a flag that takes a value ends the cluster: the value is
+            # the rest of the word (`-tmerge`, `-Ro/r`) or, when the flag is last, the next word
+            for k, c in enumerate(t[1:], 1):
+                if c in "msr":  # -m, -s, -r
+                    merges = True
+                elif "-" + c in VALUE_SHORT:
+                    if k == len(t) - 1:
+                        val = toks[i] if i < len(toks) else ""
+                        i += 1
+                    else:
+                        val = t[k + 1:]
+                    if c == "R":
+                        repo = val or repo
+                    break
         elif selector is None:
             selector = t
     return {"selector": selector, "repo": repo, "disable_only": disable_auto and not merges, "match_head": match_head}
@@ -243,11 +280,12 @@ def parse_merge(region):
 
 def find_merges(command, states, esc):
     """One dict per `gh pr merge`, with `pos`, where it starts in the command."""
-    matches = list(MERGE_RE.finditer(command))
+    matches = run_matches(MERGE_RE, command, states)
     out = []
     for k, m in enumerate(matches):
         limit = matches[k + 1].start() if k + 1 < len(matches) else len(command)
-        end = region_end(command, m.end(), limit, esc, outer=states[m.start()][0])
+        # the quote open after `merge`: a quoted command's (`bash -c "gh pr merge 3"`), not a quoted gh.exe path's
+        end = region_end(command, m.end(), limit, esc, outer=states[m.end()][0])
         merge = parse_merge((m.group("pre") or "") + " " + command[m.end():end])
         merge["pos"] = m.start()
         out.append(merge)
@@ -255,7 +293,9 @@ def find_merges(command, states, esc):
 
 
 def norm_dir(path, cwd):
-    """A folder argument as a native path: strips quotes, expands ~, maps Git Bash /c/x to C:/x, resolves against cwd."""
+    """A folder argument as a native path: strips quotes, expands ~, maps Git Bash /c/x to C:/x, resolves against cwd.
+    UNKNOWN on Windows for a path rooted without a drive (`/tmp/x`: Git Bash maps it under its own install folder,
+    PowerShell under the current drive) and for a relative path against an UNKNOWN cwd."""
     path = path.strip("\"'")
     if path == "~" or path.startswith(("~/", "~\\")):
         path = os.path.expanduser(path)
@@ -263,21 +303,28 @@ def norm_dir(path, cwd):
         m = re.match(r"^/([A-Za-z])(?:/(.*))?$", path)
         if m:
             path = "%s:/%s" % (m.group(1), m.group(2) or "")
+        elif re.match(r"^[/\\](?![/\\])", path):
+            return UNKNOWN
     if not os.path.isabs(path) and cwd:
+        if cwd == UNKNOWN:
+            return UNKNOWN
         path = os.path.join(cwd, path)
     return path
 
 
 def dir_at(command, pos, cwd, states):
     """The folder a command at `pos` runs in: cwd, moved by each `cd`/`Set-Location` before it. UNKNOWN when one of
-    them goes somewhere the gate cannot resolve (`cd -`, a variable), or is not a plain statement of its own: inside
-    parentheses (a subshell in Bash, not in PowerShell), inside quotes (`bash -c "cd x && ..."`), `popd`, or a `cd`
-    the gate cannot parse."""
+    them goes somewhere the gate cannot resolve (`cd -`, a variable, `/tmp` on Windows), or is not a plain statement
+    of its own: inside parentheses (a subshell in Bash, not in PowerShell), inside a quoted command
+    (`bash -c "cd x && ..."`), `popd`, or a `cd` the gate cannot parse. A `cd` in quoted text that is not run
+    (`git commit -m "cd x"`) does not count."""
     plain = {m.start("word"): m for m in CD_RE.finditer(command, 0, pos)}
     d = cwd
     for w in CD_WORD_RE.finditer(command, 0, pos):
+        if not runs(command, w.start(), states):
+            continue
         m = plain.get(w.start())
-        quote, depth = states[w.start()]
+        quote, depth, _ = states[w.start()]
         if m is None or quote or depth:
             d = UNKNOWN
             continue
@@ -288,7 +335,7 @@ def dir_at(command, pos, cwd, states):
             d = UNKNOWN
         else:
             path = norm_dir(arg, None if d == UNKNOWN else d)
-            d = path if os.path.isabs(path) else UNKNOWN
+            d = path if path != UNKNOWN and os.path.isabs(path) else UNKNOWN
     return d
 
 
@@ -324,11 +371,13 @@ def push_dir(options, d):
 def find_push_dirs(command, cwd, states):
     """One folder per `git push`, deduplicated. A push from a folder the gate cannot resolve is skipped (fail open)."""
     dirs = []
-    for m in PUSH_RE.finditer(command):
+    for m in run_matches(PUSH_RE, command, states):
         d = dir_at(command, m.start(), cwd, states)
         if d == UNKNOWN:
             continue
         d = push_dir(m.group(1) or "", d)
+        if d == UNKNOWN:
+            continue
         if d not in dirs:
             dirs.append(d)
     return dirs
@@ -390,7 +439,7 @@ def check_command(command, cwd, esc="\\"):
     states = scan(command, esc)
     reasons = []
     merges = [m for m in find_merges(command, states, esc) if not m["disable_only"]]
-    if merges and PUSH_RE.search(command):
+    if merges and run_matches(PUSH_RE, command, states):
         reasons.append("Merge refused: a command that pushes and merges together would merge unreviewed commits. "
                        "Push in one command, use %s, then merge in another." % SKILL)
     else:
@@ -439,6 +488,14 @@ def check(stdin_bytes):
 
 # ---- record ----
 
+def body_posted(comments, body):
+    """Whether one of the PR's comments (gh's `comments` list) already has this body, line endings aside."""
+    def norm(text):
+        return text.replace("\r\n", "\n").strip() if isinstance(text, str) else None
+    want = norm(body)
+    return isinstance(comments, list) and any(isinstance(c, dict) and norm(c.get("body")) == want for c in comments)
+
+
 def record(argv):
     ap = argparse.ArgumentParser(prog="gate.py record", description="Post the review summary and record the review.")
     ap.add_argument("pr")
@@ -462,7 +519,7 @@ def record(argv):
     seen = args.head.strip().lower()
     if re.fullmatch(r"[0-9a-f]{7,64}", seen) is None:  # 40 for SHA-1, 64 for SHA-256 repositories
         return fail("--head must be the reviewed commit, 7 to 64 hex characters, got %r" % args.head)
-    pr, err = view_pr(args.pr, args.repo, VIEW_MERGE, timeout=RECORD_TIMEOUT)
+    pr, err = view_pr(args.pr, args.repo, VIEW_MERGE + ",comments", timeout=RECORD_TIMEOUT)
     if pr is None:
         return fail("could not read the PR (%s)" % err)
     url, sha = pr.get("url"), pr.get("headRefOid")
@@ -475,19 +532,22 @@ def record(argv):
         return fail("the head moved since the review: it saw %s, the PR is now at %s. Review the new head with %s."
                     % (seen[:7], sha[:7], SKILL))
     body = "**Pre-merge review** of %s (built-in `/code-review high`)\n\n%s\n" % (sha, summary)
-    fd, tmp = tempfile.mkstemp(prefix="pre-merge-review-", suffix=".md")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write(body)
-        code, _, err = run_gh(["pr", "comment", args.pr] + (["-R", args.repo] if args.repo else [])
-                              + ["--body-file", tmp], timeout=RECORD_TIMEOUT)
-    finally:
+    if body_posted(pr.get("comments"), body):  # a retry after a timeout or a failed record write: post it once
+        print("the same review comment is already on the PR; not posting it again")
+    else:
+        fd, tmp = tempfile.mkstemp(prefix="pre-merge-review-", suffix=".md")
         try:
-            os.remove(tmp)
-        except OSError:
-            pass
-    if code != 0:
-        return fail("the PR comment was not posted, so nothing is recorded (%s)" % err)
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                f.write(body)
+            code, _, err = run_gh(["pr", "comment", args.pr] + (["-R", args.repo] if args.repo else [])
+                                  + ["--body-file", tmp], timeout=RECORD_TIMEOUT)
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        if code != 0:
+            return fail("the PR comment was not posted, so nothing is recorded (%s)" % err)
     try:
         os.makedirs(record_dir(), exist_ok=True)
         path = record_path(url, sha)

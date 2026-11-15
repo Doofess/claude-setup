@@ -43,7 +43,12 @@ the machine is fixed by the installer, not by editing the repo.
    must hold `advisor-switch`, `codex`, `setup-check` and `pre-merge-review` (and claude.ai's `synced`), with no
    `underwater-photoshop` or `find-skills`; `~/.claude/settings.json` must have, under `hooks.PreToolUse`, the
    `Bash|PowerShell` entry running `~/.claude/skills/pre-merge-review/gate.py check`. Anything else means the last
-   install was skipped or failed: repair with step 5 (never `-SkipPlugins`).
+   install was skipped or failed: repair with step 5 (never `-SkipPlugins`). Then prove the gate runs, outside any
+   repository so no PR is read:
+   `'{"tool_name":"Bash","tool_input":{"command":"gh pr merge 1"},"cwd":"C:\\"}' | python -I -S "$HOME\.claude\skills\pre-merge-review\gate.py" check`
+   must print a line with `"permissionDecision": "deny"`. No output means Python or `gate.py` is missing, and because
+   the hook command ends with `; exit 0`, every merge would then pass unchecked: install Python
+   (`winget install Python.Python.3.14`) or repair with step 5.
 8. **Photo project?** When the current folder is a photo project (RAW files, or a `.claude-work` or `edited` folder), its
    `.claude/settings.json` must have `"photo-edit@claude-setup": true` in `enabledPlugins` and the `claude-setup` entry
    in `extraKnownMarketplaces` (README, "Project-level plugins"). If not, give the user that block; the skill is no longer

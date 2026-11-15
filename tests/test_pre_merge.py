@@ -57,6 +57,11 @@ if args[:2] == ["pr", "comment"]:
     if state.get("comment_fail"):
         sys.stderr.write("gh: comment refused\n")
         sys.exit(1)
+    for pr in state["prs"]:  # GitHub keeps the comment: later views list it
+        if args[2] in (str(pr["number"]), pr["url"]):
+            pr.setdefault("comments", []).append({"body": call["body"].replace("\n", "\r\n")})
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(state, f)
     sys.exit(0)
 sys.stderr.write("fake gh: unexpected %r\n" % args)
 sys.exit(2)
@@ -263,9 +268,23 @@ class MergeTest(GateCase):
 
     def test_a_merge_inside_another_command_or_quotes_is_still_caught(self):
         # the choice: a false refusal is acceptable, a missed merge is not
-        self.assertIn("#7", self.denial('bash -c "gh pr merge 7 --auto"'))
-        self.assertIn("#7", self.denial('cmd /c "gh pr merge 7"'))
-        self.assertIn("#7", self.denial('echo "now gh pr merge 7"'))
+        for cmd, tool in (('bash -c "gh pr merge 7 --auto"', "Bash"), ('cmd /c "gh pr merge 7"', "Bash"),
+                          ("bash -lc 'gh pr merge 7'", "Bash"), ('eval "gh pr merge 7"', "Bash"),
+                          ('echo "$(gh pr merge 7)"', "Bash"), ('echo "`gh pr merge 7`"', "Bash"),
+                          ('"C:\\Program Files\\GitHub CLI\\gh.exe" pr merge 7', "Bash"),
+                          ("pwsh -Command 'gh pr merge 7'", "PowerShell"),
+                          ("& 'C:\\Program Files\\GitHub CLI\\gh.exe' pr merge 7", "PowerShell"),
+                          ('Invoke-Expression "gh pr merge 7"', "PowerShell")):
+            self.assertIn("#7", self.denial(cmd, tool=tool), cmd)
+
+    def test_a_merge_in_quoted_text_that_is_not_run_passes(self):
+        for cmd in ("grep -n 'gh pr merge' README.md", 'git commit -m "docs: gh pr merge needs a review"',
+                    'echo "now gh pr merge 7"', "rg \"gh pr merge\" skills",
+                    "gh pr create --title t --body \"$(cat <<'EOF'\nThen gh pr merge 7 --squash.\nEOF\n)\""):
+            self.assertIsNone(self.check(cmd), cmd)
+        self.assertEqual(self.calls(), [])
+        # quoted text before a real merge does not hide it
+        self.assertIn("#7", self.denial('git commit -m "gh pr merge" && gh pr merge 7'))
 
     def test_a_corrupt_record_does_not_count(self):
         self.record()
@@ -343,6 +362,20 @@ class MergeTest(GateCase):
             self.assertIn("#7", self.denial(cmd), cmd)
         self.assertIsNone(self.check("gh pr merge 7 --disable-auto -d"))
 
+    def test_short_flag_clusters_and_attached_values(self):
+        # a value flag (-t, -b, -F, -A, -R) ends its cluster: `-tmerge` is a subject, not -m
+        for cmd in ("gh pr merge 7 --disable-auto -tmerge", "gh pr merge 7 --disable-auto -bsquash",
+                    "gh pr merge 7 --disable-auto -dt rsm"):
+            self.assertIsNone(self.check(cmd), cmd)
+        self.assertEqual(self.calls(), [])
+        for cmd in ("gh pr merge 7 --disable-auto -sd", "gh pr merge 7 --disable-auto -dm"):
+            self.assertIn("#7", self.denial(cmd), cmd)
+        self.set_state([pr(), pr(number=8, current=False)])
+        for cmd in ("gh pr merge 8 -sRo/r", "gh pr merge 8 -sR o/r"):
+            os.path.exists(self.calls_path) and os.remove(self.calls_path)
+            self.assertIn("#8", self.denial(cmd), cmd)
+            self.assertEqual(self.view_calls()[0]["args"][2:5], ["8", "-R", "o/r"], cmd)
+
     def test_a_powershell_backtick_escape_does_not_end_a_quoted_command(self):
         reason = self.denial('bash -c "gh pr merge 8 --subject `"a b`" -R o/r"', tool="PowerShell")
         self.assertIn("no pull requests found", reason)  # the fake gh was asked for 8 in o/r: the -R was seen
@@ -358,6 +391,20 @@ class MergeTest(GateCase):
             self.assertIn("by its URL", self.denial(cmd + PIN), cmd)
         self.assertEqual(self.calls(), [])
         self.assertIsNone(self.check('(cd "%s"); gh pr merge %s' % (other, URL) + PIN))
+
+    def test_a_cd_in_quoted_text_does_not_move_the_lookup(self):
+        self.record()
+        os.remove(self.calls_path)
+        self.assertIsNone(self.check('git commit -m "cd elsewhere, then sl" && gh pr merge 7' + PIN))
+        self.assertEqual(os.path.normcase(self.view_calls()[0]["cwd"]), os.path.normcase(self.cwd))
+
+    @unittest.skipUnless(os.name == "nt", "a drive-less rooted path is Windows-only")
+    def test_a_rooted_path_without_a_drive_needs_the_pr_url(self):
+        self.record()
+        os.remove(self.calls_path)
+        for cmd in ("cd /tmp/x && gh pr merge 7", "cd \\x; gh pr merge 7"):
+            self.assertIn("by its URL", self.denial(cmd + PIN), cmd)
+        self.assertEqual(self.calls(), [])
 
 
 class PushTest(GateCase):
@@ -436,9 +483,15 @@ class PushTest(GateCase):
 
     def test_other_git_commands_are_not_pushes(self):
         self.set_state([pr(auto={"mergeMethod": "MERGE"})])
-        for cmd in ("git status", "git pull", "git pushd", "git log --oneline", "echo git-push"):
+        for cmd in ("git status", "git pull", "git pushd", "git log --oneline", "echo git-push",
+                    'git commit -m "then git push"', "grep -n 'git push' README.md"):
             self.assertIsNone(self.check(cmd), cmd)
         self.assertEqual(self.calls(), [])
+        self.assertIn("--disable-auto", self.denial("bash -c 'git push'"))
+
+    def test_a_push_in_quoted_text_does_not_join_a_merge(self):
+        self.record()
+        self.assertIsNone(self.check('git commit -m "push with git push" && gh pr merge 7' + PIN))
 
     def test_norm_dir(self):
         gate = load_gate()
@@ -446,6 +499,10 @@ class PushTest(GateCase):
         if os.name == "nt":
             self.assertEqual(gate.norm_dir("/c/dev/x", "C:\\cwd"), "c:/dev/x")
             self.assertEqual(gate.norm_dir("sub", "C:\\cwd"), os.path.join("C:\\cwd", "sub"))
+            self.assertEqual(gate.norm_dir("/tmp/x", "C:\\cwd"), gate.UNKNOWN)
+            self.assertEqual(gate.norm_dir("\\x", "C:\\cwd"), gate.UNKNOWN)
+            self.assertEqual(gate.norm_dir("//server/share", "C:\\cwd"), "//server/share")
+        self.assertEqual(gate.norm_dir("sub", gate.UNKNOWN), gate.UNKNOWN)
 
 
 class PassThroughTest(GateCase):
@@ -486,6 +543,20 @@ class RecordTest(GateCase):
             data = json.load(f)
         self.assertEqual((data["url"], data["sha"]), (URL, SHA_A))
         self.assertIn("recorded_at", data)
+
+    def test_a_retry_does_not_post_the_same_comment_twice(self):
+        # the first try posted the comment and failed after it (a timeout, an unwritable record folder)
+        self.assertEqual(self.record().returncode, 0)
+        os.remove(os.path.join(self.records, self.record_files()[0]))
+        p = self.record()
+        self.assertEqual((p.returncode, p.stderr), (0, ""))
+        self.assertIn("already on the PR", p.stdout)
+        self.assertIn("recorded %s at aaaaaaa" % URL, p.stdout)
+        self.assertEqual(len([c for c in self.calls() if c["args"][:2] == ["pr", "comment"]]), 1)
+        self.assertEqual(len(self.record_files()), 1)
+        # a changed summary is a new comment
+        self.assertEqual(self.record("7", SHA_A, self.write_summary("Round two: one more fix.")).returncode, 0)
+        self.assertEqual(len([c for c in self.calls() if c["args"][:2] == ["pr", "comment"]]), 2)
 
     def test_the_comment_goes_through_the_repo_flag(self):
         self.assertEqual(self.record("7", SHA_A, None, "-R", "o/r").returncode, 0)
