@@ -31,7 +31,10 @@ UNKNOWN = "?"  # a folder the gate cannot resolve (`cd -`, a variable)
 
 _deadline = None  # set by check(); record() has no budget
 
-ARG = r"""(?:"[^"]*"|'[^']*'|\S+)"""
+# One shell word: quoted parts and plain characters. Each option pattern below matches a word in one way only, so a
+# failed search cannot backtrack exponentially (`git -c a=b -c a=b ...` with no push would outlast the hook's timeout,
+# and a killed hook lets the command run).
+ARG = r"""(?:"[^"]*"|'[^']*'|[^\s"'])+"""
 MERGE_RE = re.compile(  # `gh pr merge`, also with quoted words and `pr`'s own -R/--repo before `merge` (gh takes both)
     r"""(?<![A-Za-z0-9_-])gh(?:\.exe)?["']?\s+["']?pr["']?"""
     r"""(?P<pre>(?:\s+(?:-R\s*%s|--repo(?:=|\s+)%s))*)\s+["']?merge["']?(?![\w-])""" % (ARG, ARG),
@@ -39,8 +42,10 @@ MERGE_RE = re.compile(  # `gh pr merge`, also with quoted words and `pr`'s own -
 )
 PUSH_RE = re.compile(
     r"""(?<![A-Za-z0-9_-])git(?:\.exe)?["']?"""
-    r"""((?:\s+(?:-C\s+%s|-c\s+%s|--(?:git-dir|work-tree|namespace)\s+%s|--[A-Za-z][\w-]*(?:=%s)?|-p|-P))*)"""
-    r"""\s+push(?![\w-])""" % (ARG, ARG, ARG, ARG),
+    # -c is -C or -c and -p is -p or -P (IGNORECASE); the generic --name does not take --git-dir and the like spaced
+    r"""((?:\s+(?:-c\s+%s|--(?:git-dir|work-tree|namespace)\s+%s"""
+    r"""|--(?!(?:git-dir|work-tree|namespace)\s)[A-Za-z][\w-]*(?:=%s)?|-p))*)"""
+    r"""\s+push(?![\w-])""" % (ARG, ARG, ARG),
     re.IGNORECASE,
 )
 CD_ARG = r"""(?:"[^"]*"|'[^']*'|[^\s;&|)]+)"""  # stops at a separator: `cd sub; x`

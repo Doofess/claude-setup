@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -649,6 +650,26 @@ class RecordTest(GateCase):
         self.assertEqual(p.returncode, 1)
         self.assertIn("network down", p.stderr)
         self.assertEqual(self.record_files(), [])
+
+
+class PatternTimeTest(unittest.TestCase):
+    """A failed search must stay fast: a hook killed at its timeout lets the command run. 24 repeats took the old,
+    ambiguous patterns about 5 s (doubling with each one), so a regression fails here instead of hanging."""
+
+    def test_repeated_options_do_not_backtrack(self):
+        gate = load_gate()
+        n = 24
+        cases = [(gate.PUSH_RE, "git" + opt * n, " push") for opt in
+                 (" -c a=b", " -C 'x'", ' -c "a b"', " -C x", " --git-dir --x", " --a=b", " -p", " -P")]
+        cases += [(gate.MERGE_RE, "gh pr" + opt * n, " merge 3") for opt in
+                  (' -R "x"', " -R x", " -Rx", " --repo x", " --repo=x", " -r 'x'")]
+        for regex, head, tail in cases:
+            with self.subTest(text=head[:24]):
+                for text, found in ((head + " commit", False), (head + tail, True)):
+                    start = time.perf_counter()
+                    match = regex.search(text)
+                    self.assertLess(time.perf_counter() - start, 0.5)
+                    self.assertEqual(match is not None, found)
 
 
 class FailClosedTest(unittest.TestCase):
