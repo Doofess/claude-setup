@@ -36,6 +36,7 @@ it while the user's own `/code-review` of it was still running.
      `PRE_MERGE_REVIEW_GH` (a path to a Python script run with the current interpreter).
    - Not covered, said in the skill: merges through `gh api` or the web page; a push of another branch than the current
      one; the user's own `!` commands (hooks never see them; that is the user's escape hatch).
+   - After the first review of PR #65: a `cd`/`Set-Location` earlier in the command moves where the PR is looked up (one the gate cannot follow, or `GH_REPO`, needs the PR's URL); `\`/backtick line continuations are joined; `~`, `--git-dir` and `--work-tree` place a push; a crash or the 20 s budget for all `gh` calls refuses a merge (a killed hook would let it run); `--match-head-commit` must name the head, and the skill's merge uses it.
 3. `settings.json` (template): `hooks.PreToolUse` gets
    `{"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": "python -I -S ~/.claude/skills/pre-merge-review/gate.py check", "timeout": 30}]}`.
    `install.ps1` already copies `skills/` and merges hook events (`Merge-HookEvents`); check that nothing in it or its tests

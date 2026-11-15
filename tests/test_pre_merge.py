@@ -1,6 +1,8 @@
 """skills/pre-merge-review/gate.py: the PreToolUse gate and the record command, against a fake `gh`."""
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -92,7 +94,8 @@ class GateCase(unittest.TestCase):
 
     def env(self):
         env = dict(os.environ)
-        env.update(PRE_MERGE_REVIEW_DIR=self.records, PRE_MERGE_REVIEW_GH=self.fake, FAKE_GH_STATE=self.state_path)
+        env.update(PRE_MERGE_REVIEW_DIR=self.records, PRE_MERGE_REVIEW_GH=self.fake, FAKE_GH_STATE=self.state_path,
+                   HOME=self.tmp, USERPROFILE=self.tmp)  # `~` in a command is the test folder
         return env
 
     def run_gate(self, argv, stdin=None):
@@ -260,6 +263,61 @@ class MergeTest(GateCase):
             f.write("{not json")
         self.assertIn("#7", self.denial("gh pr merge 7"))
 
+    def test_a_cd_in_the_command_moves_where_the_pr_is_looked_up(self):
+        other = os.path.join(self.tmp, "other repo")
+        os.makedirs(os.path.join(other, "sub"))
+        self.record()
+        cases = [
+            ('cd "%s" && gh pr merge 7 --squash' % other, other),
+            ("cd '../other repo' && gh pr merge 7", other),
+            ('cd "%s"; cd sub; gh pr merge 7' % other, os.path.join(other, "sub")),
+            ("Set-Location -Path '%s'; gh pr merge 7" % other, other),
+            ('cd /d "%s" && gh pr merge 7' % other, other),
+            ("gh pr merge 7 && cd '%s'" % other, self.cwd),
+            ("cd && gh pr merge 7", self.tmp),
+        ]
+        for cmd, where in cases:
+            with self.subTest(cmd=cmd):
+                os.path.exists(self.calls_path) and os.remove(self.calls_path)
+                self.assertIsNone(self.check(cmd))
+                self.assertEqual(os.path.normcase(os.path.normpath(self.view_calls()[0]["cwd"])),
+                                 os.path.normcase(os.path.normpath(where)))
+
+    def test_a_cd_the_gate_cannot_follow_needs_the_pr_url(self):
+        self.record()
+        os.remove(self.calls_path)
+        for cmd in ("cd - && gh pr merge 7", 'cd "$REPO" && gh pr merge', "cd $env:X; gh pr merge 7"):
+            self.assertIn("by its URL", self.denial(cmd), cmd)
+        self.assertEqual(self.calls(), [])
+        self.assertIsNone(self.check("cd - && gh pr merge %s --squash" % URL))
+        self.assertEqual(os.path.normcase(self.view_calls()[0]["cwd"]), os.path.normcase(self.cwd))
+
+    def test_line_continuations_keep_the_selector_and_the_repo(self):
+        self.set_state([pr(), pr(number=8, current=False)])
+        self.record()
+        for cmd, tool in (("gh pr merge \\\n  8 --squash", "Bash"), ("gh pr merge `\r\n  8 -R o/r", "PowerShell")):
+            with self.subTest(cmd=cmd):
+                os.path.exists(self.calls_path) and os.remove(self.calls_path)
+                self.assertIn("#8", self.denial(cmd, tool=tool))
+                self.assertEqual(self.view_calls()[0]["args"][2], "8")
+
+    def test_gh_repo_in_the_command_needs_a_url_or_repo(self):
+        self.record()
+        os.remove(self.calls_path)
+        self.assertIn("GH_REPO", self.denial("GH_REPO=a/b gh pr merge 7"))
+        self.assertIn("GH_REPO", self.denial("$env:GH_REPO = 'a/b'; gh pr merge", tool="PowerShell"))
+        self.assertEqual(self.calls(), [])
+        self.assertIsNone(self.check("GH_REPO=o/r gh pr merge 7 -R o/r"))
+        self.assertIsNone(self.check("GH_REPO=o/r gh pr merge %s" % URL))
+
+    def test_match_head_commit_must_name_the_head(self):
+        self.record()
+        self.assertIsNone(self.check("gh pr merge 7 --auto --merge --match-head-commit aaaaaaa"))
+        self.assertIsNone(self.check("gh pr merge 7 --match-head-commit=" + SHA_A))
+        reason = self.denial("gh pr merge 7 --match-head-commit bbbbbbb")
+        self.assertIn("--match-head-commit names bbbbbbb", reason)
+        self.assertIn("aaaaaaa", reason)
+
 
 class PushTest(GateCase):
     def test_refused_for_an_open_pr_with_auto_merge_on(self):
@@ -300,6 +358,35 @@ class PushTest(GateCase):
         os.makedirs(os.path.join(self.cwd, "sub"))
         self.denial("git -C sub -c k=v push")
         self.assertEqual(os.path.normcase(self.view_calls()[0]["cwd"]), os.path.normcase(os.path.join(self.cwd, "sub")))
+
+    def test_tilde_git_dir_work_tree_and_cd_place_the_push(self):
+        other = os.path.join(self.tmp, "other repo")
+        os.makedirs(other)
+        os.makedirs(os.path.join(self.tmp, "plain"))
+        self.set_state([pr(auto={"mergeMethod": "MERGE"})])
+        cases = [
+            ("git -C ~/plain push", os.path.join(self.tmp, "plain")),
+            ('git --git-dir "%s" push' % os.path.join(other, ".git"), other),
+            ('git --work-tree="%s" push' % other, other),
+            ('cd "%s" && git push' % other, other),
+            ("Set-Location '%s'; git push" % other, other),
+        ]
+        for cmd, where in cases:
+            with self.subTest(cmd=cmd):
+                os.path.exists(self.calls_path) and os.remove(self.calls_path)
+                self.assertIn("as its own command", self.denial(cmd))
+                self.assertEqual(os.path.normcase(os.path.normpath(self.view_calls()[0]["cwd"])),
+                                 os.path.normcase(os.path.normpath(where)))
+
+    def test_a_push_from_a_folder_the_gate_cannot_follow_passes(self):
+        self.set_state([pr(auto={"mergeMethod": "MERGE"})])
+        self.assertIsNone(self.check("cd - && git push"))
+        self.assertEqual(self.calls(), [])
+
+    def test_a_disable_in_the_same_command_does_not_count(self):
+        self.set_state([pr(auto={"mergeMethod": "MERGE"})])
+        reason = self.denial("gh pr merge 7 --disable-auto && git push")
+        self.assertIn("as its own command", reason)
 
     def test_the_push_is_in_a_chain_or_powershell(self):
         self.set_state([pr(auto={"mergeMethod": "MERGE"})])
@@ -432,6 +519,39 @@ class RecordTest(GateCase):
         self.assertEqual(p.returncode, 1)
         self.assertIn("network down", p.stderr)
         self.assertEqual(self.record_files(), [])
+
+
+class FailClosedTest(unittest.TestCase):
+    """In-process: a crash or the gh time budget refuses a merge and lets a push through."""
+
+    def run_check(self, gate, command):
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": ROOT}).encode()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(gate.check(payload), 0)
+        return json.loads(out.getvalue()) if out.getvalue().strip() else None
+
+    def test_a_crash_refuses_a_merge_and_lets_a_push_through(self):
+        gate = load_gate()
+
+        def boom(*_):
+            raise RuntimeError("parser bug")
+
+        gate.find_merges = boom
+        out = self.run_check(gate, "gh pr merge 7 --squash")
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("RuntimeError: parser bug", out["hookSpecificOutput"]["permissionDecisionReason"])
+        gate = load_gate()
+        gate.find_push_dirs = boom
+        self.assertIsNone(self.run_check(gate, "git push"))
+
+    def test_the_time_budget_refuses_a_merge_and_lets_a_push_through(self):
+        gate = load_gate()
+        gate.GH_BUDGET = 0
+        gate.subprocess = None  # any gh call would crash, and a crash would show a different reason
+        out = self.run_check(gate, "gh pr merge 7")
+        self.assertIn("budget", out["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertIsNone(self.run_check(gate, "git push"))
 
 
 if __name__ == "__main__":

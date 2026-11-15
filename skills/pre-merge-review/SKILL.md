@@ -40,11 +40,13 @@ steps below and the gate never has to refuse.
 
    It refuses when the PR's head is no longer the reviewed commit (review the new head). Otherwise it posts the summary
    as a PR comment headed with the reviewed commit, records that commit, and prints `recorded <url> at <sha7>`.
-7. **Merge** with the project's usual command (for example `gh pr merge <n> --auto --merge`). The gate lets it through
-   only for the recorded head. With `--auto`, the PR is not merged yet: say so, and watch it until GitHub merges it or CI
-   fails.
+7. **Merge** with the project's usual command plus `--match-head-commit <headRefOid>` (for example
+   `gh pr merge <n> --auto --merge --match-head-commit <headRefOid>`), so GitHub itself refuses the merge if the head
+   moves after the gate's check. The gate lets it through only for the recorded head. With `--auto`, the PR is not
+   merged yet: say so, and watch it until GitHub merges it or CI fails.
 8. **New commits after the merge is on** (a failed CI run, a late fix): commit locally as needed, but run
-   `gh pr merge <n> --disable-auto` before the push, then push and go back to step 2 for the new head. A lint-only or
+   `gh pr merge <n> --disable-auto` as its own command before the push (the gate reads auto-merge before a command runs,
+   so `--disable-auto && git push` is still refused), then push and go back to step 2 for the new head. A lint-only or
    one-line fix is no exception.
 
 Tell the user: when auto-merge is on, that it is on and what the review found (how many findings, what was fixed, what
@@ -59,6 +61,8 @@ was left and why); when GitHub has merged it, that it merged.
 | `gh pr merge` and `git push` in one command | run them separately, with the review between |
 | push refused: auto-merge is on | step 8 |
 | the PR could not be read (`gh` failed) | fix `gh` (auth, network, the selector); do not merge another way |
+| it cannot tell which repository (`GH_REPO`, `cd -`, a variable) | name the PR by its URL |
+| `--match-head-commit` names another commit | use the `headRefOid` of step 2; if the head moved, step 2 again |
 
 ## Red flags
 
@@ -71,6 +75,7 @@ was left and why); when GitHub has merged it, that it merged.
 | "Auto-merge is on, so tell the user it's merged" | It merges when CI passes. Report it as on, then as merged when it is. |
 | "The gate is in the way; merge through `gh api` or the web page" | Never route around it. If the user wants a merge without review, they run `! gh pr merge ...` themselves. |
 | "Turn auto-merge on at PR creation, as usual" | Not any more: auto-merge goes on in step 7, after the record. |
+| "The review is slow; record `no findings` and merge" | The gate checks the record, not the review, so it can't stop this. The PR comment would tell the user a review ran that didn't. |
 
-Not covered by the gate: merges through `gh api` or the browser, a push of a branch other than the current one, and the
-user's own `!` commands. The steps still apply to the first two.
+Not covered by the gate: merges through `gh api` or the browser, a push of a branch other than the current one, `gh`
+aliases, and the user's own `!` commands. The steps still apply to all but the last.
