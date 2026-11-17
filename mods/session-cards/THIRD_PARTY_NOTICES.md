@@ -4,7 +4,7 @@
 
 - Source: https://github.com/bokub/chalk-animation (MIT)
 - What was taken: the `neon` effect, a two-frame animation that alternates every 500 ms. Its colours are replaced; only the timing and the dim/bold alternation remain.
-- Where it is used: `mods/session-cards/hooks/neon.ts`.
+- Where it is used: `hooks/neon.ts` in this folder.
 
 The upstream licence, as published in the repository at version 2.0.3:
 
