@@ -13,7 +13,7 @@ A Claude Code setup kept as code: one installer makes every Windows PC the same,
 - `global/CLAUDE.md` (rules for planning, delegation and git), two agents and three more skills.
 - `shell_matrix.py`: checks that four Windows shells end up the same.
 
-Daily-use reference: [docs/manual.md](docs/manual.md).
+Setting up a new PC in full and daily use: [docs/manual.md](docs/manual.md).
 
 ## The engineered parts
 

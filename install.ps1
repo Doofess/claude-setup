@@ -1272,7 +1272,7 @@ function Test-StatusBar([string]$command, [string]$sample) {
 
 foreach ($tool in 'claude', 'git', 'python') {
   if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-    throw "'$tool' not found on PATH. See README.md for the desktop bootstrap list."
+    throw "'$tool' not found on PATH. See docs/manual.md, 'Set up a new machine', for the desktop bootstrap list."
   }
 }
 if (-not $Check) {
