@@ -1081,8 +1081,8 @@ class SetupCheckStaticTest(unittest.TestCase):
         self.assertNotIn("($fontKept -and $KeepScheme)", row)
 
     def test_docs(self):
-        self.assertIn("/setup-check", read("README.md"))
-        self.assertIn("Check a machine", read("README.md"))
+        self.assertIn("/setup-check", read("docs", "manual.md"))
+        self.assertIn("Check a machine", read("docs", "manual.md"))
         self.assertIn("- After install.ps1 or on a new PC: `/setup-check`.", read("global", "CLAUDE.md"))
 
 

@@ -331,7 +331,7 @@ function Install-KotlinLsp([string]$version, [string]$arch, [string]$versionDir,
 }
 
 # ---- Retired plugins and skills (the user level holds only the workflow core) ----
-# Plugins, LSPs, MCP servers and hooks are per project (README, "User level vs project level"). Plugins nothing on this
+# Plugins, LSPs, MCP servers and hooks are per project (docs/manual.md, "User level vs project level"). Plugins nothing on this
 # PC ever used are uninstalled at user scope. Re-running on a PC where they are all gone makes no uninstall call.
 $retiredPlugins = @(
   'chrome-devtools-mcp@claude-plugins-official', 'hookify@claude-plugins-official', 'mcp-server-dev@claude-plugins-official',
@@ -1272,7 +1272,7 @@ function Test-StatusBar([string]$command, [string]$sample) {
 
 foreach ($tool in 'claude', 'git', 'python') {
   if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-    throw "'$tool' not found on PATH. See README.md for the desktop bootstrap list."
+    throw "'$tool' not found on PATH. See docs/manual.md, 'Set up a new machine', for the desktop bootstrap list."
   }
 }
 if (-not $Check) {

@@ -1,370 +1,71 @@
 # claude-setup
 
-My Claude Code setup, kept in git so every PC I use looks and behaves the same. One script, `install.ps1`, sets up a fresh
-Windows machine: global rules, agents, plugins, a custom status bar, a mod that tidies the conversation view, and the
-terminal's font and colours.
+A Claude Code setup kept as code: one installer makes every Windows PC the same, and a hook refuses to merge a pull request until its latest commit has been reviewed.
 
-![The status bar: repo, branch, model and effort, context meter, 5-hour and 7-day plan meters, cost, session time](docs/images/statusbar.png)
+![Claude Code's status bar: repo, branch and its pull request, model and effort, a context meter, 5-hour and 7-day plan meters with reset times, session cost and session time](docs/images/statusbar.png)
 
-## What you see
+## What is in it
 
-### The status bar
+- `skills/pre-merge-review`: a pull request review procedure and `gate.py`, the hook that enforces it.
+- `install.ps1`: one re-runnable command for all of it, plus plugins, language servers and terminal colours.
+- `statusbar.py`: the line in the picture.
+- `mods/session-cards`: a Claude Code mod that restyles the conversation view.
+- `global/CLAUDE.md` (rules for planning, delegation and git), two agents and three more skills.
+- `shell_matrix.py`: checks that four Windows shells end up the same.
 
-The line along the bottom of Claude Code, read left to right:
+Setting up a new PC in full and daily use: [docs/manual.md](docs/manual.md).
 
-- **Where you are**: the repo (GitHub in violet, GitLab in its orange with its own icon, read from the origin remote) and the branch (Claude Code shows the PR badge itself; on the hint line the mod draws its `#` yellow and the number white and underlined, still a link to the PR).
-- **Who is working**: the model and the effort level. Each model and each effort level has its own colour, so you can
-  tell at a glance whether you're on Opus (Claude orange) or Sonnet, at high or medium. Fable's name is a gold gradient, and a running Fable subagent's row pulses.
-- **How full the context is**: a meter that reaches 100% at the auto-compact point (about 267k of the 300k window), not
-  at the end of the window. When it's full, it's time to `/clear`.
-- **How much plan is left**: the 5-hour and 7-day usage meters, each with the time until it resets.
-- **What the session has cost**, in green.
-- **How long the session has run**, beside a clock, both in the repo name's violet.
+## The engineered parts
 
-The meters change colour as they fill: green below 50%, yellow from 50%, orange from 70% and red from 90%. The same
-session late in a busy day:
+The settings template sets `bypassPermissions` and turns off its warning, so Claude Code runs commands without asking. The merge gate is the one check on what commands run; the rest of the working rules are instructions in `global/CLAUDE.md`.
 
-![The same bar with the context meter orange at 75%, the 5-hour meter red at 93% and the 7-day meter yellow at 57%](docs/images/statusbar-busy.png)
+### Pre-merge review gate
 
-When the window is narrow, the least important pieces drop first: session time, cost, then reset times and
-the plan meters. Repo, branch, model with its effort, and context always stay; on a very narrow window the repo loses its owner, then
-letters of its name. Once the line fits, any dropped piece that still fits comes back, so
-no room is wasted:
+`gate.py` (553 lines, standard-library Python) runs before every Bash and PowerShell command. It refuses `gh pr merge` until `gate.py record` has stored a review for the PR's current head commit, and the merge must pass that commit as `--match-head-commit`, so GitHub rejects it if a new commit lands in between. It also refuses `git push` while the branch's PR has auto-merge on.
 
-<img src="docs/images/statusbar-narrow.png" width="380" alt="The bar at 60 columns: the repo cut to claude-s…, then branch, model and context">
+A merge it cannot check is refused: a `gh` error, a crash, or a spent 20 s budget, which is kept under the hook's 30 s timeout. A push it cannot check goes through, since a new branch has no PR yet. Its option patterns cannot backtrack exponentially, so a long run of repeated options cannot stall it.
 
-Dropped pieces aren't lost. The session-cards mod (below) moves them onto Claude Code's hint line, beside the
-permissions text:
+It checks that a review was recorded, not what it found. It does not see merges through `gh api` or the web page, or pushes of a branch other than the checked-out one. If Python or `gate.py` itself is missing or fails to start, the hook lets everything through. `tests/test_pre_merge.py` has 60 cases: most run the gate as a subprocess against a fake `gh` (quoting, `cd` tracking, records), and the rest cover crashes, the time budget, pattern timing and the hook command itself.
 
-- A reset time whose meter stays on the top row sits right under the meter's first block, without its `→`.
-- A meter that moves takes its reset time with it (`7D ████ 32%  → 4d21h`), its first block under the last meter
-  left on the top row. Where it can't line up, it goes to the right.
-- The rest (cost, session time) is right-aligned at the margin, or, when a moved meter holds the margin, in the
-  free space before it.
-- Where pieces collide, the least important one drops, in the bar's own order; the hint always stays.
-- While background work shows on the hint line (`1 shell`, monitors, agents) and Claude is idle, the row keeps this
-  layout and the pill is the mod's own: a white block that opens the background-tasks list when clicked. While Claude
-  works, Claude Code's own line stays instead, since a mod's `/tasks` waits for the turn to end and Claude Code's pill
-  opens at once; the pieces then follow it dim, packed left after a ` · `, a meter as its percentage alone, since dim
-  blocks can't show how full it is.
+### Settings merge
 
-![At 104 columns the bar keeps repo, branch, model, effort, context and the 5-hour meter; the 7-day meter moves onto the hint line with its reset time, right-aligned](docs/images/hint-overflow.png)
+The installer merges into each machine's own settings: `enabledPlugins` and `env` entry by entry, `permissions` arrays unioned, `hooks` matched by event and command so a machine's own hooks stay beside the gate, everything else replaced. The helpers are pure functions, tested under PowerShell 5.1 and 7 for identical output, and for a second install leaving one copy of the gate beside the machine's own hooks. A hand-written JSONC editor changes Windows Terminal's settings without losing the user's comments (9 test fixtures), and a second run leaves the file unchanged.
 
-The icons come from a Nerd Font. On a machine without one, the installer switches the bar to short words instead
-(`ctx`, `5H`, `7D`), so it reads fine in any monospace font. To see the bar without starting Claude Code, run
-`python statusbar.py --demo`.
+### Status bar
 
-### Session cards
+Claude Code runs `statusbar.py` every 60 s: session JSON in, one line out. The context meter reaches 100% at the auto-compact point. On a narrow terminal the least important pieces drop, any that still fit come back, and the dropped ones go through a per-session file to the mod, which draws them on the hint line. `tests/test_statusbar.py` has 83 cases, from layout at several widths to remote URL parsing.
 
-`mods/session-cards` is a Claude Code mod that makes a long session easier to scan:
+### Session-cards mod
 
-- **Your prompts** become a coloured card headed with the time you sent them, so you can find your own messages again.
-- **Slash-command output** gets a violet card of its own. A command row the engine hands to the mod (one queued while
-  Claude works, such as `/compact`) is a violet `You ran /compact` card rather than a prompt card.
-  Only output Claude Code keeps as a command result gets a card (`/context`, `/color`, `/reload-plugins`, `/memory`,
-  `/skills`, `/usage`, `/rename`). Some commands get none, since Claude Code hands the mod nothing to draw:
-  - Pickers and dialogs (`/model`, `/effort`, `/mcp`, `/plugin`, `/theme`, `/login`, `/advisor`) keep their result
-    line as a plain row that no mod hook sees.
-  - `/clear` prints nothing.
-  - Skills print no output row.
-  - In fullscreen, a dialog closed with Esc leaves no row.
-- **The end of each turn** is a coloured line with how long it took and when it finished (`✻ Baked for 1s · done 4:20 PM`).
-  While background shells run, every such line ends in a dim `· 1 shell still running`, which goes away when the
-  shell's notification arrives. While a background agent runs, Claude Code's own line stays, since only it knows when
-  the agent ends.
-- **Tool calls** shrink to one short row each: an icon and a few words. Runs of reads, searches and shell commands
-  keep Claude Code's own one-line summary ("Searched for 1 pattern, read 1 file…"), as in the picture below.
-- **Agents** get a row showing the agent type, its model and effort (in the same colours as the status bar), what it's
-  doing right now, how long it has been running and how many tokens it has used.
+`register.tsx` (1,109 lines of TypeScript) uses Claude Code's mod API for prompt cards, one-row tool calls and agent rows with model, effort, time and tokens. Its 91 cases in 5 files cover those rows and the hint-line placement.
 
-![A real session: the prompt card with its time, Claude Code's summary of three tool calls, and an Explore agent row showing Haiku, low effort, 4 s and 7k tokens](docs/images/session-cards.png)
+## Testing
 
-### Behind the scenes
+374 Python test methods in 14 `unittest` files and 91 cases in the mod's 5 test files. `unittest` reports 473, because the installer-helper tests run once under each PowerShell engine. The installer tests check its functions and source text; two opt-in tests run `-Check` on the real machine. There is no CI. Hooks in this repo lint each edit and, at turn end, run the suite for whatever changed.
 
-Nothing to look at here, but it shapes every session:
-
-- **`global/CLAUDE.md`**: global rules for how Claude plans, delegates, verifies and uses git.
-- **Two agents**: `Explore` (Haiku, read-only search, replaces the built-in one) and `worker` (Sonnet at medium effort,
-  for implementation briefs).
-- **Tools, plugins and connectors**: a short always-on list, with everything else switched on per project or per
-  session (see [Tool policy](#tool-policy)).
-- **`advisor-switch`**: turns Claude Code's advisor on (Opus, or Fable when Opus is stuck) and off for one project, in
-  its `.claude/settings.local.json`. Claude runs it itself before and after a plan with workers; the installer removes a
-  user-level `advisorModel`, so the advisor is never on in every project at once.
-- **`pre-merge-review`**: the review a pull request gets before it is merged: the built-in `/code-review` at `high`, Claude
-  triages the findings and fixes the real ones, new commits are reviewed again, then it merges. A `PreToolUse` hook
-  (`skills/pre-merge-review/gate.py check`) refuses `gh pr merge` until the review is recorded for the PR's current head
-  (`gate.py record`, which also posts the summary as a PR comment, writes the record in `~/.claude/pre-merge-review/`)
-  and the merge names that head with `--match-head-commit`, and refuses any `git push` from a branch whose open PR has
-  auto-merge on, whatever it pushes. A merge it cannot check is refused; a push it cannot check (`gh` fails or is slow,
-  a folder it cannot follow) goes through, so a new branch stays pushable. It runs on every Bash and PowerShell command in every project (about 70 ms, mostly
-  Python starting); a merge or a push adds one `gh pr view`. A command that pushes and merges together is
-  refused. The gate checks that a review was recorded, not that it ran: it stops a merge that skipped the procedure by
-  mistake, and the PR comment is what says what the review found. Not covered: merges through `gh api` or the web page,
-  pushes of another branch than the current one, `gh` aliases, and your own `!` commands (hooks never see those).
-- **`codex`**: hands a task to OpenAI's Codex CLI in the background (`codex exec`, read-only unless it works in a
-  worktree), on the OpenAI subscription: questions about Codex, independent research, second opinions. Its sibling
-  setup is [codex-setup](https://github.com/Doofess/codex-setup).
-- **`photo-edit`** (plugin, not installed at user level): the `underwater-photoshop` skill, which edits underwater and
-  macro photos in the local Photoshop. This repo is a plugin marketplace; see
-  [Project-level plugins](#project-level-plugins).
-
-## Set up a new machine (Windows)
-
-1. Install [Claude Code](https://code.claude.com), [Git for Windows](https://git-scm.com) (it brings Git Bash),
-   [GitHub CLI](https://cli.github.com), [Node](https://nodejs.org) 26+ and [Python](https://python.org) 3.10+. With winget:
-
-   ```powershell
-   winget install Anthropic.ClaudeCode Git.Git GitHub.cli OpenJS.NodeJS Python.Python.3.14
-   npm i -g pnpm
-   winget install --id astral-sh.ruff -e
-   ```
-
-   Then run `npm install` at the repo root (installs the pinned Biome for the mod lint hook).
-
-2. Run `claude` once and sign in, then `gh auth login`.
-3. Clone and install:
-
-   ```powershell
-   git clone https://github.com/Doofess/claude-setup C:\dev\claude-setup
-   cd C:\dev\claude-setup
-   .\install.cmd
-   ```
-
-   `install.cmd` runs `install.ps1` under PowerShell 7 when it is installed, else Windows PowerShell, past 5.1's
-   blocked-scripts policy. From Git Bash, run `./install.sh`, which calls it.
-
-4. Restart Claude Code and open a new terminal tab.
-5. Only for photo work: switch on `photo-edit` in the photo project (see
-   [Project-level plugins](#project-level-plugins)), then make the skill's venv outside the plugin cache:
-   `python -m venv "$HOME\.claude\photo-edit\.venv"` and `pip install -r plugins/photo-edit/skills/underwater-photoshop/requirements.txt`
-   into it. Needs Photoshop 2026 (COM `Photoshop.Application`).
-
-The installer installs JetBrainsMono Nerd Font through winget if the machine has no Nerd Font, sets Windows Terminal's
-font and colour scheme, and removes hooks this repo has retired. Options:
-
-| Flag | Effect |
-| --- | --- |
-| `-KeepFont` | keep the machine's own terminal font |
-| `-KeepScheme` | keep the machine's own colour scheme |
-| `-SkipFont` | skip the font install and the font change |
-| `-SkipPlugins` | skip installing and updating plugins (faster when only config changed) |
-| `-SkipKotlinLsp` | skip the Kotlin language server install |
-| `-SkipLsp` | skip the TypeScript language server install and the rust-analyzer components |
-
-It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` on every run.
-
-### Kotlin language server
-
-Claude Code's `kotlin-lsp` plugin launches the command `kotlin-lsp`. The installer downloads JetBrains' standalone
-Kotlin language server (pinned in `install.ps1`, now 271.2085.0; x64 or arm64 by processor), checks the SHA-256
-JetBrains publishes next to the archive, and extracts it to `%LOCALAPPDATA%\Programs\kotlin-lsp\<version>`. A
-`kotlin-lsp.cmd` shim in `%LOCALAPPDATA%\Programs\kotlin-lsp\bin` (added once to your user Path, never the machine
-Path) runs it. The archive bundles its own JetBrains Runtime, so no JDK is needed. Re-running skips it when the pinned
-version is there and replaces an older version. Open a new terminal (and restart Claude Code) after the first install.
-On macOS use Homebrew instead; this installer is Windows only.
-
-### TypeScript and Rust language servers
-
-Claude Code's `typescript-lsp` plugin launches `typescript-language-server --stdio` and its `rust-analyzer-lsp` plugin
-launches `rust-analyzer`; both plugins are pinned off in the template, so a project switches them on and the installer
-provides the binaries (`-SkipLsp` skips both).
-
-- **TypeScript.** The installer reads the version from the command itself (`typescript-language-server --version`), not
-  from `npm ls -g`: on a PC whose npm prefix folder (`%APPDATA%\npm`) was never created `npm ls -g` fails, while a copy
-  installed by hand can sit in the Node folder. When no copy on Path is at the pin (6.0.3 in `install.ps1`) or newer, it
-  runs `npm.cmd install -g typescript-language-server@<pin> typescript@<pin>`; a newer copy stays. `typescript` is the
-  server's fallback for a project without its own and is pinned to 6.0.3 because TypeScript 7 no longer ships the
-  `tsserver.js` the server needs. npm's global folder is added to the user Path (never the machine Path); if an older
-  copy earlier on Path still wins, the install says so. Open a new terminal after the first install.
-- **Rust.** With `rustup` on Path, the installer runs `rustup component add rust-analyzer --toolchain <t>` for every
-  installed toolchain that lacks it, not only the default: rustup's `rust-analyzer` proxy resolves the toolchain per
-  directory (a repo can override to GNU while the default is MSVC) and fails with `Unknown binary 'rust-analyzer.exe'
-  in official toolchain` where the component is missing. A re-run with every toolchain covered makes no `component add`
-  call. Without rustup it prints a skip line.
-
-### Check a machine
-
-After installing, or on a new PC, run `/setup-check` in Claude Code. It finds the clone through
-`~/.claude/claude-setup-state.json`, checks the clone is up to date, runs `shell_matrix.py` to compare every shell,
-repairs any difference with `install.cmd`, and runs the matrix again. It is done when the matrix exits 0. It asks
-before pulling, and it never edits the repo. What the installer can't do (a group-policy pin, a shell winget couldn't
-install, signing in to `claude` and `gh`) it hands to you with the exact command.
-
-### Same screen on every PC
-
-After installing, the installer prints a `Same experience` table (`name  expected  actual  ok|FAIL`) and fails if any
-row is wrong. It checks everything that decides what the screen looks like: the Nerd Font and Windows Terminal's font
-face and `cellHeight`, the `Campbell` colour scheme, Claude Code's theme (`custom:clear` with its file), the status line command, the
-session-cards mod being loaded, and Claude Code 2.1.308+, Python 3.10+ and Git Bash. The shell rows cover the rest:
-`Terminal profile overrides` (no profile sets its own font or colour scheme; `-KeepFont` / `-SkipFont` excuse font overrides and `-KeepScheme` colour scheme ones, and the row shows `kept`), `Terminal default profile` (PowerShell 7),
-`Git Bash profile` (present in Windows Terminal), `PowerShell 7` (pwsh found), `Windows PowerShell policy`
-(RemoteSigned or looser; a group-policy pin that is stricter is a FAIL and named), `PowerShell profiles` (the
-claude-setup block in both profile files) and `VS Code terminal` (font, Campbell colours and contrast set; `no VS Code`
-shows `kept`). These rows only read, so they run under `-Check` too. It also runs the status bar on
-sample data and prints it, so a broken bar or a mangled meter glyph stops the install. Rows covered by `-KeepFont`,
-`-KeepScheme` or `-SkipFont` show `kept`.
-The install records the keep flags it ran with in `~/.claude/claude-setup-state.json` (`flags`); `/setup-check` and
-`shell_matrix.py` pass them to the check and the repair, so a font or scheme you kept is never overwritten.
-
-## Changing something
-
-Edit the files here, run `.\install.ps1`, commit and push. On the other machine: `git pull`, then `.\install.ps1`.
-
-From Claude Code's `!` prompt (Git Bash, so use forward slashes):
-
-```bash
-git -C C:/dev/claude-setup pull && powershell -ExecutionPolicy Bypass -File C:/dev/claude-setup/install.ps1
+```powershell
+python -m unittest discover -s tests -q
+claude plugin test mods/session-cards
 ```
 
-## Daily habits
+## Install
 
-- `/clear` when the context meter nears 100% (the auto-compact point), or when `/context` shows usage near 267k.
-- `/usage` weekly; `/context` when a session feels heavy; `/skill-doctor` monthly to spot skills that load but never run.
-- Start sessions from the repo folder, not `C:\Windows\System32`. Windows Terminal opens in `C:\dev`, and the
-  PowerShell 7 profile moves a shell started in System32 (Start menu, taskbar) to `C:\dev`.
+Windows only, built for its owner's PCs. It also changes Windows Terminal, VS Code's terminal, PowerShell profiles and the execution policy. It backs up the Claude Code and Terminal settings first; `-Check` changes nothing.
 
-## Reference
-
-### What goes where
-
-| In this repo | On the machine |
-| --- | --- |
-| `global/CLAUDE.md` | `~/.claude/CLAUDE.md` |
-| `settings.json` | merged into `~/.claude/settings.json` (plugins, model and effort, skill overrides; see the merge rules below) |
-| `agents/*.md` | `~/.claude/agents/` |
-| `themes/*.json` | `~/.claude/themes/`; `custom:clear` is Claude Code's `dark` with `userMessageBackground` set to Campbell's background `#0c0c0c`, so the sticky prompt line at the top (the last prompt, once it scrolls away) has no grey bar, and `background` set to Campbell's bright white `#F2F2F2`, so background work (the `1 shell` pill under the prompt, the background-tasks dialog) is white instead of cyan. A typed `/command`'s echo row and the selected row in the background-tasks list lose their grey too. Its text stays the dim `subtle` grey and it has no border: Claude Code draws that one-row line itself, with no mod hook |
-| `statusbar.py` | `~/.claude/statusbar.py`, run by `statusLine` in `settings.json` every 60 s so the reset countdowns move |
-| `skills/<name>/` | `~/.claude/skills/<name>/` |
-| `mods/session-cards/` | stays in the repo; `install.ps1` adds its folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` and checks it with `claude plugin validate` |
-| `terminal/profile.json` | not copied; its font and `colorScheme` are written into Windows Terminal's `profiles.defaults`, and a `colorScheme` on the default profile itself is removed (see [`terminal/README.md`](terminal/README.md)) |
-| `mcp_off.py` | not copied; the installer runs it to turn the claude.ai Adobe connector off in each known project in `~/.claude.json` |
-| `chrome_off.py` | not copied; the installer runs it to set Claude in Chrome's "Enabled by default" off in `~/.claude.json`, once per machine |
-| `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see [its README](mcp-presets/README.md)) |
-
-Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers), `.credentials.json`, `history.jsonl`,
-`~/.remember/`. Synced plugins and claude.ai connectors follow the account, so they need no setup here.
-
-### Status bar details
-
-- The context meter's end is the auto-compact window minus 33k: 13k that Claude Code keeps free plus 20k reserved for the reply.
-- Each meter has 8 cells: the filled part in the bright level colour, the rest in a dark shade of the same colour; its
-  icon and numbers take that colour too.
-- Separators, the other icons, the branch name and reset times are sent as exact white rather than the terminal's
-  default foreground (light grey in most schemes), so nothing on the line is grey. The branch icon is the meters' yellow.
-- Effort runs green, yellow, the bypass red, then xhigh and max as the `/effort` picker draws them, held still: xhigh in
-  the violet of `accept edits` with its middle letter lit, max a rainbow that starts at the bolt.
-- The pieces dropped on a narrow terminal are written to `~/.claude/statusbar-overflow/<session_id>.json`, as text with
-  their colours, with where each one goes and the width of the mode label in front of the hint (read from the session
-  transcript); files older than a day are removed. The session-cards mod reads them for the hint line. Beside the
-  plain hints (`? for shortcuts`, `(shift+tab to cycle)`), and beside a hint of only the background pill and the PR
-  badge while Claude is idle, it draws the line itself, the pill as its own Button that runs `/tasks`; beside any other
-  hint it hands the pieces to Claude Code's `tail`, since a rewritten hint turns the engine's pills into dead text. In a
-  GitHub repo the file also holds `pull`, the PR address the mod links the badge's number to.
-- Reset times and the session time leave out a zero hour count past a day: `5d`, not `5d0h`.
-- Most of the bar's and the mod's colours are the colour scheme's own 16; Claude orange, the repo's violet and high
-  effort's red (the red of `bypass permissions on`) are Claude Code's exact theme colours. The icons depend on the Nerd
-  Font's glyph widths, so a different scheme or font gives a different screen.
-
-### User level vs project level
-
-The user level (`settings.json` here, merged into `~/.claude/settings.json`) keeps only the workflow core:
-
-- plugins: `superpowers` and `remember` (both from `claude-plugins-official`);
-- skills: `advisor-switch`, `codex`, `setup-check` and `pre-merge-review`;
-- agents: `worker` and `Explore`;
-- one hook: the `pre-merge-review` gate (a `PreToolUse` hook on `Bash` and `PowerShell`);
-- the status line, permissions, mods and the global `CLAUDE.md`.
-
-Everything else is per project: plugins, LSPs, MCP servers, hooks (all but the gate above), built-in tools and skills go in the repo's
-`.claude/settings.json` (MCP in `.mcp.json`). A plugin that is installed but not core is pinned `false` in the template, so no session loads it unless
-its project switches it on; `playwright`, `context7`, `frontend-design`, `mattpocock-skills`, `modern-web-guidance`,
-`supabase`, `adobe-for-creativity`, `kotlin-lsp`, `typescript-lsp`, `rust-analyzer-lsp`, `security-guidance`, `good-css`
-and the synced `humanizer` are in that state.
-`install.ps1` installs each of those that a PC doesn't have yet, then disables it, so a project can switch it on
-on every PC. A PC whose only copy was a retired `anthropic-plugin-directory` one would otherwise have none. The synced
-claude.ai plugins and the pinned-off `anthropic-plugin-directory` ids are never installed.
-
-Built-in tools and skills Claude Code ships, and how to get each one back:
-
-| Off at user level | Rough tokens a turn | To use it |
-| --- | --- | --- |
-| Artifact tool and the `artifact-*` skills (`enableArtifact: false`) | 7k | No project can turn it back on (an off in user settings wins). `/config` → Artifacts turns it on until the next install |
-| Claude in Chrome (`claudeInChromeDefaultEnabled: false` in `~/.claude.json`, set once by `chrome_off.py`) | 1.4k | `claude --chrome` or `/chrome` for the session. A project can't turn it on. `/chrome` → Enabled by default is yours: the installer never sets it again |
-| Workflow tool and `workflow-authoring` (`enableWorkflows: false`) | 0.7k | `claude --settings '{"enableWorkflows":true}'` for one session, or `/config` → Dynamic workflows until the next install. A project's `"enableWorkflows": true` also works |
-| SendFeedback (`feedbackDrafts: "off"`) | 0.7k | Set `feedbackDrafts` to `"notify"` in the template |
-| `dataviz`, `claude-api` (`skillOverrides: "off"`) | a few hundred each | Project: `"skillOverrides": { "dataviz": "on" }` |
-| `loop`, `schedule`, `init`, `security-review`, `simplify`, `keybindings-help`, `update-config`, `fewer-permission-prompts`, `plugin-authoring` (`"user-invocable-only"`) | 0.6k together | Still on the `/` menu; Claude can't call them on its own. Project: `"skillOverrides": { "<name>": "on" }` (this repo turns `plugin-authoring` on) |
-
-`skillOverrides` merges per key across settings files, so a project's `"on"` beats the user `"off"`. It takes bare
-skill names and affects only Claude Code's bundled skills and synced claude.ai skills (`docx` covers
-`anthropic-skills:docx`). Plugin skills ignore it: a plugin is on or off as a whole (`enabledPlugins`). Kept on:
-`code-review`, `run`, and the `ScheduleWakeup` and `ReportFindings` tools that `/loop` and `/code-review` use.
-
-Tools that nothing on this PC ever used are uninstalled by `install.ps1` (user-scope plugins in `$retiredPlugins`, the
-skills in `$retiredSkills`: `underwater-photoshop`, which is now the `photo-edit` plugin, and `find-skills`), and their
-ids leave `~/.claude/settings.json`. A re-run on a machine where all of this is gone makes no uninstall call.
-`-SkipPlugins` skips the plugin steps. An id installed only at project scope (for example `expo` for a deleted
-worktree) is not touched. The global TypeScript language server is not retired: the `typescript-lsp` plugin launches it
-(see [TypeScript and Rust language servers](#typescript-and-rust-language-servers)).
-
-### Project-level plugins
-
-This repo is also a Claude Code plugin marketplace named `claude-setup` (`.claude-plugin/marketplace.json`). It ships one
-plugin, `photo-edit`, which carries the `underwater-photoshop` skill. The skill is no longer copied into
-`~/.claude/skills`; a photo project switches it on in its own `.claude/settings.json`:
-
-```json
-{
-  "extraKnownMarketplaces": {
-    "claude-setup": { "source": { "source": "github", "repo": "Doofess/claude-setup" } }
-  },
-  "enabledPlugins": { "photo-edit@claude-setup": true }
-}
+```powershell
+winget install Anthropic.ClaudeCode Git.Git GitHub.cli OpenJS.NodeJS Python.Python.3.14
+claude            # sign in once, then exit
+gh auth login
+git clone https://github.com/Doofess/claude-setup C:\dev\claude-setup
+cd C:\dev\claude-setup
+.\install.cmd -Check
+.\install.cmd
 ```
 
-`claude plugin validate .` checks the marketplace.
+## Status
 
-### Settings merge rules
+In daily use. Windows only, no releases, no CI.
 
-`settings.json` is merged into the machine's `~/.claude/settings.json`: `enabledPlugins` and `env` entry by entry (the
-repo wins a conflict, the machine's other entries stay), `permissions` with arrays unioned, `hooks` per event and per
-command, and every other key replaced by the repo's value. A key removed from the repo stays on the machine, so retiring
-one needs an explicit step in `install.ps1`.
+## License
 
-`env.CLAUDE_CODE_PLUGIN_DIRS` (`;`-separated) is the one `env` entry that is unioned rather than replaced: the
-machine's own folders stay, ours (`<repo>/mods/session-cards`, with `<repo>` being this clone in forward slashes) is
-added once, and an existing entry ending in `/mods/session-cards` (from an older clone or worktree) is replaced by it.
-Entries are compared ignoring slash style, trailing slash and case.
-
-### Tool policy
-
-- The rule: tools are switched on where they are used. Everything a session loads costs tokens on every turn, so the
-  user level carries only the workflow core and each project (or session) switches on the rest.
-- Always on (user scope): superpowers and remember. Every other plugin is pinned off in the template and switched on in
-  a project's `.claude/settings.json`, and built-in tools and skills follow the same rule (see
-  [User level vs project level](#user-level-vs-project-level)). The synced docs/docx/pdf/pptx/xlsx and deep-research
-  skills and the browser and computer-use skills load by name only (`skillOverrides`).
-- All of superpowers' skills load, brainstorming and writing-skills included: Claude Code has no per-skill switch for
-  plugin skills (`skillOverrides` ignores them, and a `Skill(...)` deny rule blocks the call but leaves the skill in
-  the list). CLAUDE.md asks design questions through `AskUserQuestion` instead of brainstorming, reviews with the
-  built-in `/code-review`, and keeps "run the check before saying done" as a rule of its own. `good-css` is declared in
-  `extraKnownMarketplaces` (`vojtaholik/good-css`); a project that wants it switches it on.
-- Deny rules only for what no project will ever want: `permissions.deny` unions across settings files, so a project
-  can't lift a user-level deny.
-- Anything tied to one project (databases, deploy target, observability, Kubernetes) is project scope: `mcp-presets/`.
-- The GitHub MCP server stays off; `gh` does the same job with far less context.
-- `deniedMcpServers` blocks every claude.ai connector except Adobe, Supabase and Cloudflare (Slack, Linear, Atlassian,
-  Notion, Figma, Intercom, Claude Docs, Vercel, Canva, Spotify, Google Docs/Sheets/Calendar/Drive, Gmail, and
-  desktop-commander). BigQuery is retired; the installer removes its user-scope server and hook.
-- Adobe: the "Adobe for creativity" claude.ai connector is the only route to Adobe tools from the CLI (the plugin copies
-  return 403). It costs about 5k tokens a turn, so the installer turns it off in each project it knows (`mcp_off.py`);
-  `/mcp` turns it back on for one project, and that choice survives re-runs. A deny-list entry wouldn't work here: deny
-  lists union across settings sources, so `--settings` can't lift one for a session. A project first opened after the
-  last install starts with Adobe on. Photo edits themselves run in local Photoshop via the `underwater-photoshop` skill of the `photo-edit` plugin.
-
-## History
-
-The first visual setup (a custom theme, the readable-session mod, a Windows Terminal "Readable" scheme and an older
-status line) was retired on 2026-10-23 and rebuilt as the status bar and session-cards mod above. Tag `visual-v1` holds
-the old version, and the installer removes it from machines that still have it.
+MIT. See [LICENSE](LICENSE).
