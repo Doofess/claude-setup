@@ -4,7 +4,7 @@ My Claude Code setup, kept in git so every PC I use looks and behaves the same. 
 Windows machine: global rules, agents, plugins, a custom status bar, a mod that tidies the conversation view, and the
 terminal's font and colours.
 
-![The status bar: repo, branch, model and effort, context meter, 5-hour and 7-day plan meters, cost, session time](docs/images/statusbar.png)
+![The status bar: repo, branch, model and effort, context meter, 5-hour and 7-day plan meters, cost, session time](images/statusbar.png)
 
 ## What you see
 
@@ -24,14 +24,14 @@ The line along the bottom of Claude Code, read left to right:
 The meters change colour as they fill: green below 50%, yellow from 50%, orange from 70% and red from 90%. The same
 session late in a busy day:
 
-![The same bar with the context meter orange at 75%, the 5-hour meter red at 93% and the 7-day meter yellow at 57%](docs/images/statusbar-busy.png)
+![The same bar with the context meter orange at 75%, the 5-hour meter red at 93% and the 7-day meter yellow at 57%](images/statusbar-busy.png)
 
 When the window is narrow, the least important pieces drop first: session time, cost, then reset times and
 the plan meters. Repo, branch, model with its effort, and context always stay; on a very narrow window the repo loses its owner, then
 letters of its name. Once the line fits, any dropped piece that still fits comes back, so
 no room is wasted:
 
-<img src="docs/images/statusbar-narrow.png" width="380" alt="The bar at 60 columns: the repo cut to claude-s…, then branch, model and context">
+<img src="images/statusbar-narrow.png" width="380" alt="The bar at 60 columns: the repo cut to claude-s…, then branch, model and context">
 
 Dropped pieces aren't lost. The session-cards mod (below) moves them onto Claude Code's hint line, beside the
 permissions text:
@@ -48,7 +48,7 @@ permissions text:
   opens at once; the pieces then follow it dim, packed left after a ` · `, a meter as its percentage alone, since dim
   blocks can't show how full it is.
 
-![At 104 columns the bar keeps repo, branch, model, effort, context and the 5-hour meter; the 7-day meter moves onto the hint line with its reset time, right-aligned](docs/images/hint-overflow.png)
+![At 104 columns the bar keeps repo, branch, model, effort, context and the 5-hour meter; the 7-day meter moves onto the hint line with its reset time, right-aligned](images/hint-overflow.png)
 
 The icons come from a Nerd Font. On a machine without one, the installer switches the bar to short words instead
 (`ctx`, `5H`, `7D`), so it reads fine in any monospace font. To see the bar without starting Claude Code, run
@@ -77,7 +77,7 @@ The icons come from a Nerd Font. On a machine without one, the installer switche
 - **Agents** get a row showing the agent type, its model and effort (in the same colours as the status bar), what it's
   doing right now, how long it has been running and how many tokens it has used.
 
-![A real session: the prompt card with its time, Claude Code's summary of three tool calls, and an Explore agent row showing Haiku, low effort, 4 s and 7k tokens](docs/images/session-cards.png)
+![A real session: the prompt card with its time, Claude Code's summary of three tool calls, and an Explore agent row showing Haiku, low effort, 4 s and 7k tokens](images/session-cards.png)
 
 ### Behind the scenes
 
@@ -104,7 +104,7 @@ Nothing to look at here, but it shapes every session:
   pushes of another branch than the current one, `gh` aliases, and your own `!` commands (hooks never see those).
 - **`codex`**: hands a task to OpenAI's Codex CLI in the background (`codex exec`, read-only unless it works in a
   worktree), on the OpenAI subscription: questions about Codex, independent research, second opinions. Its sibling
-  setup is [codex-setup](https://github.com/Doofess/codex-setup).
+  setup is codex-setup.
 - **`photo-edit`** (plugin, not installed at user level): the `underwater-photoshop` skill, which edits underwater and
   macro photos in the local Photoshop. This repo is a plugin marketplace; see
   [Project-level plugins](#project-level-plugins).
@@ -237,10 +237,10 @@ git -C C:/dev/claude-setup pull && powershell -ExecutionPolicy Bypass -File C:/d
 | `statusbar.py` | `~/.claude/statusbar.py`, run by `statusLine` in `settings.json` every 60 s so the reset countdowns move |
 | `skills/<name>/` | `~/.claude/skills/<name>/` |
 | `mods/session-cards/` | stays in the repo; `install.ps1` adds its folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` and checks it with `claude plugin validate` |
-| `terminal/profile.json` | not copied; its font and `colorScheme` are written into Windows Terminal's `profiles.defaults`, and a `colorScheme` on the default profile itself is removed (see [`terminal/README.md`](terminal/README.md)) |
+| `terminal/profile.json` | not copied; its font and `colorScheme` are written into Windows Terminal's `profiles.defaults`, and a `colorScheme` on the default profile itself is removed (see [`terminal/README.md`](../terminal/README.md)) |
 | `mcp_off.py` | not copied; the installer runs it to turn the claude.ai Adobe connector off in each known project in `~/.claude.json` |
 | `chrome_off.py` | not copied; the installer runs it to set Claude in Chrome's "Enabled by default" off in `~/.claude.json`, once per machine |
-| `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see [its README](mcp-presets/README.md)) |
+| `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see [its README](../mcp-presets/README.md)) |
 
 Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers), `.credentials.json`, `history.jsonl`,
 `~/.remember/`. Synced plugins and claude.ai connectors follow the account, so they need no setup here.
