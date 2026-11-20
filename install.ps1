@@ -1298,7 +1298,7 @@ if (-not $Check) {
     New-Item -ItemType Directory -Force $dest | Out-Null
     Copy-Item (Join-Path $skill.FullName '*') $dest -Recurse -Force
   }
-  # Retired user skills (moved into a plugin, or never used) are deleted from ~/.claude/skills.
+  # Retired user skills (moved into a plugin, or dropped) are deleted from ~/.claude/skills.
   foreach ($n in @(Remove-RetiredSkills $retiredSkills (Join-Path $claudeDir 'skills'))) {
     $why = if ($n -eq 'underwater-photoshop') { 'now the photo-edit plugin' } else { 'retired' }
     Write-Host "    removed skill: $n ($why)"
