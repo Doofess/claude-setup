@@ -40,8 +40,8 @@ the machine is fixed by the installer, not by editing the repo.
 
 7. **User level is the workflow core.** `claude plugin list --json` must show, at user scope, `superpowers` and
    `remember` (both `@claude-plugins-official`) enabled and every other user-scope plugin disabled; `~/.claude/skills`
-   must hold `advisor-switch`, `codex`, `setup-check` and `pre-merge-review` (and claude.ai's `synced`), with no
-   `underwater-photoshop` or `find-skills`; `~/.claude/settings.json` must have, under `hooks.PreToolUse`, the
+   must hold `advisor-switch`, `setup-check` and `pre-merge-review` (and claude.ai's `synced`), with no
+   `underwater-photoshop`, `find-skills` or `codex`; `~/.claude/settings.json` must have, under `hooks.PreToolUse`, the
    `Bash|PowerShell` entry running `~/.claude/skills/pre-merge-review/gate.py check`. Anything else means the last
    install was skipped or failed: repair with step 5 (never `-SkipPlugins`). Then prove the gate runs, outside any
    repository so no PR is read (`\u006d` is JSON for `m`: the gate refuses any command whose text holds a merge, this

@@ -102,9 +102,6 @@ Nothing to look at here, but it shapes every session:
   refused. The gate checks that a review was recorded, not that it ran: it stops a merge that skipped the procedure by
   mistake, and the PR comment is what says what the review found. Not covered: merges through `gh api` or the web page,
   pushes of another branch than the current one, `gh` aliases, and your own `!` commands (hooks never see those).
-- **`codex`**: hands a task to OpenAI's Codex CLI in the background (`codex exec`, read-only unless it works in a
-  worktree), on the OpenAI subscription: questions about Codex, independent research, second opinions. Its sibling
-  setup is codex-setup.
 - **`photo-edit`** (plugin, not installed at user level): the `underwater-photoshop` skill, which edits underwater and
   macro photos in the local Photoshop. This repo is a plugin marketplace; see
   [Project-level plugins](#project-level-plugins).
@@ -271,7 +268,7 @@ Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers)
 The user level (`settings.json` here, merged into `~/.claude/settings.json`) keeps only the workflow core:
 
 - plugins: `superpowers` and `remember` (both from `claude-plugins-official`);
-- skills: `advisor-switch`, `codex`, `setup-check` and `pre-merge-review`;
+- skills: `advisor-switch`, `setup-check` and `pre-merge-review`;
 - agents: `worker` and `Explore`;
 - one hook: the `pre-merge-review` gate (a `PreToolUse` hook on `Bash` and `PowerShell`);
 - the status line, permissions, mods and the global `CLAUDE.md`.
@@ -301,11 +298,12 @@ skill names and affects only Claude Code's bundled skills and synced claude.ai s
 `anthropic-skills:docx`). Plugin skills ignore it: a plugin is on or off as a whole (`enabledPlugins`). Kept on:
 `code-review`, `run`, and the `ScheduleWakeup` and `ReportFindings` tools that `/loop` and `/code-review` use.
 
-Tools that nothing on this PC ever used are uninstalled by `install.ps1` (user-scope plugins in `$retiredPlugins`, the
-skills in `$retiredSkills`: `underwater-photoshop`, which is now the `photo-edit` plugin, and `find-skills`), and their
-ids leave `~/.claude/settings.json`. A re-run on a machine where all of this is gone makes no uninstall call.
-`-SkipPlugins` skips the plugin steps. An id installed only at project scope (for example `expo` for a deleted
-worktree) is not touched. The global TypeScript language server is not retired: the `typescript-lsp` plugin launches it
+Tools that this PC no longer uses are uninstalled by `install.ps1` (user-scope plugins in `$retiredPlugins`, the
+skills in `$retiredSkills`: `underwater-photoshop`, which is now the `photo-edit` plugin, `find-skills`, which was
+never used, and `codex`, whose OpenAI subscription ended), and their ids leave `~/.claude/settings.json`.
+A re-run on a machine where all of this is gone makes no uninstall call. `-SkipPlugins` skips the plugin steps.
+An id installed only at project scope (for example `expo` for a deleted worktree) is not touched.
+The global TypeScript language server is not retired: the `typescript-lsp` plugin launches it
 (see [TypeScript and Rust language servers](#typescript-and-rust-language-servers)).
 
 ### Project-level plugins

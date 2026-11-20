@@ -238,15 +238,25 @@ class RetireBase:
     def test_only_the_named_skill_folder_is_removed(self):
         skills = os.path.join(self.tmp, "skills")
         shutil.rmtree(skills, ignore_errors=True)
-        for name in ("find-skills", "codex"):
+        for name in ("find-skills", "advisor-switch"):
             os.makedirs(os.path.join(skills, name))
             with open(os.path.join(skills, name, "SKILL.md"), "w", encoding="utf-8") as f:
                 f.write("x")
         out, _ = self.run_driver(mode="skills", names=["underwater-photoshop", "find-skills"], dir=skills)
         self.assertEqual(out["Removed"], ["find-skills"])
-        self.assertEqual(sorted(os.listdir(skills)), ["codex"])
+        self.assertEqual(sorted(os.listdir(skills)), ["advisor-switch"])
         again, _ = self.run_driver(mode="skills", names=["underwater-photoshop", "find-skills"], dir=skills)
         self.assertEqual(again["Removed"], [])
+
+    def test_codex_skill_is_retired(self):
+        source = read("install.ps1")
+        m = re.search(r"\$retiredSkills = @\((.*?)\)", source)
+        self.assertIsNotNone(m)
+        self.assertIn("'codex'", m.group(1))
+        skills = os.path.join(self.tmp, "skills2")
+        os.makedirs(os.path.join(skills, "codex"))
+        out, _ = self.run_driver(mode="skills", names=re.findall(r"'([^']+)'", m.group(1)), dir=skills)
+        self.assertEqual(out["Removed"], ["codex"])
 
     def test_missing_skills_folder_is_fine(self):
         out, _ = self.run_driver(mode="skills", names=["find-skills"], dir=os.path.join(self.tmp, "none"))
@@ -303,7 +313,7 @@ class RetireInstallerTest(unittest.TestCase):
     def test_retired_skills(self):
         m = re.search(r"\$retiredSkills = @\((.*?)\)", self.text)
         self.assertIsNotNone(m)
-        self.assertEqual(re.findall(r"'([^']+)'", m.group(1)), ["underwater-photoshop", "find-skills"])
+        self.assertEqual(re.findall(r"'([^']+)'", m.group(1)), ["underwater-photoshop", "find-skills", "codex"])
 
     def test_the_language_server_plugins_are_not_retired(self):
         # typescript-lsp and rust-analyzer-lsp are pinned off in the template and installed disabled on every PC (their
