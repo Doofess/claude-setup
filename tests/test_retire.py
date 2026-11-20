@@ -250,7 +250,7 @@ class RetireBase:
 
     def test_codex_skill_is_retired(self):
         source = read("install.ps1")
-        m = re.search(r"^\$retiredSkills = @\((.*)\)", source, re.MULTILINE)
+        m = re.search(r"\$retiredSkills = @\((.*?)\)", source)
         self.assertIsNotNone(m)
         self.assertIn("'codex'", m.group(1))
         skills = os.path.join(self.tmp, "skills2")

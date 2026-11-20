@@ -1178,5 +1178,3 @@ class StateRepoBase:
 
 
 per_engine(StateRepoBase, globals())
-
-

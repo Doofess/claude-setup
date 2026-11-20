@@ -298,11 +298,12 @@ skill names and affects only Claude Code's bundled skills and synced claude.ai s
 `anthropic-skills:docx`). Plugin skills ignore it: a plugin is on or off as a whole (`enabledPlugins`). Kept on:
 `code-review`, `run`, and the `ScheduleWakeup` and `ReportFindings` tools that `/loop` and `/code-review` use.
 
-Tools that nothing on this PC ever used are uninstalled by `install.ps1` (user-scope plugins in `$retiredPlugins`, the
-skills in `$retiredSkills`: `underwater-photoshop`, which is now the `photo-edit` plugin, `find-skills` and `codex`), and their
-ids leave `~/.claude/settings.json`. A re-run on a machine where all of this is gone makes no uninstall call.
-`-SkipPlugins` skips the plugin steps. An id installed only at project scope (for example `expo` for a deleted
-worktree) is not touched. The global TypeScript language server is not retired: the `typescript-lsp` plugin launches it
+Tools that this PC no longer uses are uninstalled by `install.ps1` (user-scope plugins in `$retiredPlugins`, the
+skills in `$retiredSkills`: `underwater-photoshop`, which is now the `photo-edit` plugin, `find-skills`, which was
+never used, and `codex`, whose OpenAI subscription ended), and their ids leave `~/.claude/settings.json`.
+A re-run on a machine where all of this is gone makes no uninstall call. `-SkipPlugins` skips the plugin steps.
+An id installed only at project scope (for example `expo` for a deleted worktree) is not touched.
+The global TypeScript language server is not retired: the `typescript-lsp` plugin launches it
 (see [TypeScript and Rust language servers](#typescript-and-rust-language-servers)).
 
 ### Project-level plugins
