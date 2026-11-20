@@ -343,8 +343,8 @@ $retiredPlugins = @(
   'superpowers@anthropic-plugin-directory', 'frontend-design@anthropic-plugin-directory',
   'context7@anthropic-plugin-directory', 'playwright@anthropic-plugin-directory'
 )
-# User skills that moved into a plugin (underwater-photoshop is plugins/photo-edit) or were never used (find-skills).
-$retiredSkills = @('underwater-photoshop', 'find-skills')
+# User skills that moved into a plugin (underwater-photoshop is plugins/photo-edit) or were dropped (find-skills, codex: no OpenAI subscription).
+$retiredSkills = @('underwater-photoshop', 'find-skills', 'codex')
 
 # Uninstalls each id in $ids that `claude plugin list --json` shows at user scope (an id installed only at project
 # scope is not touched). $claude runs the CLI: a scriptblock that gets the arguments, so a test can pass a fake.
@@ -1300,7 +1300,7 @@ if (-not $Check) {
   }
   # Retired user skills (moved into a plugin, or never used) are deleted from ~/.claude/skills.
   foreach ($n in @(Remove-RetiredSkills $retiredSkills (Join-Path $claudeDir 'skills'))) {
-    $why = if ($n -eq 'underwater-photoshop') { 'now the photo-edit plugin' } else { 'retired, unused' }
+    $why = if ($n -eq 'underwater-photoshop') { 'now the photo-edit plugin' } else { 'retired' }
     Write-Host "    removed skill: $n ($why)"
   }
   # Agents: each file under agents/ becomes ~/.claude/agents/<name>.md (a file named like a built-in agent replaces it).
