@@ -1,6 +1,6 @@
 # claude-setup
 
-A Claude Code setup kept as code: one installer makes every Windows PC the same, and a hook refuses to merge a pull request until its latest commit has been reviewed.
+A coding-agent setup kept as code: one installer makes every Windows PC the same, and a hook refuses to merge a pull request until its latest commit has been reviewed.
 
 ![Claude Code's status bar: repo, branch and its pull request, model and effort, a context meter, 5-hour and 7-day plan meters with reset times, session cost and session time](docs/images/statusbar.png)
 
