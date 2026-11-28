@@ -20,7 +20,8 @@ import clean_slate
 
 PS_FUNCTIONS = (
     "Read-Utf8", "Write-Utf8NoBom", "Test-IsObject", "Test-IsArray", "Merge-Json", "Format-DirKey", "Merge-PluginDirs",
-    "Merge-ClaudeSettings", "Get-StateValue", "Set-StateValue", "Remove-AllUserPlugins", "Remove-Marketplaces",
+    "Merge-ClaudeSettings", "Get-StateValue", "Set-StateValue", "Remove-StateValue", "Test-CleanSlateStep",
+    "Set-CleanSlateStep", "Remove-AllUserPlugins", "Remove-Marketplaces",
     "Remove-ClaudeAgentsAndRules", "Remove-NamedFolders", "Remove-PathEntry", "Remove-UserPathEntry", "Remove-KotlinLsp",
     "Clear-ClaudeJson", "Invoke-CleanSlate",
 )
@@ -300,6 +301,13 @@ class CleanSlateBase:
         self.assertEqual(out["Done"], [])
         self.assertEqual(self.get_path(sub), (r"%USERPROFILE%\bin;C:\Tools", winreg.REG_EXPAND_SZ))
 
+    def test_a_plain_string_path_stays_a_plain_string(self):
+        root = os.path.join(self.work, "Programs", "kotlin-lsp")
+        sub = self.scratch_key()
+        self.set_path(sub, r"C:\a;" + os.path.join(root, "bin"), winreg.REG_SZ)
+        self.run_driver(mode="kotlin", root=root, subKey=sub)
+        self.assertEqual(self.get_path(sub), (r"C:\a", winreg.REG_SZ))
+
     def test_a_path_without_the_entry_is_not_written(self):
         sub = self.scratch_key()
         self.set_path(sub, r"%USERPROFILE%\bin", winreg.REG_SZ)
@@ -371,7 +379,7 @@ class CleanSlateBase:
         self.assertEqual(self.load(".claude.json"), {
             "numStartups": 7, "projects": {"C:/dev/x": {"allowedTools": []}, "C:/dev/y": {}}})
         self.assertEqual(self.load(".claude", "claude-setup-state.json"), {
-            "repo": "C:/clone", "flags": ["-KeepFont"], "cleanSlateSettings": "2026-11-28", "cleanSlate": "2026-11-28"})
+            "repo": "C:/clone", "flags": ["-KeepFont"], "cleanSlate": "2026-11-28"})
 
     def test_a_second_run_does_nothing(self):
         paths = self.machine()
@@ -388,7 +396,7 @@ class CleanSlateBase:
         self.assertEqual(calls, [])
         self.assertEqual(self.load(".claude", "settings.json"), {"theme": "mine"})
 
-    def test_a_failure_blocks_the_state_key_and_the_next_run_repeats_the_reset(self):
+    def test_a_failure_blocks_the_state_key_and_the_next_run_repeats_only_the_failed_step(self):
         paths = self.machine()
         sub = self.scratch_key()
         self.set_path(sub, r"C:\a")
@@ -396,19 +404,33 @@ class CleanSlateBase:
         out, calls = self.run_driver(mode="clean", list=listing, markets="[]", fail="uninstall a@m", subKey=sub, **paths)
         self.assertEqual(out["Failures"], ["clean slate: uninstall a@m"])
         self.assertIn("claude plugin uninstall b@m --scope user", calls)
-        self.assertNotIn("cleanSlate", self.load(".claude", "claude-setup-state.json"))
-        self.assertEqual(os.listdir(os.path.join(self.work, ".claude", "agents")), [])   # the other pieces still ran
+        state = self.load(".claude", "claude-setup-state.json")
+        self.assertNotIn("cleanSlate", state)
+        self.assertEqual(sorted(state["cleanSlateSteps"]),
+                         ["agents", "claudeJson", "kotlin", "marketplaces", "settings", "skills"])   # all but plugins
+        self.assertEqual(os.listdir(os.path.join(self.work, ".claude", "agents")), [])   # the other steps still ran
         self.assertNotIn("enabledPlugins", self.load(".claude", "settings.json"))        # settings.json was still reset
-        # What is added between the two runs stays: the second run does not write settings.json fresh again.
-        with open(os.path.join(self.work, ".claude", "settings.json"), "w", encoding="utf-8") as f:
-            f.write('{"theme": "mine"}')
-        out, calls = self.run_driver(mode="clean", list=listing, markets="[]", subKey=sub, **paths)
+        # What is added between the two runs stays: the second run repeats only the plugin step.
+        self.mkfile(".claude", "CLAUDE.md", text="new rules")
+        self.mkfile(".claude", "agents", "mine.md")
+        self.mkfile(".claude", "settings.json", text='{"theme": "mine"}')
+        with open(paths["claudeJson"], "w", encoding="utf-8") as f:
+            json.dump({"projects": {"C:/dev/x": {"disabledMcpServers": ["chosen since"]}}}, f)
+        with open(self.log, "w", encoding="utf-8"):
+            pass
+        out, calls = self.run_driver(mode="clean", list=listing, markets=MARKETS, subKey=sub, **paths)
         self.assertFalse(out["Skipped"])
         self.assertEqual(out["Failures"], [])
         self.assertIn("claude plugin uninstall a@m --scope user", calls)
-        self.assertEqual(self.load(".claude", "claude-setup-state.json")["cleanSlate"], "2026-11-28")
+        self.assertEqual([c for c in calls if "marketplace" in c], [])
         self.assertEqual(self.load(".claude", "settings.json"), {"theme": "mine"})
-        self.assertIn("none: settings.json was already written fresh by an earlier run", out["Lines"])
+        self.assertEqual(os.listdir(os.path.join(self.work, ".claude", "agents")), ["mine.md"])
+        self.assertTrue(os.path.exists(os.path.join(self.work, ".claude", "CLAUDE.md")))
+        self.assertEqual(self.load(".claude.json"), {"projects": {"C:/dev/x": {"disabledMcpServers": ["chosen since"]}}})
+        for label in ("marketplaces", "agents and CLAUDE.md", "skill folders", "Kotlin language server", "clean_slate.py", "settings.json"):
+            self.assertIn("none: %s: done by an earlier run" % label, out["Lines"])
+        self.assertEqual(self.load(".claude", "claude-setup-state.json"), {
+            "repo": "C:/clone", "flags": ["-KeepFont"], "cleanSlate": "2026-11-28"})
 
     def test_a_clean_pc_prints_nothing_to_reset(self):
         claude_dir = os.path.join(self.work, ".claude")
@@ -426,8 +448,7 @@ class CleanSlateBase:
         self.assertEqual(out["Failures"], [])
         nones = [l for l in out["Lines"] if l.startswith("none: ")]
         self.assertEqual(len(nones), 5, out["Lines"])
-        self.assertEqual(self.load(".claude", "claude-setup-state.json"),
-                         {"cleanSlateSettings": "2026-11-28", "cleanSlate": "2026-11-28"})
+        self.assertEqual(self.load(".claude", "claude-setup-state.json"), {"cleanSlate": "2026-11-28"})
 
 
 def _delete_value(sub):
@@ -453,7 +474,8 @@ class InstallerWiringTest(unittest.TestCase):
     def test_the_backup_holds_what_the_reset_deletes(self):
         text = read("install.ps1")
         backup = text[text.index("# 1. Backup"):text.index("# 1b. Clean slate")]
-        for needle in ("'CLAUDE.md'", "'claude-setup-state.json'", "'agents'", "'.claude.json'"):
+        for needle in ("'CLAUDE.md'", "'claude-setup-state.json'", "'agents'", "'.claude.json'",
+                       "'known_marketplaces.json'", "'installed_plugins.json'"):
             self.assertIn(needle, backup)
 
     def test_only_the_user_path_is_touched(self):

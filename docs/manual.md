@@ -137,14 +137,15 @@ font and colour scheme. On a PC that still has the old setup, its first run also
 | `-SkipFont` | skip the font install and the font change |
 
 It backs up the previous files (`CLAUDE.md`, `settings.json`, `statusbar.py`, `keybindings.json`, the state file,
-`agents/` and `~/.claude.json`, plus the terminal settings) to `~/.claude/backups/claude-setup-<timestamp>/` on every
-run. `-Check` changes nothing.
+`agents/`, `~/.claude.json` and the plugin records `known_marketplaces.json` and `installed_plugins.json`, plus the
+terminal settings) to `~/.claude/backups/claude-setup-<timestamp>/` on every run. `-Check` changes nothing.
 
 ### Clean slate (once per PC)
 
 The first run on a PC resets it, then records `"cleanSlate": "2026-11-28"` in `~/.claude/claude-setup-state.json`. Later
-runs see the key and skip the reset. The key is written only when every piece worked, so a failure (named in the
-`DONE WITH FAILURES` list) repeats the whole reset on the next run. Each piece prints a line, or says there was nothing
+runs see the key and skip the reset. The key is written only when every step worked. A step that worked is recorded
+under `cleanSlateSteps`, so after a failure (named in the `DONE WITH FAILURES` list) the next run repeats only the steps
+that failed, and what was added in between stays. Each piece prints a line, or says there was nothing
 to do. In this order:
 
 1. Uninstalls every plugin that `claude plugin list --json` shows at user scope (`claude plugin uninstall <id> --scope
@@ -157,17 +158,18 @@ to do. In this order:
 4. Deletes the skill folders `~/.claude/skills/underwater-photoshop`, `find-skills` and `codex`, and `~/.claude/photo-edit`.
    Every other skill folder, `synced` included, stays.
 5. Removes the Kotlin language server the old installer put in `%LOCALAPPDATA%\Programs\kotlin-lsp`, and its shim folder's
-   entry from your user Path (the registry value, written back as ExpandString; never the machine Path). The
+   entry from your user Path (the registry value, written back in its own kind; never the machine Path). Open shells keep
+   the old Path until restarted, which is harmless: the folder it named is gone. The
    TypeScript language server and the rustup `rust-analyzer` components stay: they are ordinary dev tools.
 6. `clean_slate.py` deletes `claudeInChromeDefaultEnabled` and every project's `disabledMcpServers` from `~/.claude.json`
    (read, edit, swap in under Claude Code's own lock; every other key stays), and the keys `mcp_off.py` and
    `chrome_off.py` kept in the state file.
-7. Writes `~/.claude/settings.json` fresh from the template, so every retired key is gone. This happens once, even when
-   another step failed and a later run repeats the reset. Later runs merge instead.
+7. Writes `~/.claude/settings.json` fresh from the template, so every retired key is gone. Later runs merge instead.
 
-Everything deleted is in the run's backup folder first, except these: the skill folders, `~/.claude/photo-edit` and
-the Kotlin language server are not backed up (the skills are in this repo's git history), and the plugins can be
-installed again from their marketplaces.
+The run's backup folder holds the agents, `~/.claude/CLAUDE.md`, `settings.json`, `~/.claude.json`, the state file and
+the plugin records. Not backed up: the plugins themselves (to get one back, add its marketplace again from the backed-up
+`known_marketplaces.json` with `claude plugin marketplace add`, then install it), the skill folders and
+`~/.claude/photo-edit` (both in this repo's git history), and the Kotlin language server.
 
 ### Check a machine
 

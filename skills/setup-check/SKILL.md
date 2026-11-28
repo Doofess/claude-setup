@@ -37,14 +37,15 @@ the machine is fixed by the installer, not by editing the repo.
    | Claude Code not signed in | Run `claude` and sign in. |
    | GitHub CLI not signed in | `gh auth login` |
 
-7. **Clean slate.** The `cleanSlate` and `cleanSlateSettings` keys in the state file (read them like `repo` in step 1)
-   must both equal `$cleanSlateId` in the clone's `install.ps1`; another value is an older reset. Then
-   `claude plugin list --json` must show no user-scope plugin besides Claude Code's own `@builtin` ones; `~/.claude/skills`
+7. **Clean slate.** The `cleanSlate` key in the state file (read it like `repo` in step 1) must equal `$cleanSlateId` in
+   the clone's `install.ps1` (another value is an older reset), and `cleanSlateSteps` must be gone (it lists the steps
+   of an unfinished reset). Then `claude plugin list --json` must show no user-scope plugin besides the ones the
+   installer leaves alone: `@builtin` (Claude Code's own), `@inline` (session) and `@synced` (claude.ai); `~/.claude/skills`
    must hold `advisor-switch`, `setup-check` and `pre-merge-review` (and claude.ai's `synced`), with no
    `underwater-photoshop`, `find-skills` or `codex`; `~/.claude/agents` must hold no file; `~/.claude/CLAUDE.md` must not
    exist; `~/.claude/settings.json` must have no `hooks`, `enabledPlugins` or `deniedMcpServers`. A missing key or a
-   leftover means the one-time reset did not finish: repair with step 5 and read its `Clean slate` lines. A plugin the
-   user installs on purpose later is theirs; report it, do not remove it.
+   leftover means the one-time reset did not finish: repair with step 5 and read its `Clean slate` lines. A plugin,
+   agent or `CLAUDE.md` the user adds on purpose later is theirs; report it, do not remove it.
 8. **Done only when step 4 exits 0.** Quote its last line verbatim. Restart notes: Windows Terminal picks up profile
    changes live (a new tab is enough); Claude Code needs a restart for `settings.json` changes, so tell the user to
    restart it if step 5 ran.

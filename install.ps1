@@ -901,11 +901,12 @@ function Test-StatusBar([string]$command, [string]$sample) {
 # ---- One-time clean slate ----
 # Every plugin, marketplace, custom agent, global CLAUDE.md, Kotlin language server and ~/.claude.json toggle this setup once
 # installed is taken off the PC, and settings.json is written fresh from the template. It runs once per PC: a finished run
-# (no failure) records $cleanSlateId under "cleanSlate" in the state file, and a later run sees it and does nothing.
-# The pieces are functions with the CLI and the paths as parameters, so the tests run them against a fake `claude` and a
-# temp folder. The step-1 backup holds the agents, the global CLAUDE.md, settings.json, ~/.claude.json and the state
-# file. The retired skill folders, ~/.claude/photo-edit and the Kotlin server are not backed up, and the plugins can be
-# installed again from their marketplaces.
+# (no failure) records $cleanSlateId under "cleanSlate" in the state file, and a later run sees it and does nothing; after
+# a failure, a later run repeats only the steps that failed (cleanSlateSteps). The pieces are functions with the CLI and
+# the paths as parameters, so the tests run them against a fake `claude` and a temp folder. The step-1 backup holds the
+# agents, the global CLAUDE.md, settings.json, ~/.claude.json, the state file and the plugin and marketplace records
+# (known_marketplaces.json, installed_plugins.json). The plugins themselves, the retired skill folders, ~/.claude/photo-edit
+# and the Kotlin server are not backed up.
 $cleanSlateId = '2026-11-28'
 
 function Get-StateValue([string]$statePath, [string]$name) {
@@ -1020,8 +1021,8 @@ function Remove-PathEntry([string]$current, [string]$entry) {
   (@(($current -split ';') | Where-Object { $_.Trim() -and (Format-DirKey $_) -ne $key })) -join ';'
 }
 
-# Takes $dir off the USER Path (HKCU\<subKey>\Path, read and written raw as ExpandString so %VARS% in other entries stay
-# unexpanded; never the machine Path) and, for the real Environment key, off this process's Path. Returns $true when the
+# Takes $dir off the USER Path (HKCU\<subKey>\Path, read and written raw, in its own registry kind, so %VARS% in other
+# entries stay unexpanded; never the machine Path) and, for the real Environment key, off this process's Path. Returns $true when the
 # registry changed. $subKey is a parameter so a test can use a scratch key.
 function Remove-UserPathEntry([string]$dir, [string]$subKey = 'Environment') {
   $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($subKey, $true)
@@ -1031,7 +1032,10 @@ function Remove-UserPathEntry([string]$dir, [string]$subKey = 'Environment') {
     $cur = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
     $want = Format-DirKey $dir
     if (@($cur -split ';' | Where-Object { $_.Trim() -and (Format-DirKey $_) -eq $want }).Count -gt 0) {
-      $key.SetValue('Path', (Remove-PathEntry $cur $dir), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+      # Written back as the kind it was: a plain string stays one, anything else is the usual ExpandString.
+      $kind = $key.GetValueKind('Path')
+      if ($kind -ne [Microsoft.Win32.RegistryValueKind]::String) { $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString }
+      $key.SetValue('Path', (Remove-PathEntry $cur $dir), $kind)
       $changed = $true
     }
   } finally { $key.Close() }
@@ -1057,8 +1061,34 @@ function Clear-ClaudeJson([string]$script, [string]$claudeJson, [string]$statePa
   [pscustomobject]@{ Ok = ($LASTEXITCODE -eq 0); Lines = $out }
 }
 
+# Which reset steps are finished: the state file's "cleanSlateSteps" maps a step's name to the reset id. A run that repeats
+# the reset after a failure skips the finished steps, so what was added since (a new CLAUDE.md, an agent, a settings key,
+# a connector switched off) stays and only the failed steps run again. A finished reset drops the map for "cleanSlate".
+function Test-CleanSlateStep([string]$statePath, [string]$id, [string]$name) {
+  $steps = Get-StateValue $statePath 'cleanSlateSteps'
+  return ($null -ne $steps -and $null -ne $steps.PSObject.Properties[$name] -and [string]$steps.PSObject.Properties[$name].Value -eq $id)
+}
+
+function Set-CleanSlateStep([string]$statePath, [string]$id, [string]$name) {
+  $steps = Get-StateValue $statePath 'cleanSlateSteps'
+  if ($steps -isnot [System.Management.Automation.PSCustomObject]) { $steps = [pscustomobject]@{} }
+  $steps | Add-Member -NotePropertyName $name -NotePropertyValue $id -Force
+  Set-StateValue $statePath 'cleanSlateSteps' $steps
+}
+
+# Removes one key of the state file and keeps every other key.
+function Remove-StateValue([string]$statePath, [string]$name) {
+  if (-not (Test-Path -LiteralPath $statePath)) { return }
+  $state = Read-Utf8 $statePath | ConvertFrom-Json
+  if ($state -and $state.PSObject.Properties[$name]) {
+    $state.PSObject.Properties.Remove($name)
+    Write-Utf8NoBom $statePath (($state | ConvertTo-Json -Depth 20) + "`n")
+  }
+}
+
 # The whole reset, once per PC. Returns Skipped (the state file already holds $id), Lines (Text, Kind: info, none or warn),
-# and Failures; the state key is written only when there is no failure. Each piece is tried even when an earlier one fails.
+# and Failures. Each step is tried even when an earlier one fails. A step that adds no failure is recorded as done and does
+# not run again (Set-CleanSlateStep); "cleanSlate" is written once every step is done.
 function Invoke-CleanSlate([string]$id, [string]$claudeDir, [string]$claudeJson, [string]$statePath, [string]$repoDir, $template,
                            [string]$kotlinRoot, [string]$pyScript, [scriptblock]$claude = { & claude @args },
                            [scriptblock]$python = { & python -S @args }, [string]$pathSubKey = 'Environment') {
@@ -1068,9 +1098,19 @@ function Invoke-CleanSlate([string]$id, [string]$claudeDir, [string]$claudeJson,
   $r = [pscustomobject]@{ Skipped = $false; Lines = (New-Object 'System.Collections.Generic.List[object]'); Failures = (New-Object 'System.Collections.Generic.List[string]') }
   if ((Get-StateValue $statePath 'cleanSlate') -eq $id) { $r.Skipped = $true; return $r }
   $line = { param([string]$text, [string]$kind = 'info') $r.Lines.Add([pscustomobject]@{ Text = $text; Kind = $kind }) }
+  # Runs one step's body unless an earlier run finished it, and records it as done when the body adds no failure.
+  $step = {
+    param([string]$stepName, [string]$label, [scriptblock]$body)
+    if (Test-CleanSlateStep $statePath $id $stepName) { & $line "${label}: done by an earlier run" 'none'; return }
+    $before = $r.Failures.Count
+    try { & $body } catch { $r.Failures.Add("clean slate: ${label}: $($_.Exception.Message)") }
+    if ($r.Failures.Count -eq $before) {
+      try { Set-CleanSlateStep $statePath $id $stepName } catch { $r.Failures.Add("clean slate: ${label}: done, but not recorded in the state file: $($_.Exception.Message)") }
+    }
+  }
 
   # 1. Plugins at user scope; the others are listed with the command to run in their project.
-  try {
+  & $step 'plugins' 'plugins' {
     $failed = New-Object 'System.Collections.Generic.List[string]'
     $pl = Remove-AllUserPlugins $claude $failed
     foreach ($p in $pl.Removed) { & $line "uninstalled plugin $p" }
@@ -1079,61 +1119,58 @@ function Invoke-CleanSlate([string]$id, [string]$claudeDir, [string]$claudeJson,
     }
     foreach ($f in $failed) { $r.Failures.Add("clean slate: $f"); & $line "failed: $f" 'warn' }
     if ($pl.Removed.Count -eq 0 -and $pl.Elsewhere.Count -eq 0 -and $failed.Count -eq 0) { & $line 'no user plugins to uninstall' 'none' }
-  } catch { $r.Failures.Add("clean slate: plugins: $($_.Exception.Message)") }
+  }
 
   # 2. Marketplaces
-  try {
+  & $step 'marketplaces' 'marketplaces' {
     $failed = New-Object 'System.Collections.Generic.List[string]'
     $gone = @(Remove-Marketplaces $claude (Join-Path $claudeDir 'plugins\known_marketplaces.json') $keepMarketplace $failed)
     foreach ($n in $gone) { & $line "removed marketplace $n" }
     foreach ($f in $failed) { $r.Failures.Add("clean slate: $f"); & $line "failed: $f" 'warn' }
     if ($gone.Count -eq 0 -and $failed.Count -eq 0) { & $line "no marketplace besides $keepMarketplace" 'none' }
-  } catch { $r.Failures.Add("clean slate: marketplaces: $($_.Exception.Message)") }
+  }
 
   # 3. Custom agents and the global CLAUDE.md
-  try {
+  & $step 'agents' 'agents and CLAUDE.md' {
     $gone = @(Remove-ClaudeAgentsAndRules $claudeDir)
     foreach ($n in $gone) { & $line "deleted ~/.claude/$n" }
     if ($gone.Count -eq 0) { & $line 'no custom agents or ~/.claude/CLAUDE.md' 'none' }
-  } catch { $r.Failures.Add("clean slate: agents and CLAUDE.md: $($_.Exception.Message)") }
+  }
 
   # 4. Skill folders of retired things
-  try {
+  & $step 'skills' 'skill folders' {
     $gone = @(Remove-NamedFolders $cleanSlateSkills (Join-Path $claudeDir 'skills') | ForEach-Object { "skills/$_" }) + @(Remove-NamedFolders @('photo-edit') $claudeDir)
     foreach ($n in $gone) { & $line "deleted ~/.claude/$n" }
     if ($gone.Count -eq 0) { & $line 'no retired skill folders' 'none' }
-  } catch { $r.Failures.Add("clean slate: skill folders: $($_.Exception.Message)") }
+  }
 
   # 5. Kotlin language server
-  try {
+  & $step 'kotlin' 'Kotlin language server' {
     $gone = @(Remove-KotlinLsp $kotlinRoot $pathSubKey)
     foreach ($n in $gone) { & $line "removed Kotlin language server: $n" }
     if ($gone.Count -eq 0) { & $line 'no Kotlin language server' 'none' }
-  } catch { $r.Failures.Add("clean slate: Kotlin language server: $($_.Exception.Message)") }
+  }
 
   # 6. ~/.claude.json and the state file
-  try {
+  & $step 'claudeJson' 'clean_slate.py' {
     $cj = Clear-ClaudeJson $pyScript $claudeJson $statePath $python
     foreach ($l in $cj.Lines) { if ($l.Trim()) { & $line $l.Trim() } }
     if (-not $cj.Ok) { $r.Failures.Add("clean slate: clean_slate.py failed: $($cj.Lines -join ' ')") }
-  } catch { $r.Failures.Add("clean slate: clean_slate.py: $($_.Exception.Message)") }
-
-  # 7. settings.json, fresh from the template (the CLI may have rewritten it while uninstalling, so this goes last). Once:
-  # "cleanSlateSettings" records it, so a run that repeats the reset after a failure keeps what was added since.
-  if ((Get-StateValue $statePath 'cleanSlateSettings') -eq $id) {
-    & $line 'settings.json was already written fresh by an earlier run' 'none'
-  } else {
-    try {
-      $fresh = Merge-ClaudeSettings ([pscustomobject]@{}) $template $repoDir
-      $settingsFile = Join-Path $claudeDir 'settings.json'
-      New-Item -ItemType Directory -Force (Split-Path $settingsFile) | Out-Null
-      Write-Utf8NoBom $settingsFile (($fresh | ConvertTo-Json -Depth 20) + "`n")
-      Set-StateValue $statePath 'cleanSlateSettings' $id
-      & $line 'wrote ~/.claude/settings.json fresh from the template'
-    } catch { $r.Failures.Add("clean slate: settings.json: $($_.Exception.Message)") }
   }
 
-  if ($r.Failures.Count -eq 0) { Set-StateValue $statePath 'cleanSlate' $id }
+  # 7. settings.json, fresh from the template (the CLI may have rewritten it while uninstalling, so this goes last)
+  & $step 'settings' 'settings.json' {
+    $fresh = Merge-ClaudeSettings ([pscustomobject]@{}) $template $repoDir
+    $settingsFile = Join-Path $claudeDir 'settings.json'
+    New-Item -ItemType Directory -Force (Split-Path $settingsFile) | Out-Null
+    Write-Utf8NoBom $settingsFile (($fresh | ConvertTo-Json -Depth 20) + "`n")
+    & $line 'wrote ~/.claude/settings.json fresh from the template'
+  }
+
+  if ($r.Failures.Count -eq 0) {
+    Set-StateValue $statePath 'cleanSlate' $id
+    Remove-StateValue $statePath 'cleanSlateSteps'
+  }
   return $r
 }
 
@@ -1151,6 +1188,11 @@ if (-not $Check) {
     if (Test-Path $p) { Copy-Item $p $backup }
   }
   if (Test-Path (Join-Path $claudeDir 'agents')) { Copy-Item (Join-Path $claudeDir 'agents') (Join-Path $backup 'agents') -Recurse -Force }
+  # The plugin and marketplace records, so what the reset uninstalls can be looked up and added again.
+  foreach ($f in 'known_marketplaces.json', 'installed_plugins.json') {
+    $p = Join-Path $claudeDir "plugins\$f"
+    if (Test-Path $p) { New-Item -ItemType Directory -Force (Join-Path $backup 'plugins') | Out-Null; Copy-Item $p (Join-Path $backup 'plugins') }
+  }
   $claudeJson = Join-Path $HOME '.claude.json'
   if (Test-Path $claudeJson) { Copy-Item $claudeJson (Join-Path $backup 'claude.json') }
 
