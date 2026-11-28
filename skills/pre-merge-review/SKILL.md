@@ -9,9 +9,9 @@ A pull request merges only after the built-in `/code-review` at `high` has revie
 each of its findings has been checked against the code. Auto-merge counts as merging: once it is on, GitHub merges the
 moment CI passes, whatever review is still running.
 
-A hook (`gate.py check`, installed with this skill) refuses `gh pr merge` until a review of the PR's current head commit
-is recorded, and refuses a `git push` to a PR whose auto-merge is on. It is a backstop, not the procedure: follow the
-steps below and the gate never has to refuse.
+`gate.py check` can run as a PreToolUse hook on Bash and PowerShell: it then refuses `gh pr merge` until a review of the
+PR's current head commit is recorded, and refuses a `git push` to a PR whose auto-merge is on. This setup no longer
+installs that hook, so the steps below are the whole procedure; the gate rows further down apply only where it is wired.
 
 ## Steps
 

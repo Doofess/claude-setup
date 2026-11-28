@@ -652,28 +652,6 @@ class RecordTest(GateCase):
         self.assertEqual(self.record_files(), [])
 
 
-class SetupCheckProbeTest(GateCase):
-    """setup-check step 7 runs the gate once through the PowerShell tool, so the installed gate sees its text too."""
-
-    def probe(self):
-        with open(os.path.join(ROOT, "skills", "setup-check", "SKILL.md"), encoding="utf-8") as f:
-            (line,) = [ln.strip() for ln in f if 'gate.py" check' in ln]
-        self.assertTrue(line.startswith("`") and line.endswith("`"), line)
-        return line[1:-1]
-
-    def test_the_gate_lets_the_probe_run_and_refuses_its_payload(self):
-        command = self.probe()
-        self.assertIsNone(self.check(command, tool="PowerShell"))  # the text itself holds no merge
-        payload = command[command.index("'") + 1:command.index("' |")]
-        self.assertEqual(json.loads(payload)["tool_input"]["command"], "gh pr merge 1")
-        p = self.run_gate(["check"], payload)
-        self.assertEqual(p.returncode, 0)
-        out = json.loads(p.stdout)["hookSpecificOutput"]
-        self.assertEqual(out["permissionDecision"], "deny")
-        self.assertIn("could not read PR 1 (", out["permissionDecisionReason"])  # the merge rule, not the crash path
-        self.assertNotIn("gate failed", out["permissionDecisionReason"])
-
-
 class PatternTimeTest(unittest.TestCase):
     """A failed search must stay fast: a hook killed at its timeout lets the command run. 24 repeats took the old,
     ambiguous patterns about 5 s (doubling with each one), so a regression fails here instead of hanging."""
@@ -726,58 +704,6 @@ class FailClosedTest(unittest.TestCase):
         out = self.run_check(gate, "gh pr merge 7")
         self.assertIn("budget", out["hookSpecificOutput"]["permissionDecisionReason"])
         self.assertIsNone(self.run_check(gate, "git push"))
-
-
-def git_bash():
-    """Git's own bash (on Windows, `bash` on PATH may be WSL's launcher), or None."""
-    if os.name != "nt":
-        return shutil.which("bash")
-    git = shutil.which("git")
-    if not git:
-        return None
-    path = os.path.join(os.path.dirname(os.path.dirname(git)), "bin", "bash.exe")
-    return path if os.path.exists(path) else None
-
-
-class HookCommandTest(unittest.TestCase):
-    """The template's hook command: a missing or broken gate lets commands through instead of blocking every one
-    (Claude Code takes exit 2 as a refusal, and Python exits 2 when it cannot open the script)."""
-
-    def setUp(self):
-        with open(os.path.join(ROOT, "settings.json"), encoding="utf-8") as f:
-            (entry,) = json.load(f)["hooks"]["PreToolUse"]
-        self.command = entry["hooks"][0]["command"]
-        self.tmp = tempfile.mkdtemp(prefix="hook cmd ")
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-
-    def run_with(self, shell, script):
-        path = os.path.join(self.tmp, "gate.py").replace("\\", "/")
-        if script is not None:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(script)
-        command = self.command.replace("~/.claude/skills/pre-merge-review/gate.py", '"%s"' % path)
-        self.assertNotEqual(command, self.command)
-        return subprocess.run(shell + [command], input="{}", capture_output=True, text=True, timeout=60)
-
-    def shells(self):
-        found = []
-        bash = git_bash()
-        if bash:
-            found.append([bash, "-c"])
-        pwsh = shutil.which("pwsh")
-        if pwsh:
-            found.append([pwsh, "-NoProfile", "-NonInteractive", "-Command"])
-        if not found:
-            self.skipTest("no bash or pwsh")
-        return found
-
-    def test_a_missing_or_failing_gate_exits_0_and_a_refusal_still_reaches_claude_code(self):
-        for shell in self.shells():
-            with self.subTest(shell=shell[0]):
-                self.assertEqual(self.run_with(shell, None).returncode, 0, "missing gate")
-                self.assertEqual(self.run_with(shell, "import sys; sys.exit(2)").returncode, 0, "exit 2")
-                p = self.run_with(shell, 'print(\'{"hookSpecificOutput": "deny"}\')')
-                self.assertEqual((p.returncode, p.stdout.strip()), (0, '{"hookSpecificOutput": "deny"}'))
 
 
 if __name__ == "__main__":

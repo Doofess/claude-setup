@@ -1,124 +1,20 @@
 {
-  "enabledPlugins": {
-    "superpowers@claude-plugins-official": true,
-    "remember@claude-plugins-official": true,
-    "playwright@claude-plugins-official": false,
-    "context7@claude-plugins-official": false,
-    "frontend-design@claude-plugins-official": false,
-    "mattpocock-skills@claude-plugins-official": false,
-    "modern-web-guidance@claude-plugins-official": false,
-    "supabase@claude-plugins-official": false,
-    "adobe-for-creativity@claude-plugins-official": false,
-    "kotlin-lsp@claude-plugins-official": false,
-    "typescript-lsp@claude-plugins-official": false,
-    "rust-analyzer-lsp@claude-plugins-official": false,
-    "security-guidance@claude-plugins-official": false,
-    "good-css@good-css": false,
-    "claude-md-management@anthropic-plugin-directory": false,
-    "design@synced": false,
-    "engineering@synced": false,
-    "humanizer@synced": false
-  },
-  "extraKnownMarketplaces": {
-    "good-css": { "source": { "source": "github", "repo": "vojtaholik/good-css" } }
-  },
-  "permissions": {
-    "defaultMode": "bypassPermissions",
-    "deny": ["Skill(mattpocock-skills:grilling)", "Skill(grilling)"]
-  },
+  "permissions": { "defaultMode": "bypassPermissions" },
   "model": "opus",
   "theme": "custom:clear",
   "env": {
     "CLAUDE_CODE_NATIVE_CURSOR": "1",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
     "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false",
-    "CLAUDE_CODE_DISABLE_FAST_MODE": "1",
     "CLAUDE_CODE_PLUGIN_DIRS": "<repo>/mods/session-cards"
   },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          { "type": "command", "command": "python -I -S ~/.claude/skills/pre-merge-review/gate.py check; exit 0", "timeout": 30 }
-        ]
-      }
-    ]
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "python -I -S ~/.claude/statusbar.py",
-    "refreshInterval": 60
-  },
-  "deniedMcpServers": [
-    { "serverUrl": "https://mcp.slack.com/*" },
-    { "serverUrl": "https://mcp.linear.app/*" },
-    { "serverUrl": "https://mcp.atlassian.com/*" },
-    { "serverUrl": "https://mcp.notion.com/*" },
-    { "serverUrl": "https://mcp.figma.com/*" },
-    { "serverUrl": "https://mcp.intercom.com/*" },
-    { "serverUrl": "https://api.anthropic.com/v1/pages/mcp" },
-    { "serverUrl": "https://mcp.vercel.com" },
-    { "serverUrl": "https://mcp.vercel.com/*" },
-    { "serverUrl": "https://mcp.canva.com/*" },
-    { "serverUrl": "https://gmailmcp.googleapis.com/*" },
-    { "serverUrl": "https://calendarmcp.googleapis.com/*" },
-    { "serverUrl": "https://drivemcp.googleapis.com/*" },
-    { "serverUrl": "https://docsmcp.googleapis.com/*" },
-    { "serverUrl": "https://sheetsmcp.googleapis.com/*" },
-    { "serverUrl": "https://mcp-gateway-external-pilot.spotify.net/*" },
-    { "serverCommand": ["npx", "-y", "@wonderwhy-er/desktop-commander@latest"] },
-    { "serverName": "plugin:finance:snowflake" },
-    { "serverName": "plugin:finance:databricks" },
-    { "serverName": "plugin:finance:gmail" },
-    { "serverName": "plugin:finance:google calendar" },
-    { "serverName": "plugin:engineering:gmail" },
-    { "serverName": "plugin:engineering:google calendar" },
-    { "serverName": "plugin:design:gmail" },
-    { "serverName": "plugin:design:google calendar" }
-  ],
-  "modelSettings": {
-    "claude-opus-5-5": {
-      "effortLevel": "high"
-    },
-    "claude-fable-5-1": {
-      "effortLevel": "xhigh"
-    },
-    "claude-sonnet-5-5": {
-      "effortLevel": "high"
-    }
-  },
+  "statusLine": { "type": "command", "command": "python -I -S ~/.claude/statusbar.py", "refreshInterval": 60 },
   "autoCompactWindow": 300000,
-  "enableArtifact": false,
-  "enableWorkflows": false,
   "feedbackDrafts": "off",
-  "skillOverrides": {
-    "chrome-browser": "name-only",
-    "built-in-browser": "name-only",
-    "computer-use": "name-only",
-    "docs": "name-only",
-    "docx": "name-only",
-    "pdf": "name-only",
-    "pptx": "name-only",
-    "xlsx": "name-only",
-    "deep-research": "name-only",
-    "loop": "user-invocable-only",
-    "schedule": "user-invocable-only",
-    "init": "user-invocable-only",
-    "security-review": "user-invocable-only",
-    "simplify": "user-invocable-only",
-    "keybindings-help": "user-invocable-only",
-    "update-config": "user-invocable-only",
-    "fewer-permission-prompts": "user-invocable-only",
-    "plugin-authoring": "user-invocable-only",
-    "dataviz": "off",
-    "claude-api": "off",
-    "artifact-design": "off",
-    "artifact-diagramming": "off",
-    "artifact-capabilities": "off"
-  },
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
   "switchModelsOnFlag": false,
-  "agentPushNotifEnabled": true
+  "agentPushNotifEnabled": true,
+  "tui": "fullscreen",
+  "editorMode": "normal",
+  "remoteControlAtStartup": true
 }

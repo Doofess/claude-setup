@@ -59,13 +59,15 @@ class SettingsTest(unittest.TestCase):
 
 
 class InstallerTest(unittest.TestCase):
-    def test_plugin_commands_are_user_scope(self):
-        # Without a scope, `claude plugin enable` run in a repo whose .claude/settings.json turns a plugin off
-        # writes `true` into that project file instead of the user settings.
-        lines = [l for l in read("install.ps1").splitlines() if re.search(r"& claude plugin (install|enable|disable|update) ", l)]
-        self.assertEqual(len(lines), 4)
-        for line in lines:
-            self.assertIn("--scope user", line)
+    def test_the_installer_installs_no_plugin_and_uninstalls_only_at_user_scope(self):
+        # The setup holds no plugin: the one-time reset uninstalls user-scope ones, and nothing installs, enables or
+        # updates one. Without --scope, the CLI would pick a project's scope when run inside a repo that has one.
+        text = read("install.ps1")
+        self.assertNotRegex(text, r"claude plugin (install|enable|disable|update)\b")
+        self.assertNotRegex(text, r"\$claude plugin (install|enable|disable|update)\b")
+        uninstalls = [l for l in text.splitlines() if re.search(r"\$claude plugin uninstall ", l)]
+        self.assertEqual(len(uninstalls), 1)
+        self.assertIn("--scope user", uninstalls[0])
 
     def test_json_files_are_read_as_utf8(self):
         # Windows PowerShell 5.1's Get-Content reads a BOM-less file in the ANSI code page, so on a PC whose code
@@ -98,12 +100,14 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(len(row), 1)
         self.assertIn("$themeFileOk", row[0])
 
-    def test_installer_copies_the_global_rules_from_global_folder(self):
+    def test_installer_copies_no_global_rules_agents_or_presets(self):
         text = read("install.ps1")
-        self.assertIn(r"Join-Path $repo 'global\CLAUDE.md'", text)
-        self.assertNotIn("Join-Path $repo 'CLAUDE.md'", text)
-        self.assertTrue(read("global", "CLAUDE.md").startswith("# Global rules"))
-        self.assertFalse(read("CLAUDE.md").startswith("# Global rules"))
+        for gone in ("global", "agents", "mcp-presets", "plugins", ".claude-plugin", "mcp_off.py", "chrome_off.py"):
+            self.assertFalse(os.path.exists(os.path.join(ROOT, gone)), gone)
+        self.assertNotIn("Join-Path $repo 'global", text)
+        self.assertNotIn("Join-Path $repo 'agents", text)
+        for flag in ("SkipPlugins", "SkipLsp", "SkipKotlinLsp"):
+            self.assertNotIn(flag, text)
 
     def test_font_rows_require_no_font_on_the_default_profile(self):
         rows = [l for l in read("install.ps1").splitlines()
@@ -842,7 +846,7 @@ MERGE_FIXTURE = os.path.join(ROOT, "tests", "fixtures", "settings", "current.jso
 def merge_helpers():
     source = read("install.ps1").replace("\r\n", "\n")
     out = []
-    for name in ("Test-IsObject", "Test-IsArray", "Merge-Json", "Merge-HookEvents", "Format-DirKey", "Merge-PluginDirs", "Merge-ClaudeSettings"):
+    for name in ("Test-IsObject", "Test-IsArray", "Merge-Json", "Format-DirKey", "Merge-PluginDirs", "Merge-ClaudeSettings"):
         m = re.search(r"^function %s.*?(?:^}|\Z)" % name, source, re.DOTALL | re.MULTILINE)
         assert m is not None, name
         out.append(m.group(0))
@@ -879,73 +883,6 @@ class MergeParityTest(unittest.TestCase):
             self.assertIsInstance(doc["permissions"]["allow"], list, name)
             self.assertIn("Bash(ls:*)", doc["permissions"]["allow"], name)
             self.assertEqual(doc["env"]["MACHINE_ONLY_KEY"], "Home Office ✔", name)
-
-
-GATE_COMMAND = "python -I -S ~/.claude/skills/pre-merge-review/gate.py check; exit 0"
-
-HOOK_DRIVER = """param([string]$Current, [string]$Template, [string]$Repo, [string]$Out)
-$ErrorActionPreference = 'Stop'
-{HELPERS}
-{RETIRED}
-$cur = [IO.File]::ReadAllText($Current, [Text.Encoding]::UTF8) | ConvertFrom-Json
-$tpl = [IO.File]::ReadAllText($Template, [Text.Encoding]::UTF8) | ConvertFrom-Json
-$merged = Merge-ClaudeSettings $cur $tpl $Repo
-$merged = Remove-RetiredHooks $merged $retiredHooks
-$tpl = [IO.File]::ReadAllText($Template, [Text.Encoding]::UTF8) | ConvertFrom-Json
-$merged = Merge-ClaudeSettings $merged $tpl $Repo   # a second install changes nothing
-$merged = Remove-RetiredHooks $merged $retiredHooks
-[IO.File]::WriteAllText($Out, ($merged | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-"""
-
-
-def hook_commands(settings, event):
-    return [h["command"] for g in settings["hooks"][event] for h in g["hooks"]]
-
-
-@unittest.skipUnless(ENGINES, "no PowerShell engine on PATH")
-class TemplateHookTest(unittest.TestCase):
-    """The template's PreToolUse gate survives the merge and the retired-hook cleanup, with machine hooks beside it."""
-
-    def test_template_has_the_gate(self):
-        group = json.loads(read("settings.json"))["hooks"]["PreToolUse"][0]
-        self.assertEqual(group["matcher"], "Bash|PowerShell")
-        self.assertEqual(group["hooks"], [{"type": "command", "command": GATE_COMMAND, "timeout": 30}])
-
-    def test_merge_keeps_the_gate_and_machine_hooks_and_drops_retired_ones(self):
-        source = read("install.ps1").replace("\r\n", "\n")
-        retired = re.search(r"^\$retiredHooks = .*$", source, re.MULTILINE)
-        self.assertIsNotNone(retired)
-        remover = re.search(r"^function Remove-RetiredHooks.*?^}", source, re.DOTALL | re.MULTILINE)
-        self.assertIsNotNone(remover)
-        machine = {"hooks": {
-            "PreToolUse": [{"matcher": "Bash", "hooks": [
-                {"type": "command", "command": "bash ~/.claude/hooks/block-dangerous-git.sh"},
-                {"type": "command", "command": "bash ~/.claude/hooks/mine.sh"}]}],
-            "Stop": [{"hooks": [{"type": "command", "command": "python mine.py"}]}]}}
-        for label, current in (("no hooks", {"env": {}}), ("empty hooks", {"hooks": {}}), ("machine hooks", machine)):
-            results = {}
-            with tempfile.TemporaryDirectory() as tmp:
-                script = os.path.join(tmp, "hooks.ps1")
-                with open(script, "w", encoding="utf-8") as f:
-                    f.write(HOOK_DRIVER.replace("{HELPERS}", merge_helpers() + "\n" + remover.group(0))
-                            .replace("{RETIRED}", retired.group(0)))
-                cur = os.path.join(tmp, "current.json")
-                with open(cur, "w", encoding="utf-8") as f:
-                    json.dump(current, f)
-                for engine in ENGINES:
-                    out = os.path.join(tmp, engine[0] + ".json")
-                    r = run_engine(engine, script, cur, os.path.join(ROOT, "settings.json"), ROOT, out)
-                    self.assertEqual(r.returncode, 0, "%s %s: %s%s" % (label, engine[0], r.stdout, r.stderr))
-                    with open(out, encoding="utf-8") as f:
-                        results[engine[0]] = json.load(f)
-            for name, doc in results.items():
-                with self.subTest(case=label, engine=name):
-                    cmds = hook_commands(doc, "PreToolUse")
-                    self.assertEqual(cmds.count(GATE_COMMAND), 1)
-                    self.assertFalse([c for c in cmds if "block-dangerous-git" in c])
-                    if label == "machine hooks":
-                        self.assertIn("bash ~/.claude/hooks/mine.sh", cmds)
-                        self.assertEqual(hook_commands(doc, "Stop"), ["python mine.py"])
 
 
 @unittest.skipUnless(PWSH, "pwsh is not on PATH")
@@ -1066,8 +1003,7 @@ class SetupCheckStaticTest(unittest.TestCase):
         end = text.index("# 4d.")
         block = text[start:end]
         self.assertRegex(block, r"(?m)^\s*Set-StateRepo\b.*\$repo")
-        self.assertLess(block.index("mcp_off.py"), block.index("Set-StateRepo"))
-        self.assertLess(block.index("chrome_off.py"), block.index("Set-StateRepo"))
+        self.assertLess(block.index("Invoke-CleanSlate"), block.index("Set-StateRepo"))
 
     def test_installer_passes_the_keep_flags_to_the_state_file(self):
         text = read("install.ps1")
@@ -1083,7 +1019,6 @@ class SetupCheckStaticTest(unittest.TestCase):
     def test_docs(self):
         self.assertIn("/setup-check", read("docs", "manual.md"))
         self.assertIn("Check a machine", read("docs", "manual.md"))
-        self.assertIn("- After install.ps1 or on a new PC: `/setup-check`.", read("global", "CLAUDE.md"))
 
 
 STATE_DRIVER = """param([string]$State, [string]$Repo, [string]$Flags = '')

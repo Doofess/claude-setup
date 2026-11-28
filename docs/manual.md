@@ -1,8 +1,9 @@
 # claude-setup
 
 My Claude Code setup, kept in git so every PC I use looks and behaves the same. One script, `install.ps1`, sets up a fresh
-Windows machine: global rules, agents, plugins, a custom status bar, a mod that tidies the conversation view, and the
-terminal's font and colours.
+Windows machine: a custom status bar, a mod that tidies the conversation view, a theme, three skills and the terminal's
+font and colours. Everything else is Claude Code's own default: no plugins, agents, hooks, MCP servers, language servers
+or global CLAUDE.md.
 
 ![The status bar: repo, branch, model and effort, context meter, 5-hour and 7-day plan meters, cost, session time](images/statusbar.png)
 
@@ -83,28 +84,20 @@ The icons come from a Nerd Font. On a machine without one, the installer switche
 
 Nothing to look at here, but it shapes every session:
 
-- **`global/CLAUDE.md`**: global rules for how Claude plans, delegates, verifies and uses git.
-- **Two agents**: `Explore` (Haiku, read-only search, replaces the built-in one) and `worker` (Sonnet at medium effort,
-  for implementation briefs).
-- **Tools, plugins and connectors**: a short always-on list, with everything else switched on per project or per
-  session (see [Tool policy](#tool-policy)).
 - **`advisor-switch`**: turns Claude Code's advisor on (Opus, or Fable when Opus is stuck) and off for one project, in
   its `.claude/settings.local.json`. Claude runs it itself before and after a plan with workers; the installer removes a
   user-level `advisorModel`, so the advisor is never on in every project at once.
 - **`pre-merge-review`**: the review a pull request gets before it is merged: the built-in `/code-review` at `high`, Claude
-  triages the findings and fixes the real ones, new commits are reviewed again, then it merges. A `PreToolUse` hook
-  (`skills/pre-merge-review/gate.py check`) refuses `gh pr merge` until the review is recorded for the PR's current head
-  (`gate.py record`, which also posts the summary as a PR comment, writes the record in `~/.claude/pre-merge-review/`)
-  and the merge names that head with `--match-head-commit`, and refuses any `git push` from a branch whose open PR has
-  auto-merge on, whatever it pushes. A merge it cannot check is refused; a push it cannot check (`gh` fails or is slow,
-  a folder it cannot follow) goes through, so a new branch stays pushable. It runs on every Bash and PowerShell command in every project (about 70 ms, mostly
-  Python starting); a merge or a push adds one `gh pr view`. A command that pushes and merges together is
-  refused. The gate checks that a review was recorded, not that it ran: it stops a merge that skipped the procedure by
-  mistake, and the PR comment is what says what the review found. Not covered: merges through `gh api` or the web page,
-  pushes of another branch than the current one, `gh` aliases, and your own `!` commands (hooks never see those).
-- **`photo-edit`** (plugin, not installed at user level): the `underwater-photoshop` skill, which edits underwater and
-  macro photos in the local Photoshop. This repo is a plugin marketplace; see
-  [Project-level plugins](#project-level-plugins).
+  triages the findings and fixes the real ones, new commits are reviewed again, then it merges with
+  `gh pr merge <PR url> --squash --delete-branch`. The skill also holds `gate.py`, a `PreToolUse` hook script that
+  refuses `gh pr merge` until the review is recorded for the PR's current head (`gate.py record`, which also posts the
+  summary as a PR comment, writes the record in `~/.claude/pre-merge-review/`) and the merge names that head with
+  `--match-head-commit`, and refuses any `git push` from a branch whose open PR has auto-merge on. The installer does
+  not register it (the template has no hooks); a project that wants the enforcement adds
+  `python -I -S ~/.claude/skills/pre-merge-review/gate.py check; exit 0` as a `PreToolUse` hook on `Bash|PowerShell`.
+  Without it the procedure is a rule Claude follows, not a check on what commands run.
+- **`setup-check`**: `/setup-check` proves every shell shows the same setup and repairs drift (see
+  [Check a machine](#check-a-machine)).
 
 ## Set up a new machine (Windows)
 
@@ -117,7 +110,7 @@ Nothing to look at here, but it shapes every session:
    winget install --id astral-sh.ruff -e
    ```
 
-   Then run `npm install` at the repo root (installs the pinned Biome for the mod lint hook).
+   Then run `npm install` at the repo root (installs the pinned Biome, which lints the mod).
 
 2. Run `claude` once and sign in, then `gh auth login`.
 3. Clone and install:
@@ -132,53 +125,51 @@ Nothing to look at here, but it shapes every session:
    blocked-scripts policy. From Git Bash, run `./install.sh`, which calls it.
 
 4. Restart Claude Code and open a new terminal tab.
-5. Only for photo work: switch on `photo-edit` in the photo project (see
-   [Project-level plugins](#project-level-plugins)), then make the skill's venv outside the plugin cache:
-   `python -m venv "$HOME\.claude\photo-edit\.venv"` and `pip install -r plugins/photo-edit/skills/underwater-photoshop/requirements.txt`
-   into it. Needs Photoshop 2026 (COM `Photoshop.Application`).
 
 The installer installs JetBrainsMono Nerd Font through winget if the machine has no Nerd Font, sets Windows Terminal's
-font and colour scheme, and removes hooks this repo has retired. Options:
+font and colour scheme. On a PC that still has the old setup, its first run also does the
+[clean-slate reset](#clean-slate-once-per-pc). Options:
 
 | Flag | Effect |
 | --- | --- |
 | `-KeepFont` | keep the machine's own terminal font |
 | `-KeepScheme` | keep the machine's own colour scheme |
 | `-SkipFont` | skip the font install and the font change |
-| `-SkipPlugins` | skip installing and updating plugins (faster when only config changed) |
-| `-SkipKotlinLsp` | skip the Kotlin language server install |
-| `-SkipLsp` | skip the TypeScript language server install and the rust-analyzer components |
 
-It backs up the previous files to `~/.claude/backups/claude-setup-<timestamp>/` on every run.
+It backs up the previous files (`CLAUDE.md`, `settings.json`, `statusbar.py`, `keybindings.json`, the state file,
+`agents/`, `~/.claude.json` and the plugin records `known_marketplaces.json` and `installed_plugins.json`, plus the
+terminal settings) to `~/.claude/backups/claude-setup-<timestamp>/` on every run. `-Check` changes nothing.
 
-### Kotlin language server
+### Clean slate (once per PC)
 
-Claude Code's `kotlin-lsp` plugin launches the command `kotlin-lsp`. The installer downloads JetBrains' standalone
-Kotlin language server (pinned in `install.ps1`, now 271.2085.0; x64 or arm64 by processor), checks the SHA-256
-JetBrains publishes next to the archive, and extracts it to `%LOCALAPPDATA%\Programs\kotlin-lsp\<version>`. A
-`kotlin-lsp.cmd` shim in `%LOCALAPPDATA%\Programs\kotlin-lsp\bin` (added once to your user Path, never the machine
-Path) runs it. The archive bundles its own JetBrains Runtime, so no JDK is needed. Re-running skips it when the pinned
-version is there and replaces an older version. Open a new terminal (and restart Claude Code) after the first install.
-On macOS use Homebrew instead; this installer is Windows only.
+The first run on a PC resets it, then records `"cleanSlate": "2026-11-28"` in `~/.claude/claude-setup-state.json`. Later
+runs see the key and skip the reset. The key is written only when every step worked. A step that worked is recorded
+under `cleanSlateSteps`, so after a failure (named in the `DONE WITH FAILURES` list) the next run repeats only the steps
+that failed, and what was added in between stays. Each piece prints a line, or says there was nothing
+to do. In this order:
 
-### TypeScript and Rust language servers
+1. Uninstalls every plugin that `claude plugin list --json` shows at user scope (`claude plugin uninstall <id> --scope
+   user`); Claude Code's own `@builtin` plugins, session plugins and claude.ai's synced ones are not touched. A plugin at
+   project or local scope is not uninstalled: it is printed with its project folder and the command to run there
+   (`cd <folder>; claude plugin uninstall <id> --scope project`).
+2. Removes every plugin marketplace but `claude-plugins-official` (`claude plugin marketplace remove <name>`; the names
+   come from `claude plugin marketplace list --json`, or `~/.claude/plugins/known_marketplaces.json`).
+3. Deletes every file in `~/.claude/agents/` and `~/.claude/CLAUDE.md`.
+4. Deletes the skill folders `~/.claude/skills/underwater-photoshop`, `find-skills` and `codex`, and `~/.claude/photo-edit`.
+   Every other skill folder, `synced` included, stays.
+5. Removes the Kotlin language server the old installer put in `%LOCALAPPDATA%\Programs\kotlin-lsp`, and its shim folder's
+   entry from your user Path (the registry value, written back in its own kind; never the machine Path). Open shells keep
+   the old Path until restarted, which is harmless: the folder it named is gone. The
+   TypeScript language server and the rustup `rust-analyzer` components stay: they are ordinary dev tools.
+6. `clean_slate.py` deletes `claudeInChromeDefaultEnabled` and every project's `disabledMcpServers` from `~/.claude.json`
+   (read, edit, swap in under Claude Code's own lock; every other key stays), and the keys `mcp_off.py` and
+   `chrome_off.py` kept in the state file.
+7. Writes `~/.claude/settings.json` fresh from the template, so every retired key is gone. Later runs merge instead.
 
-Claude Code's `typescript-lsp` plugin launches `typescript-language-server --stdio` and its `rust-analyzer-lsp` plugin
-launches `rust-analyzer`; both plugins are pinned off in the template, so a project switches them on and the installer
-provides the binaries (`-SkipLsp` skips both).
-
-- **TypeScript.** The installer reads the version from the command itself (`typescript-language-server --version`), not
-  from `npm ls -g`: on a PC whose npm prefix folder (`%APPDATA%\npm`) was never created `npm ls -g` fails, while a copy
-  installed by hand can sit in the Node folder. When no copy on Path is at the pin (6.0.3 in `install.ps1`) or newer, it
-  runs `npm.cmd install -g typescript-language-server@<pin> typescript@<pin>`; a newer copy stays. `typescript` is the
-  server's fallback for a project without its own and is pinned to 6.0.3 because TypeScript 7 no longer ships the
-  `tsserver.js` the server needs. npm's global folder is added to the user Path (never the machine Path); if an older
-  copy earlier on Path still wins, the install says so. Open a new terminal after the first install.
-- **Rust.** With `rustup` on Path, the installer runs `rustup component add rust-analyzer --toolchain <t>` for every
-  installed toolchain that lacks it, not only the default: rustup's `rust-analyzer` proxy resolves the toolchain per
-  directory (a repo can override to GNU while the default is MSVC) and fails with `Unknown binary 'rust-analyzer.exe'
-  in official toolchain` where the component is missing. A re-run with every toolchain covered makes no `component add`
-  call. Without rustup it prints a skip line.
+The run's backup folder holds the agents, `~/.claude/CLAUDE.md`, `settings.json`, `~/.claude.json`, the state file and
+the plugin records. Not backed up: the plugins themselves (to get one back, add its marketplace again from the backed-up
+`known_marketplaces.json` with `claude plugin marketplace add`, then install it), the skill folders and
+`~/.claude/photo-edit` (both in this repo's git history), and the Kotlin language server.
 
 ### Check a machine
 
@@ -227,20 +218,16 @@ git -C C:/dev/claude-setup pull && powershell -ExecutionPolicy Bypass -File C:/d
 
 | In this repo | On the machine |
 | --- | --- |
-| `global/CLAUDE.md` | `~/.claude/CLAUDE.md` |
-| `settings.json` | merged into `~/.claude/settings.json` (plugins, model and effort, skill overrides; see the merge rules below) |
-| `agents/*.md` | `~/.claude/agents/` |
+| `settings.json` | written fresh as `~/.claude/settings.json` on a PC's first run, merged into it after (model, theme, status line, `env`, permissions; see the merge rules below) |
 | `themes/*.json` | `~/.claude/themes/`; `custom:clear` is Claude Code's `dark` with `userMessageBackground` set to Campbell's background `#0c0c0c`, so the sticky prompt line at the top (the last prompt, once it scrolls away) has no grey bar, and `background` set to Campbell's bright white `#F2F2F2`, so background work (the `1 shell` pill under the prompt, the background-tasks dialog) is white instead of cyan. A typed `/command`'s echo row and the selected row in the background-tasks list lose their grey too. Its text stays the dim `subtle` grey and it has no border: Claude Code draws that one-row line itself, with no mod hook |
 | `statusbar.py` | `~/.claude/statusbar.py`, run by `statusLine` in `settings.json` every 60 s so the reset countdowns move |
 | `skills/<name>/` | `~/.claude/skills/<name>/` |
 | `mods/session-cards/` | stays in the repo; `install.ps1` adds its folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` and checks it with `claude plugin validate` |
 | `terminal/profile.json` | not copied; its font and `colorScheme` are written into Windows Terminal's `profiles.defaults`, and a `colorScheme` on the default profile itself is removed (see [`terminal/README.md`](../terminal/README.md)) |
-| `mcp_off.py` | not copied; the installer runs it to turn the claude.ai Adobe connector off in each known project in `~/.claude.json` |
-| `chrome_off.py` | not copied; the installer runs it to set Claude in Chrome's "Enabled by default" off in `~/.claude.json`, once per machine |
-| `mcp-presets/` | not installed; copy one into a repo as `.mcp.json` (see [its README](../mcp-presets/README.md)) |
+| `clean_slate.py` | not copied; the one-time reset runs it to edit `~/.claude.json` and the state file |
 
-Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers), `.credentials.json`, `history.jsonl`,
-`~/.remember/`. Synced plugins and claude.ai connectors follow the account, so they need no setup here.
+Not versioned on purpose: `~/.claude.json` (login state; the reset edits two toggles in it), `.credentials.json`,
+`history.jsonl`. Synced plugins and claude.ai connectors follow the account, so they need no setup here.
 
 ### Status bar details
 
@@ -265,70 +252,22 @@ Not versioned on purpose: `~/.claude.json` (login state, user-scope MCP servers)
 
 ### User level vs project level
 
-The user level (`settings.json` here, merged into `~/.claude/settings.json`) keeps only the workflow core:
+The user level (`settings.json` here, written into `~/.claude/settings.json`) holds only:
 
-- plugins: `superpowers` and `remember` (both from `claude-plugins-official`);
-- skills: `advisor-switch`, `setup-check` and `pre-merge-review`;
-- agents: `worker` and `Explore`;
-- one hook: the `pre-merge-review` gate (a `PreToolUse` hook on `Bash` and `PowerShell`);
-- the status line, permissions, mods and the global `CLAUDE.md`.
+- the status line, the `custom:clear` theme, the session-cards mod, permissions (`bypassPermissions`), the model (`opus`)
+  and a few preferences (`autoCompactWindow`, `feedbackDrafts`, `autoUpdatesChannel`, `tui`, `editorMode` and others), plus `remoteControlAtStartup: true`: every session starts with Remote Control on, in bypass-permissions mode, so it can be driven from claude.ai or the phone app (a deliberate choice: the installer writes it back on every run);
+- skills: `advisor-switch`, `setup-check` and `pre-merge-review`.
 
-Everything else is per project: plugins, LSPs, MCP servers, hooks (all but the gate above), built-in tools and skills go in the repo's
-`.claude/settings.json` (MCP in `.mcp.json`). A plugin that is installed but not core is pinned `false` in the template, so no session loads it unless
-its project switches it on; `playwright`, `context7`, `frontend-design`, `mattpocock-skills`, `modern-web-guidance`,
-`supabase`, `adobe-for-creativity`, `kotlin-lsp`, `typescript-lsp`, `rust-analyzer-lsp`, `security-guidance`, `good-css`
-and the synced `humanizer` are in that state.
-`install.ps1` installs each of those that a PC doesn't have yet, then disables it, so a project can switch it on
-on every PC. A PC whose only copy was a retired `anthropic-plugin-directory` one would otherwise have none. The synced
-claude.ai plugins and the pinned-off `anthropic-plugin-directory` ids are never installed.
-
-Built-in tools and skills Claude Code ships, and how to get each one back:
-
-| Off at user level | Rough tokens a turn | To use it |
-| --- | --- | --- |
-| Artifact tool and the `artifact-*` skills (`enableArtifact: false`) | 7k | No project can turn it back on (an off in user settings wins). `/config` → Artifacts turns it on until the next install |
-| Claude in Chrome (`claudeInChromeDefaultEnabled: false` in `~/.claude.json`, set once by `chrome_off.py`) | 1.4k | `claude --chrome` or `/chrome` for the session. A project can't turn it on. `/chrome` → Enabled by default is yours: the installer never sets it again |
-| Workflow tool and `workflow-authoring` (`enableWorkflows: false`) | 0.7k | `claude --settings '{"enableWorkflows":true}'` for one session, or `/config` → Dynamic workflows until the next install. A project's `"enableWorkflows": true` also works |
-| SendFeedback (`feedbackDrafts: "off"`) | 0.7k | Set `feedbackDrafts` to `"notify"` in the template |
-| `dataviz`, `claude-api` (`skillOverrides: "off"`) | a few hundred each | Project: `"skillOverrides": { "dataviz": "on" }` |
-| `loop`, `schedule`, `init`, `security-review`, `simplify`, `keybindings-help`, `update-config`, `fewer-permission-prompts`, `plugin-authoring` (`"user-invocable-only"`) | 0.6k together | Still on the `/` menu; Claude can't call them on its own. Project: `"skillOverrides": { "<name>": "on" }` (this repo turns `plugin-authoring` on) |
-
-`skillOverrides` merges per key across settings files, so a project's `"on"` beats the user `"off"`. It takes bare
-skill names and affects only Claude Code's bundled skills and synced claude.ai skills (`docx` covers
-`anthropic-skills:docx`). Plugin skills ignore it: a plugin is on or off as a whole (`enabledPlugins`). Kept on:
-`code-review`, `run`, and the `ScheduleWakeup` and `ReportFindings` tools that `/loop` and `/code-review` use.
-
-Tools that this PC no longer uses are uninstalled by `install.ps1` (user-scope plugins in `$retiredPlugins`, the
-skills in `$retiredSkills`: `underwater-photoshop`, which is now the `photo-edit` plugin, `find-skills`, which was
-never used, and `codex`, whose OpenAI subscription ended), and their ids leave `~/.claude/settings.json`.
-A re-run on a machine where all of this is gone makes no uninstall call. `-SkipPlugins` skips the plugin steps.
-An id installed only at project scope (for example `expo` for a deleted worktree) is not touched.
-The global TypeScript language server is not retired: the `typescript-lsp` plugin launches it
-(see [TypeScript and Rust language servers](#typescript-and-rust-language-servers)).
-
-### Project-level plugins
-
-This repo is also a Claude Code plugin marketplace named `claude-setup` (`.claude-plugin/marketplace.json`). It ships one
-plugin, `photo-edit`, which carries the `underwater-photoshop` skill. The skill is no longer copied into
-`~/.claude/skills`; a photo project switches it on in its own `.claude/settings.json`:
-
-```json
-{
-  "extraKnownMarketplaces": {
-    "claude-setup": { "source": { "source": "github", "repo": "Doofess/claude-setup" } }
-  },
-  "enabledPlugins": { "photo-edit@claude-setup": true }
-}
-```
-
-`claude plugin validate .` checks the marketplace.
+It sets no plugin, marketplace, hook, MCP rule, skill override, model setting, agent or global CLAUDE.md: all of those
+are Claude Code's defaults. A project that needs one adds it in its own `.claude/settings.json` (MCP servers in
+`.mcp.json`).
 
 ### Settings merge rules
 
-`settings.json` is merged into the machine's `~/.claude/settings.json`: `enabledPlugins` and `env` entry by entry (the
-repo wins a conflict, the machine's other entries stay), `permissions` with arrays unioned, `hooks` per event and per
-command, and every other key replaced by the repo's value. A key removed from the repo stays on the machine, so retiring
-one needs an explicit step in `install.ps1`.
+On a PC's first run the template is written as `~/.claude/settings.json` (see the clean slate above). After that
+`settings.json` is merged into the machine's: `env` entry by entry (the repo wins a conflict, the machine's other
+entries stay), `permissions` with arrays unioned, and every other key replaced by the repo's value. A key removed from
+the repo stays on the machine, so retiring one needs an explicit step in `install.ps1`.
 
 `env.CLAUDE_CODE_PLUGIN_DIRS` (`;`-separated) is the one `env` entry that is unioned rather than replaced: the
 machine's own folders stay, ours (`<repo>/mods/session-cards`, with `<repo>` being this clone in forward slashes) is
@@ -337,32 +276,20 @@ Entries are compared ignoring slash style, trailing slash and case.
 
 ### Tool policy
 
-- The rule: tools are switched on where they are used. Everything a session loads costs tokens on every turn, so the
-  user level carries only the workflow core and each project (or session) switches on the rest.
-- Always on (user scope): superpowers and remember. Every other plugin is pinned off in the template and switched on in
-  a project's `.claude/settings.json`, and built-in tools and skills follow the same rule (see
-  [User level vs project level](#user-level-vs-project-level)). The synced docs/docx/pdf/pptx/xlsx and deep-research
-  skills and the browser and computer-use skills load by name only (`skillOverrides`).
-- All of superpowers' skills load, brainstorming and writing-skills included: Claude Code has no per-skill switch for
-  plugin skills (`skillOverrides` ignores them, and a `Skill(...)` deny rule blocks the call but leaves the skill in
-  the list). CLAUDE.md asks design questions through `AskUserQuestion` instead of brainstorming, reviews with the
-  built-in `/code-review`, and keeps "run the check before saying done" as a rule of its own. `good-css` is declared in
-  `extraKnownMarketplaces` (`vojtaholik/good-css`); a project that wants it switches it on.
-- Deny rules only for what no project will ever want: `permissions.deny` unions across settings files, so a project
-  can't lift a user-level deny.
-- Anything tied to one project (databases, deploy target, observability, Kubernetes) is project scope: `mcp-presets/`.
-- The GitHub MCP server stays off; `gh` does the same job with far less context.
-- `deniedMcpServers` blocks every claude.ai connector except Adobe, Supabase and Cloudflare (Slack, Linear, Atlassian,
-  Notion, Figma, Intercom, Claude Docs, Vercel, Canva, Spotify, Google Docs/Sheets/Calendar/Drive, Gmail, and
-  desktop-commander). BigQuery is retired; the installer removes its user-scope server and hook.
-- Adobe: the "Adobe for creativity" claude.ai connector is the only route to Adobe tools from the CLI (the plugin copies
-  return 403). It costs about 5k tokens a turn, so the installer turns it off in each project it knows (`mcp_off.py`);
-  `/mcp` turns it back on for one project, and that choice survives re-runs. A deny-list entry wouldn't work here: deny
-  lists union across settings sources, so `--settings` can't lift one for a session. A project first opened after the
-  last install starts with Adobe on. Photo edits themselves run in local Photoshop via the `underwater-photoshop` skill of the `photo-edit` plugin.
+- The rule: nothing is switched on or off at user level. Plugins, MCP servers, language servers, hooks, agents and
+  global rules are added in the project (or session) that uses them, so a session loads only what it needs.
+- To get a built-in tool back that Claude Code ships on, or to turn one off, use that project's `.claude/settings.json`
+  or `/config`; the installer sets none of them.
+- Changing a machine back to a fuller setup is a change to the template and `install.ps1`, not a leftover on the PC:
+  the merge keeps machine keys the template does not name.
 
 ## History
 
 The first visual setup (a custom theme, the readable-session mod, a Windows Terminal "Readable" scheme and an older
 status line) was retired on 2026-10-23 and rebuilt as the status bar and session-cards mod above. Tag `visual-v1` holds
 the old version, and the installer removes it from machines that still have it.
+
+The clean slate on 2026-11-28 removed every plugin, marketplace, custom agent, hook, MCP rule and language server this
+setup installed, and the global `CLAUDE.md`. The photo-edit plugin (the `underwater-photoshop` skill) and its
+marketplace are gone from the repo; the git history before that commit holds them. Everything the reset deletes is in
+the backup the run made.

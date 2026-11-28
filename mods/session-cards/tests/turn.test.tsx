@@ -153,7 +153,8 @@ test('expanded and waiting fall back', async ($, on) => {
   expect((await runs(expanded)).map(t => t.text)).toEqual(['engine'])
   await expanded.unmount()
 
-  const waiting = await $.ui.mount(ROW('r2', { waitingFor: 'a shell' }))
+  // Since 2.1.332 the engine passes waitingFor as an object ({ agents, workflows }) and refuses a string.
+  const waiting = await $.ui.mount(ROW('r2', { waitingFor: { agents: ['worker'], workflows: 0 } }))
   expect((await runs(waiting)).map(t => t.text)).toEqual(['engine'])
   await waiting.unmount()
 
