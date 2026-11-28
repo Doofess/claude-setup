@@ -4,53 +4,36 @@
   Applies this repo's Claude Code config to the current machine. Safe to re-run.
 
 .DESCRIPTION
-  1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusbar.py,statusline.py,keybindings.json} to ~/.claude/backups/claude-setup-<stamp>/
-  2. Copies global/CLAUDE.md, statusbar.py, themes/, skills/ and agents/ into ~/.claude
-  3. Merges settings.json keys into the existing file (machine-local keys survive)
-  4. Uninstalls the retired plugins (user scope) and the retired user skills, drops retired plugin ids from the merged
-     enabledPlugins, adds the marketplaces in extraKnownMarketplaces, installs + enables every plugin marked true in
-     enabledPlugins, updates them, installs any plugin marked false that is missing (not the synced or
-     anthropic-plugin-directory ones), then disables every plugin marked false
-  5. Turns the claude.ai Adobe connector off in each known project once (see mcp_off.py; /mcp turns it back on); turns Claude in Chrome
-     off by default once (see chrome_off.py; /chrome or claude --chrome turns it on)
-  6. Removes the retired visual setup (custom theme, status line, readable-session mod, keybinding, Windows Terminal
+  1. Backs up ~/.claude/{CLAUDE.md,settings.json,statusbar.py,statusline.py,keybindings.json,claude-setup-state.json,agents/}
+     and ~/.claude.json to ~/.claude/backups/claude-setup-<stamp>/
+  2. Once per PC (the `cleanSlate` key in ~/.claude/claude-setup-state.json), resets the PC to a clean slate: uninstalls
+     every user-scope plugin (project and local scope ones are listed with the command to run in their project), removes
+     every plugin marketplace but claude-plugins-official, deletes ~/.claude/agents/*, ~/.claude/CLAUDE.md, the
+     underwater-photoshop, find-skills and codex skill folders and ~/.claude/photo-edit, removes the Kotlin language
+     server (%LOCALAPPDATA%\Programs\kotlin-lsp and its user Path entry), drops claudeInChromeDefaultEnabled and every
+     project's disabledMcpServers from ~/.claude.json (clean_slate.py), and writes ~/.claude/settings.json fresh from
+     the template. The key is written only when nothing failed
+  3. Copies statusbar.py, themes/ and skills/ into ~/.claude
+  4. Merges settings.json keys into the existing file (machine-local keys survive)
+  5. Removes the retired visual setup (custom theme, status line, readable-session mod, keybinding, Windows Terminal
      Readable scheme) from the machine
-  7. Installs a Nerd Font through winget when the machine has none, and sets terminal/profile.json's font (face and
+  6. Installs a Nerd Font through winget when the machine has none, and sets terminal/profile.json's font (face and
      cellHeight) as the Windows Terminal default font whenever it differs, and drops a font face or cellHeight set
      on any profile, so every profile looks the same
-  8. Sets the Windows Terminal default colour scheme to terminal/profile.json's (Campbell) and drops a colorScheme
+  7. Sets the Windows Terminal default colour scheme to terminal/profile.json's (Campbell) and drops a colorScheme
      set on any profile, so the default applies
-  9. Sets the Windows Terminal start folder, adds a profile block that leaves System32 for C:\dev to both the PowerShell 7
+  8. Sets the Windows Terminal start folder, adds a profile block that leaves System32 for C:\dev to both the PowerShell 7
      and the Windows PowerShell 5.1 profile, and sets the 5.1 execution policy to RemoteSigned for this user when it is
      stricter and no group policy pins it
- 10. Installs PowerShell 7 through winget when `pwsh` is missing, makes it the Windows Terminal default profile (when
+  9. Installs PowerShell 7 through winget when `pwsh` is missing, makes it the Windows Terminal default profile (when
      its profile is there or PowerShell 7 is installed) and adds a Git Bash profile unless one, or Git for Windows'
      own Windows Terminal fragment, already exists
- 11. Sets VS Code's integrated terminal (and VS Code Insiders' when installed) from terminal/vscode.json in the user
+ 10. Sets VS Code's integrated terminal (and VS Code Insiders' when installed) from terminal/vscode.json in the user
      settings.json: the Nerd Font, Campbell's colours and a minimum contrast ratio of 1; every other key stays
- 12. Runs the status bar command from the installed settings.json on sample data and fails when its line is wrong
- 13. Checks the session-cards mod is in CLAUDE_CODE_PLUGIN_DIRS and passes `claude plugin validate`
- 14. Prints the `Same experience` table (font, colour scheme, Claude Code theme, status line, mod folder, tool
+ 11. Runs the status bar command from the installed settings.json on sample data and fails when its line is wrong
+ 12. Checks the session-cards mod is in CLAUDE_CODE_PLUGIN_DIRS and passes `claude plugin validate`
+ 13. Prints the `Same experience` table (font, colour scheme, Claude Code theme, status line, mod folder, tool
      versions) and fails when a row is FAIL
- 15. Lists MCP health
- 16. Installs the pinned Kotlin language server (JetBrains standalone build, SHA-256 verified) under
-     %LOCALAPPDATA%\Programs\kotlin-lsp and puts a `kotlin-lsp.cmd` shim folder on the user Path (step 4h)
- 17. Installs the pinned `typescript-language-server` (and the `typescript` it falls back on) globally with npm when
-     the command is missing or older than the pin, and puts npm's global folder on the user Path (step 4i); a newer
-     copy stays
- 18. Adds the `rust-analyzer` rustup component to every installed Rust toolchain that lacks it, when rustup is on Path
-     (step 4j); without rustup it says so and skips
-
-.PARAMETER SkipPlugins
-  Skip the plugin steps: the install/update and the retired-plugin uninstalls (faster when only config changed).
-
-.PARAMETER SkipKotlinLsp
-  Do not install the Kotlin language server (the `kotlin-lsp` command Claude Code's kotlin-lsp plugin launches).
-
-.PARAMETER SkipLsp
-  Do not install the TypeScript language server (the `typescript-language-server` command Claude Code's typescript-lsp
-  plugin launches) or the rust-analyzer rustup components (the `rust-analyzer` command its rust-analyzer-lsp plugin
-  launches).
 
 .PARAMETER SkipFont
   Do not install a Nerd Font or touch the Windows Terminal font (the font rows of the check read `kept`).
@@ -62,8 +45,8 @@
   Keep the machine's own Windows Terminal colour scheme and VS Code terminal colours instead of Campbell (its check row reads `kept`).
 
 .PARAMETER Check
-  Run only the checks (status bar, session cards mod, `Same experience`, MCP health): nothing is backed up, copied,
-  merged or installed, and no file changes. Exits 1 when a check fails.
+  Run only the checks (status bar, session cards mod, `Same experience`): nothing is backed up, copied, merged or
+  installed, and no file changes. Exits 1 when a check fails.
 
 .PARAMETER Json
   With -Check, print one JSON document {rows: [{name, expected, actual, status}], failures: [...]} to stdout and
@@ -71,7 +54,7 @@
 
 #>
 [CmdletBinding()]
-param([switch]$SkipPlugins, [switch]$SkipKotlinLsp, [switch]$SkipLsp, [switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme, [switch]$Check, [switch]$Json)
+param([switch]$SkipFont, [switch]$KeepFont, [switch]$KeepScheme, [switch]$Check, [switch]$Json)
 
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
@@ -137,41 +120,6 @@ function Merge-Json($existing, $incoming) {
   return $incoming
 }
 
-# hooks: { Event: [ { matcher, hooks: [ {type, command, ...} ] } ] }. A repo hook is matched to a machine hook by
-# its command: same command -> the repo's fields win in place, otherwise it is added (to the group with the same
-# matcher, or as a new group). Machine hooks the repo doesn't know stay.
-function Merge-HookEvents($existing, $incoming) {
-  foreach ($ev in $incoming.PSObject.Properties) {
-    $cur = $existing.PSObject.Properties[$ev.Name]
-    if (-not $cur -or -not (Test-IsArray $cur.Value)) {
-      $existing | Add-Member -NotePropertyName $ev.Name -NotePropertyValue $ev.Value -Force
-      continue
-    }
-    $groups = [System.Collections.ArrayList]::new()
-    foreach ($g in $cur.Value) { [void]$groups.Add($g) }
-    foreach ($tg in @($ev.Value)) {
-      $sameMatcher = $null
-      foreach ($g in $groups) { if ([string]$g.matcher -eq [string]$tg.matcher) { $sameMatcher = $g; break } }
-      if (-not $sameMatcher) { [void]$groups.Add($tg); continue }
-      $hooks = [System.Collections.ArrayList]::new()
-      foreach ($h in @($sameMatcher.hooks)) { if ($h) { [void]$hooks.Add($h) } }
-      foreach ($th in @($tg.hooks)) {
-        $found = $null
-        foreach ($g in $groups) {
-          foreach ($h in @($g.hooks)) { if ($h -and $th.command -and $h.command -eq $th.command) { $found = $h; break } }
-          if ($found) { break }
-        }
-        if ($found) {
-          foreach ($p in $th.PSObject.Properties) { $found | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value -Force }
-        } else { [void]$hooks.Add($th) }
-      }
-      $sameMatcher | Add-Member -NotePropertyName hooks -NotePropertyValue $hooks.ToArray() -Force
-    }
-    $existing | Add-Member -NotePropertyName $ev.Name -NotePropertyValue $groups.ToArray() -Force
-  }
-  return $existing
-}
-
 # CLAUDE_CODE_PLUGIN_DIRS is ';'-separated. Entries compare ignoring slash style, trailing slash and case. The result is
 # the machine's other entries, then ours (once): an existing entry ending in /mods/session-cards (an older clone or
 # worktree path) is replaced by ours, every other entry stays.
@@ -191,8 +139,8 @@ function Merge-PluginDirs([string]$current, [string]$ours) {
 }
 
 # Merges the repo's settings.json (template) into the machine's (current). Keys:
-#   enabledPlugins  per plugin (repo wins)          env          per variable (repo wins)
-#   permissions     arrays unioned, scalars repo     hooks        per event, per command (see Merge-HookEvents)
+#   env          per variable (repo wins)
+#   permissions  arrays unioned, scalars repo
 #   everything else replaced wholesale by the repo's value
 # CLAUDE_CODE_PLUGIN_DIRS inside env is a union (see Merge-PluginDirs), so a machine's own mod folders survive.
 # "<repo>" in a template string value stands for this clone's path (forward slashes).
@@ -201,11 +149,7 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
   foreach ($prop in $template.PSObject.Properties) {
     $existing = $current.PSObject.Properties[$prop.Name]
     $hasObj = $existing -and (Test-IsObject $existing.Value)
-    if ($prop.Name -eq 'enabledPlugins' -and $hasObj) {
-      foreach ($plugin in $prop.Value.PSObject.Properties) {
-        $existing.Value | Add-Member -NotePropertyName $plugin.Name -NotePropertyValue $plugin.Value -Force
-      }
-    } elseif ($prop.Name -eq 'env') {
+    if ($prop.Name -eq 'env') {
       $ours = [pscustomobject]@{}   # a copy, so the template object is not changed
       foreach ($v in $prop.Value.PSObject.Properties) {
         $val = $v.Value
@@ -225,308 +169,11 @@ function Merge-ClaudeSettings($current, $template, [string]$repoDir) {
     } elseif ($prop.Name -eq 'permissions' -and $hasObj) {
       $merged = Merge-Json $existing.Value $prop.Value
       $current | Add-Member -NotePropertyName 'permissions' -NotePropertyValue $merged -Force
-    } elseif ($prop.Name -eq 'hooks' -and $hasObj) {
-      $merged = Merge-HookEvents $existing.Value $prop.Value
-      $current | Add-Member -NotePropertyName 'hooks' -NotePropertyValue $merged -Force
     } else {
       $current | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
     }
   }
   return $current
-}
-
-# ---- Kotlin language server (Claude Code's kotlin-lsp plugin launches the command `kotlin-lsp`) ----
-# JetBrains' standalone build bundles its own JBR, so no JDK is needed. The pure helpers below are tested without a machine.
-$kotlinLspVersion = '271.2085.0'
-
-# Download URLs for one processor architecture ('AMD64' / 'ARM64', as in PROCESSOR_ARCHITECTURE; anything else -> $null).
-function Get-KotlinLspUrls([string]$version, [string]$arch) {
-  $suffix = switch ($arch.ToUpperInvariant()) { 'AMD64' { '' } 'X64' { '' } 'ARM64' { '-aarch64' } default { $null } }
-  if ($null -eq $suffix) { return $null }
-  $zip = "https://download.jetbrains.com/language-server/kotlin-server/$version/kotlin-server-$version$suffix.win.zip"
-  [pscustomobject]@{ Zip = $zip; Sha256 = "$zip.sha256" }
-}
-
-# The hash in a published .sha256 file ("<64 hex> *<file name>"), lower case; $null when the text holds none.
-function Get-Sha256FromText([string]$text) {
-  $m = [regex]::Match($text, '(?im)^\s*([0-9a-f]{64})(?![0-9a-f])')
-  if ($m.Success) { $m.Groups[1].Value.ToLowerInvariant() } else { $null }
-}
-
-# True when both are 64-hex hashes that are equal, ignoring case. A missing or malformed hash never matches.
-function Test-Sha256Match([string]$expected, [string]$actual) {
-  $re = '^[0-9a-fA-F]{64}$'
-  [bool]($expected -match $re -and $actual -match $re -and $expected.ToLowerInvariant() -eq $actual.ToLowerInvariant())
-}
-
-# A ';'-separated Path with $entry once: any entry equal to it (ignoring slash style, trailing slash and case) is dropped
-# and $entry is appended. Other entries keep their order and spelling; empty ones go.
-function Add-PathEntry([string]$current, [string]$entry) {
-  $key = Format-DirKey $entry
-  $kept = @(($current -split ';') | Where-Object { $_.Trim() -and (Format-DirKey $_) -ne $key })
-  ($kept + $entry) -join ';'
-}
-
-# Installs the pinned Kotlin language server into $versionDir and a stable shim dir $shimDir (on the USER Path) with
-# kotlin-lsp.cmd, which runs <versionDir>\bin\intellij-server.exe (the archive's own kotlin-lsp.cmd is deprecated and
-# prints a warning). Other folders next to $versionDir (older versions) are removed on an install. Returns 'installed'
-# or 'already installed'; throws with a clear message on any failure, and never installs an archive whose SHA-256
-# differs from the published one. -SkipPath leaves the registry and $env:Path alone (tests).
-function Install-KotlinLsp([string]$version, [string]$arch, [string]$versionDir, [string]$shimDir, [switch]$SkipPath) {
-  $urls = Get-KotlinLspUrls $version $arch
-  if (-not $urls) { throw "Kotlin LSP has no Windows build for processor architecture '$arch'" }
-  $exe = Join-Path $versionDir 'bin\intellij-server.exe'
-  $shim = Join-Path $shimDir 'kotlin-lsp.cmd'
-  $shimText = "@echo off`r`n`"$exe`" %*`r`n"
-  $haveShim = (Test-Path $shim) -and ((Read-Utf8 $shim) -eq $shimText)
-  if (-not ((Test-Path $exe) -and $haveShim)) {
-    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('kotlin-lsp-' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-    try {
-      $saved = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'   # 5.1's progress bar slows a 360 MB download to a crawl
-      try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        $zipPath = Join-Path $tmp 'kotlin-lsp.zip'
-        Invoke-WebRequest -Uri $urls.Sha256 -OutFile "$zipPath.sha256" -UseBasicParsing
-        Invoke-WebRequest -Uri $urls.Zip -OutFile $zipPath -UseBasicParsing
-      } finally { $ProgressPreference = $saved }
-      $want = Get-Sha256FromText (Read-Utf8 "$zipPath.sha256")
-      $sha = [Security.Cryptography.SHA256]::Create(); $fs = [IO.File]::OpenRead($zipPath)
-      try { $got = ([BitConverter]::ToString($sha.ComputeHash($fs))).Replace('-', '') } finally { $fs.Dispose(); $sha.Dispose() }
-      if (-not (Test-Sha256Match $want $got)) {
-        throw "Kotlin LSP $version download failed its SHA-256 check (published: $want, downloaded: $got); nothing was installed"
-      }
-      Add-Type -AssemblyName System.IO.Compression.FileSystem
-      $stage = Join-Path $tmp 'extract'
-      [IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $stage)
-      foreach ($need in 'product-info.json', 'bin\intellij-server.exe') {
-        if (-not (Test-Path (Join-Path $stage $need))) { throw "Kotlin LSP $version archive is incomplete (no $need); nothing was installed" }
-      }
-      $parent = Split-Path $versionDir
-      # this and older versions go; the shim folder beside them stays
-      if (Test-Path $parent) { Get-ChildItem $parent -Directory | Where-Object { (Format-DirKey $_.FullName) -ne (Format-DirKey $shimDir) } | Remove-Item -Recurse -Force }
-      New-Item -ItemType Directory -Path $parent -Force | Out-Null
-      Move-Item $stage $versionDir
-    } finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
-    $result = 'installed'
-  } else { $result = 'already installed' }
-  if (-not $haveShim) {
-    New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
-    [IO.File]::WriteAllText($shim, $shimText, [Text.Encoding]::ASCII)
-    $result = 'installed'
-  }
-  if (-not $SkipPath) {
-    # USER Path only, read and written raw from the registry so %VARS% in other entries stay unexpanded.
-    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
-    try {
-      $cur = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-      if (@($cur -split ';' | Where-Object { $_.Trim() -and (Format-DirKey $_) -eq (Format-DirKey $shimDir) }).Count -eq 0) {
-        $key.SetValue('Path', (Add-PathEntry $cur $shimDir), [Microsoft.Win32.RegistryValueKind]::ExpandString)
-        $result = 'installed'
-      }
-    } finally { $key.Close() }
-    if (@($env:Path -split ';' | Where-Object { $_.Trim() -and (Format-DirKey $_) -eq (Format-DirKey $shimDir) }).Count -eq 0) { $env:Path = "$env:Path;$shimDir" }
-  }
-  $result
-}
-
-# ---- Retired plugins and skills (the user level holds only the workflow core) ----
-# Plugins, LSPs, MCP servers and hooks are per project (docs/manual.md, "User level vs project level"). Plugins nothing on this
-# PC ever used are uninstalled at user scope. Re-running on a PC where they are all gone makes no uninstall call.
-$retiredPlugins = @(
-  'chrome-devtools-mcp@claude-plugins-official', 'hookify@claude-plugins-official', 'mcp-server-dev@claude-plugins-official',
-  'claude-code-setup@claude-plugins-official', 'claude-md-management@claude-plugins-official', 'claude-security@claude-plugins-official',
-  'cloudflare@claude-plugins-official', 'code-review@claude-plugins-official', 'code-simplifier@claude-plugins-official',
-  'feature-dev@claude-plugins-official', 'github@claude-plugins-official', 'ralph-loop@claude-plugins-official',
-  'shopify-ai-toolkit@claude-plugins-official', 'skill-creator@claude-plugins-official', 'telegram@claude-plugins-official',
-  'vercel@claude-plugins-official', 'pyright-lsp@claude-plugins-official',
-  'superpowers@anthropic-plugin-directory', 'frontend-design@anthropic-plugin-directory',
-  'context7@anthropic-plugin-directory', 'playwright@anthropic-plugin-directory'
-)
-# User skills that moved into a plugin (underwater-photoshop is plugins/photo-edit) or were dropped (find-skills, codex: no OpenAI subscription).
-$retiredSkills = @('underwater-photoshop', 'find-skills', 'codex')
-
-# Uninstalls each id in $ids that `claude plugin list --json` shows at user scope (an id installed only at project
-# scope is not touched). $claude runs the CLI: a scriptblock that gets the arguments, so a test can pass a fake.
-# Returns the ids it uninstalled; an id whose uninstall fails is added to $failed instead.
-function Remove-RetiredPlugins([string[]]$ids, [scriptblock]$claude = { & claude @args }, $failed = $null) {
-  $removed = @()
-  try {
-    $parsed = (& $claude plugin list --json 2>$null | Out-String) | ConvertFrom-Json
-    $listed = @($parsed | ForEach-Object { $_ })   # Windows PowerShell 5.1 returns a JSON array as one object
-  } catch { return @() }
-  $present = @($listed | Where-Object { $_ -and $_.id -and $_.scope -eq 'user' } | ForEach-Object { [string]$_.id })
-  foreach ($id in $ids) {
-    if ($present -notcontains $id) { continue }
-    $global:LASTEXITCODE = 0
-    & $claude plugin uninstall $id --scope user 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { $removed += $id } elseif ($null -ne $failed) { $failed.Add($id) }
-  }
-  return $removed
-}
-
-# The plugins a project may switch on: every enabledPlugins entry the template pins false, except the synced claude.ai
-# plugins (claude.ai owns them) and the anthropic-plugin-directory copies (pinned off only so that copy stays off).
-function Get-KeptPlugins($enabledPlugins) {
-  if (-not (Test-IsObject $enabledPlugins)) { return @() }
-  return @($enabledPlugins.PSObject.Properties |
-    Where-Object { $_.Value -eq $false -and $_.Name -notmatch '@(synced|anthropic-plugin-directory)$' } |
-    ForEach-Object { $_.Name })
-}
-
-# Installs each kept plugin that `claude plugin list --json` doesn't show at user scope, then disables it, so every PC
-# has it ready for a project's enabledPlugins. A PC whose only copy was a retired anthropic-plugin-directory one would
-# otherwise have none (RotemsDesktop, 2026-11-05). Returns the ids it installed; an id whose install fails is added to
-# $failed and not disabled. An unreadable list installs nothing.
-function Install-KeptPlugins([string[]]$ids, [scriptblock]$claude = { & claude @args }, $failed = $null) {
-  $installed = @()
-  try {
-    $parsed = (& $claude plugin list --json 2>$null | Out-String) | ConvertFrom-Json
-    $listed = @($parsed | ForEach-Object { $_ })   # Windows PowerShell 5.1 returns a JSON array as one object
-  } catch { return @() }
-  $present = @($listed | Where-Object { $_ -and $_.id -and $_.scope -eq 'user' } | ForEach-Object { [string]$_.id })
-  foreach ($id in $ids) {
-    if ($present -contains $id) { continue }
-    $global:LASTEXITCODE = 0
-    $out = & $claude plugin install $id --scope user 2>&1
-    if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') {
-      if ($null -ne $failed) { $failed.Add($id) }
-      continue
-    }
-    & $claude plugin disable $id --scope user 2>&1 | Out-Null
-    $installed += $id
-  }
-  return $installed
-}
-
-# Deletes each retired skill folder under $skillsDir. Returns the names it removed.
-function Remove-RetiredSkills([string[]]$names, [string]$skillsDir) {
-  $removed = @()
-  foreach ($n in $names) {
-    $p = Join-Path $skillsDir $n
-    if (Test-Path -LiteralPath $p -PathType Container) { Remove-Item -LiteralPath $p -Recurse -Force; $removed += $n }
-  }
-  return $removed
-}
-
-# The settings merge keeps keys the template no longer has, so a retired plugin id would stay in enabledPlugins.
-# Changes $settings and returns the ids it removed.
-function Remove-RetiredSettingsPlugins($settings, [string[]]$ids) {
-  $removed = @()
-  $ep = $settings.PSObject.Properties['enabledPlugins']
-  if (-not $ep -or -not (Test-IsObject $ep.Value)) { return $removed }
-  foreach ($id in $ids) {
-    if ($ep.Value.PSObject.Properties[$id]) { $ep.Value.PSObject.Properties.Remove($id); $removed += $id }
-  }
-  return $removed
-}
-
-# ---- TypeScript and Rust language servers (Claude Code's typescript-lsp and rust-analyzer-lsp plugins launch the commands
-# `typescript-language-server --stdio` and `rust-analyzer`; both plugins are pinned off here, a project switches them on) ----
-# typescript-language-server needs the JavaScript tsserver.js, which TypeScript 7 (typescript-go) no longer ships, so
-# `typescript` (the server's fallback when a project has none) stays on 6.0.3, the last 6.x; the server is at its latest.
-$typescriptLspVersion = '6.0.3'
-$typescriptVersion = '6.0.3'
-
-# The first x.y.z in $text as a [version]; $null when there is none.
-function ConvertTo-SemVer([string]$text) {
-  $m = [regex]::Match($text, '(\d+)\.(\d+)\.(\d+)')
-  if ($m.Success) { return [version]('{0}.{1}.{2}' -f $m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value) }
-  return $null
-}
-
-# What `typescript-language-server --version` prints, from the command on Path ($dir empty) or from the .cmd shim in
-# $dir; $null when there is no such command or it fails. Application commands only: the extensionless sh script and the
-# .ps1 shim npm writes beside the .cmd are not what a plugin's spawn runs.
-function Get-TypescriptLspVersionText([string]$dir = '') {
-  $exe = $null
-  if ($dir) {
-    $p = Join-Path $dir 'typescript-language-server.cmd'
-    if (Test-Path -LiteralPath $p) { $exe = $p }
-  } else {
-    $c = Get-Command typescript-language-server -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($c) { $exe = $c.Source }
-  }
-  if (-not $exe) { return $null }
-  try { return (& $exe --version 2>$null | Out-String) } catch { return $null }
-}
-
-# Puts $dir on the USER Path (registry, written raw so %VARS% in other entries stay unexpanded; never the machine Path)
-# and on this process's Path. An entry that expands to $dir (npm's own %APPDATA%\npm) counts as present. Returns $true
-# when the registry changed.
-function Add-UserPathDir([string]$dir) {
-  $changed = $false
-  $want = Format-DirKey $dir
-  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
-  try {
-    $cur = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-    $has = @($cur -split ';' | Where-Object { $_.Trim() -and (Format-DirKey ([Environment]::ExpandEnvironmentVariables($_))) -eq $want })
-    if ($has.Count -eq 0) {
-      $key.SetValue('Path', (Add-PathEntry $cur $dir), [Microsoft.Win32.RegistryValueKind]::ExpandString)
-      $changed = $true
-    }
-  } finally { $key.Close() }
-  if (@($env:Path -split ';' | Where-Object { $_.Trim() -and (Format-DirKey $_) -eq $want }).Count -eq 0) { $env:Path = "$env:Path;$dir" }
-  return $changed
-}
-
-# Makes `typescript-language-server` at $lspVersion or newer resolve: nothing to do when the command on Path already is
-# (an older copy, or none, is replaced by an npm global install of typescript-language-server@$lspVersion and
-# typescript@$tsVersion, and a newer one stays). The version comes from the command itself, not `npm ls -g`: npm's prefix
-# folder may not exist (npm config prefix %APPDATA%\npm on a PC that never ran a global install, where `npm ls -g` fails
-# with ENOENT) while a copy installed by hand sits in the Node folder. A copy at the right version in npm's own global
-# folder counts too (the Node-folder copy may sit earlier on Path and win), and that folder goes on the user Path.
-# $npm runs npm (a scriptblock that gets the arguments; the default calls npm.cmd: npm 11's npm.ps1, which PowerShell
-# would pick first, rebuilds its arguments from the calling line and gets none through @args). $probe gets a folder
-# ('' = Path) and returns the version text. Returns what happened; throws when npm is missing or the install fails.
-# -SkipPath leaves the registry and $env:Path alone (tests).
-function Install-TypescriptLsp([string]$lspVersion, [string]$tsVersion, [scriptblock]$npm = { & npm.cmd @args },
-                               [scriptblock]$probe = { param([string]$dir) Get-TypescriptLspVersionText $dir }, [switch]$SkipPath) {
-  $want = ConvertTo-SemVer $lspVersion
-  $onPath = ConvertTo-SemVer ([string](& $probe ''))
-  if ($onPath -and $onPath -ge $want) { return "already $onPath on Path" }
-  $global:LASTEXITCODE = 0
-  try { $prefix = ([string](& $npm prefix -g 2>$null | Out-String)).Trim() } catch { throw 'npm was not found on Path (install Node.js first)' }
-  if ($LASTEXITCODE -ne 0 -or -not $prefix) { throw "npm prefix -g failed with exit code $LASTEXITCODE" }
-  $inPrefix = ConvertTo-SemVer ([string](& $probe $prefix))
-  if ($inPrefix -and $inPrefix -ge $want) {
-    $result = "already $inPrefix in $prefix"
-  } else {
-    $global:LASTEXITCODE = 0
-    & $npm install -g --no-fund --no-audit "typescript-language-server@$lspVersion" "typescript@$tsVersion" | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "npm install -g failed with exit code $LASTEXITCODE" }
-    $result = "installed $lspVersion with typescript $tsVersion in $prefix"
-  }
-  if (-not $SkipPath -and (Add-UserPathDir $prefix)) { $result += '; added to the user Path (open a new terminal)' }
-  $now = ConvertTo-SemVer ([string](& $probe ''))
-  if (-not $now) { $result += '; not on Path yet (open a new terminal)' }
-  elseif ($now -lt $want) { $result += "; note: $now earlier on Path still wins" }
-  return $result
-}
-
-# Adds the rust-analyzer component to every installed rustup toolchain that lacks it. All of them, not just the default:
-# rustup's `rust-analyzer` proxy resolves the toolchain per directory (a repo can override to GNU while the default is
-# MSVC) and fails with "Unknown binary 'rust-analyzer.exe' in official toolchain" where the component is missing. A
-# toolchain that has it gets no `component add` call. $rustup runs rustup (a scriptblock that gets the arguments);
-# $Available is whether rustup is on Path. Returns Skipped (no rustup) and the toolchains Added, already Present, Failed.
-function Install-RustAnalyzerComponent([scriptblock]$rustup = { & rustup @args }, [bool]$Available = [bool](Get-Command rustup -ErrorAction SilentlyContinue)) {
-  $r = [pscustomobject]@{ Skipped = (-not $Available); Added = @(); Present = @(); Failed = @() }
-  if (-not $Available) { return $r }
-  $global:LASTEXITCODE = 0
-  $toolchains = @()
-  foreach ($line in @(& $rustup toolchain list 2>$null)) {
-    $t = ([string]$line -replace '\s*\(.*\)\s*$', '').Trim()   # "stable-x86_64-pc-windows-msvc (active, default)"
-    if ($t -and $t -notmatch '\s') { $toolchains += $t }       # "no installed toolchains" has spaces
-  }
-  foreach ($t in $toolchains) {
-    $global:LASTEXITCODE = 0
-    $have = @(& $rustup component list --installed --toolchain $t 2>$null | ForEach-Object { [string]$_ })
-    if (@($have | Where-Object { $_ -match '^rust-analyzer(-|$)' }).Count -gt 0) { $r.Present += $t; continue }
-    $global:LASTEXITCODE = 0
-    & $rustup component add rust-analyzer --toolchain $t 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { $r.Added += $t } else { $r.Failed += $t }
-  }
-  return $r
 }
 
 # ---- Nerd Font (kept for a later visual rebuild) ----
@@ -1138,25 +785,6 @@ function Set-WindowsPowerShellPolicy(
   return 'set'
 }
 
-# Hooks this repo used to install. The merge keeps machine hooks it doesn't know, so a retired one would live on
-# forever; drop every hook whose command mentions a retired script, and any group or event left empty.
-$retiredHooks = @('block-dangerous-git.sh', 'bigquery-headers.py', '.bigquery-token.json', 'history_sync')
-function Remove-RetiredHooks($current, [string[]]$retired) {
-  if (-not $current.PSObject.Properties['hooks'] -or $null -eq $current.hooks) { return $current }
-  $events = [ordered]@{}
-  foreach ($ev in $current.hooks.PSObject.Properties) {
-    $groups = @()
-    foreach ($g in @($ev.Value)) {
-      $kept = @(@($g.hooks) | Where-Object { $h = $_; $h -and -not ($retired | Where-Object { ([string]$h.command).Contains($_) }) })
-      if ($kept.Count -gt 0) { $g | Add-Member -NotePropertyName hooks -NotePropertyValue $kept -Force; $groups += $g }
-    }
-    if ($groups.Count -gt 0) { $events[$ev.Name] = $groups }
-  }
-  if ($events.Count -gt 0) { $current | Add-Member -NotePropertyName hooks -NotePropertyValue ([pscustomobject]$events) -Force }
-  else { $current.PSObject.Properties.Remove('hooks') }
-  return $current
-}
-
 # The advisor is switched per project (skills/advisor-switch writes the project's .claude/settings.local.json). A
 # user-level advisorModel, which /advisor writes, would turn it on in every session of every project, so it goes.
 # Returns what it removed (nothing when the key was not there).
@@ -1270,6 +898,227 @@ function Test-StatusBar([string]$command, [string]$sample) {
   [pscustomobject]@{ Ok = $ok; Output = (@($out | ForEach-Object { "$_" }) -join "`n") }
 }
 
+# ---- One-time clean slate ----
+# Every plugin, marketplace, custom agent, global CLAUDE.md, Kotlin language server and ~/.claude.json toggle this setup once
+# installed is taken off the PC, and settings.json is written fresh from the template. It runs once per PC: a finished run
+# (no failure) records $cleanSlateId under "cleanSlate" in the state file, and a later run sees it and does nothing.
+# The pieces are functions with the CLI and the paths as parameters, so the tests run them against a fake `claude` and a
+# temp folder. The step-1 backup holds everything they delete.
+$cleanSlateId = '2026-11-28'
+
+function Get-StateValue([string]$statePath, [string]$name) {
+  if (-not (Test-Path -LiteralPath $statePath)) { return $null }
+  try { $state = Read-Utf8 $statePath | ConvertFrom-Json } catch { return $null }
+  if ($state -and $state.PSObject.Properties[$name]) { return $state.PSObject.Properties[$name].Value }
+  return $null
+}
+
+# Sets one key of the state file and keeps every other key.
+function Set-StateValue([string]$statePath, [string]$name, $value) {
+  $state = $null
+  if (Test-Path -LiteralPath $statePath) { $state = Read-Utf8 $statePath | ConvertFrom-Json }
+  if ($null -eq $state) { $state = [pscustomobject]@{} }
+  $state | Add-Member -NotePropertyName $name -NotePropertyValue $value -Force
+  Write-Utf8NoBom $statePath (($state | ConvertTo-Json -Depth 20) + "`n")
+}
+
+# Uninstalls every plugin `claude plugin list --json` shows at user scope. Claude Code's own bundled plugins (@builtin) and
+# the session (@inline) and claude.ai (@synced) ones are not the setup's, so they stay. A plugin at project or local scope
+# is not touched: it comes back as Elsewhere (Id, Scope, Path) for the caller to print. $claude runs the CLI: a scriptblock
+# that gets the arguments, so a test can pass a fake. A failed uninstall, or a list that cannot be read, is added to $failed.
+function Remove-AllUserPlugins([scriptblock]$claude = { & claude @args }, $failed = $null) {
+  $r = [pscustomobject]@{ Removed = @(); Elsewhere = @() }
+  try {
+    $parsed = (& $claude plugin list --json 2>$null | Out-String) | ConvertFrom-Json
+    $listed = @($parsed | ForEach-Object { $_ } | Where-Object { $_ -and $_.id })   # Windows PowerShell 5.1 returns a JSON array as one object
+  } catch {
+    if ($null -ne $failed) { $failed.Add('plugin list: the claude CLI printed no readable JSON') }
+    return $r
+  }
+  foreach ($p in $listed) {
+    $id = [string]$p.id
+    if ($id -match '@(builtin|inline|synced)$') { continue }
+    if ($p.scope -eq 'user') {
+      $global:LASTEXITCODE = 0
+      & $claude plugin uninstall $id --scope user 2>&1 | Out-Null
+      if ($LASTEXITCODE -eq 0) { $r.Removed += $id } elseif ($null -ne $failed) { $failed.Add("uninstall $id") }
+    } elseif ($p.scope -eq 'project' -or $p.scope -eq 'local') {
+      $r.Elsewhere += [pscustomobject]@{ Id = $id; Scope = [string]$p.scope; Path = [string]$p.projectPath }
+    }
+  }
+  return $r
+}
+
+# Removes every known plugin marketplace but $keep. The names come from `claude plugin marketplace list --json`; when that
+# prints nothing readable, from the keys of $knownPath (~/.claude/plugins/known_marketplaces.json). Returns the names it
+# removed; a failed removal is added to $failed.
+function Remove-Marketplaces([scriptblock]$claude = { & claude @args }, [string]$knownPath = '', [string]$keep = 'claude-plugins-official', $failed = $null) {
+  $names = $null
+  try {
+    $global:LASTEXITCODE = 0
+    $text = (& $claude plugin marketplace list --json 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -eq 0 -and $text) {
+      $parsed = $text | ConvertFrom-Json
+      $names = @($parsed | ForEach-Object { $_ } | Where-Object { $_ -and $_.name } | ForEach-Object { [string]$_.name })
+    }
+  } catch { $names = $null }
+  if ($null -eq $names -and $knownPath -and (Test-Path -LiteralPath $knownPath)) {
+    try { $names = @((Read-Utf8 $knownPath | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $_.Name }) } catch { $names = $null }
+  }
+  $removed = @()
+  foreach ($n in @($names)) {
+    if (-not $n -or $n -eq $keep) { continue }
+    $global:LASTEXITCODE = 0
+    & $claude plugin marketplace remove $n 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { $removed += $n } elseif ($null -ne $failed) { $failed.Add("marketplace remove $n") }
+  }
+  return $removed
+}
+
+# Deletes every file under ~/.claude/agents and ~/.claude/CLAUDE.md. Returns what it removed, as paths under $claudeDir.
+function Remove-ClaudeAgentsAndRules([string]$claudeDir) {
+  $removed = @()
+  $agents = Join-Path $claudeDir 'agents'
+  if (Test-Path -LiteralPath $agents -PathType Container) {
+    $agents = (Get-Item -LiteralPath $agents).FullName   # the resolved spelling, which the children's FullName share
+    foreach ($f in @(Get-ChildItem -LiteralPath $agents -File -Recurse -Force)) {
+      Remove-Item -LiteralPath $f.FullName -Force
+      $removed += 'agents/' + $f.FullName.Substring($agents.Length).TrimStart('\', '/').Replace('\', '/')
+    }
+  }
+  $rules = Join-Path $claudeDir 'CLAUDE.md'
+  if (Test-Path -LiteralPath $rules -PathType Leaf) { Remove-Item -LiteralPath $rules -Force; $removed += 'CLAUDE.md' }
+  return $removed
+}
+
+# Deletes each folder in $names under $parent. Returns the names it removed; every other folder stays.
+function Remove-NamedFolders([string[]]$names, [string]$parent) {
+  $removed = @()
+  foreach ($n in $names) {
+    $p = Join-Path $parent $n
+    if (Test-Path -LiteralPath $p -PathType Container) { Remove-Item -LiteralPath $p -Recurse -Force; $removed += $n }
+  }
+  return $removed
+}
+
+# A ';'-separated Path without $entry: every entry equal to it (ignoring slash style, trailing slash and case) is dropped.
+# Other entries keep their order and spelling; empty ones go.
+function Remove-PathEntry([string]$current, [string]$entry) {
+  $key = Format-DirKey $entry
+  (@(($current -split ';') | Where-Object { $_.Trim() -and (Format-DirKey $_) -ne $key })) -join ';'
+}
+
+# Takes $dir off the USER Path (HKCU\<subKey>\Path, read and written raw as ExpandString so %VARS% in other entries stay
+# unexpanded; never the machine Path) and, for the real Environment key, off this process's Path. Returns $true when the
+# registry changed. $subKey is a parameter so a test can use a scratch key.
+function Remove-UserPathEntry([string]$dir, [string]$subKey = 'Environment') {
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($subKey, $true)
+  if (-not $key) { return $false }
+  $changed = $false
+  try {
+    $cur = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    $want = Format-DirKey $dir
+    if (@($cur -split ';' | Where-Object { $_.Trim() -and (Format-DirKey $_) -eq $want }).Count -gt 0) {
+      $key.SetValue('Path', (Remove-PathEntry $cur $dir), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+      $changed = $true
+    }
+  } finally { $key.Close() }
+  if ($subKey -eq 'Environment') { $env:Path = Remove-PathEntry $env:Path $dir }
+  return $changed
+}
+
+# Removes the Kotlin language server the old installer put under $root (<root>\<version>, and the shim folder <root>\bin with
+# kotlin-lsp.cmd) and the shim folder from the user Path. Returns what it removed.
+function Remove-KotlinLsp([string]$root, [string]$subKey = 'Environment') {
+  $done = @()
+  if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force; $done += $root }
+  if (Remove-UserPathEntry (Join-Path $root 'bin') $subKey) { $done += "$(Join-Path $root 'bin') (user Path entry)" }
+  return $done
+}
+
+# clean_slate.py edits ~/.claude.json (drops claudeInChromeDefaultEnabled and every project's disabledMcpServers) and takes
+# the keys the retired mcp_off.py and chrome_off.py kept out of the state file. $python runs Python (a scriptblock that gets
+# the arguments). Returns Ok and the lines the script printed.
+function Clear-ClaudeJson([string]$script, [string]$claudeJson, [string]$statePath, [scriptblock]$python = { & python -S @args }) {
+  $global:LASTEXITCODE = 0
+  $out = @(& $python $script $claudeJson $statePath 2>&1 | ForEach-Object { "$_" })
+  [pscustomobject]@{ Ok = ($LASTEXITCODE -eq 0); Lines = $out }
+}
+
+# The whole reset, once per PC. Returns Skipped (the state file already holds $id), Lines (Text, Kind: info, none or warn),
+# and Failures; the state key is written only when there is no failure. Each piece is tried even when an earlier one fails.
+function Invoke-CleanSlate([string]$id, [string]$claudeDir, [string]$claudeJson, [string]$statePath, [string]$repoDir, $template,
+                           [string]$kotlinRoot, [string]$pyScript, [scriptblock]$claude = { & claude @args },
+                           [scriptblock]$python = { & python -S @args }, [string]$pathSubKey = 'Environment') {
+  $ErrorActionPreference = 'Continue'   # Windows PowerShell 5.1 throws on a native command's stderr under 'Stop'
+  $cleanSlateSkills = @('underwater-photoshop', 'find-skills', 'codex')   # folders under ~/.claude/skills; photo-edit is a folder of ~/.claude itself
+  $keepMarketplace = 'claude-plugins-official'
+  $r = [pscustomobject]@{ Skipped = $false; Lines = (New-Object 'System.Collections.Generic.List[object]'); Failures = (New-Object 'System.Collections.Generic.List[string]') }
+  if ((Get-StateValue $statePath 'cleanSlate') -eq $id) { $r.Skipped = $true; return $r }
+  $line = { param([string]$text, [string]$kind = 'info') $r.Lines.Add([pscustomobject]@{ Text = $text; Kind = $kind }) }
+
+  # 1. Plugins at user scope; the others are listed with the command to run in their project.
+  try {
+    $failed = New-Object 'System.Collections.Generic.List[string]'
+    $pl = Remove-AllUserPlugins $claude $failed
+    foreach ($p in $pl.Removed) { & $line "uninstalled plugin $p" }
+    foreach ($e in $pl.Elsewhere) {
+      & $line "plugin $($e.Id) is installed at $($e.Scope) scope in $($e.Path); not touched. To remove it: cd `"$($e.Path)`"; claude plugin uninstall $($e.Id) --scope $($e.Scope)" 'warn'
+    }
+    foreach ($f in $failed) { $r.Failures.Add("clean slate: $f"); & $line "failed: $f" 'warn' }
+    if ($pl.Removed.Count -eq 0 -and $pl.Elsewhere.Count -eq 0 -and $failed.Count -eq 0) { & $line 'no user plugins to uninstall' 'none' }
+  } catch { $r.Failures.Add("clean slate: plugins: $($_.Exception.Message)") }
+
+  # 2. Marketplaces
+  try {
+    $failed = New-Object 'System.Collections.Generic.List[string]'
+    $gone = @(Remove-Marketplaces $claude (Join-Path $claudeDir 'plugins\known_marketplaces.json') $keepMarketplace $failed)
+    foreach ($n in $gone) { & $line "removed marketplace $n" }
+    foreach ($f in $failed) { $r.Failures.Add("clean slate: $f"); & $line "failed: $f" 'warn' }
+    if ($gone.Count -eq 0 -and $failed.Count -eq 0) { & $line "no marketplace besides $keepMarketplace" 'none' }
+  } catch { $r.Failures.Add("clean slate: marketplaces: $($_.Exception.Message)") }
+
+  # 3. Custom agents and the global CLAUDE.md
+  try {
+    $gone = @(Remove-ClaudeAgentsAndRules $claudeDir)
+    foreach ($n in $gone) { & $line "deleted ~/.claude/$n" }
+    if ($gone.Count -eq 0) { & $line 'no custom agents or ~/.claude/CLAUDE.md' 'none' }
+  } catch { $r.Failures.Add("clean slate: agents and CLAUDE.md: $($_.Exception.Message)") }
+
+  # 4. Skill folders of retired things
+  try {
+    $gone = @(Remove-NamedFolders $cleanSlateSkills (Join-Path $claudeDir 'skills') | ForEach-Object { "skills/$_" }) + @(Remove-NamedFolders @('photo-edit') $claudeDir)
+    foreach ($n in $gone) { & $line "deleted ~/.claude/$n" }
+    if ($gone.Count -eq 0) { & $line 'no retired skill folders' 'none' }
+  } catch { $r.Failures.Add("clean slate: skill folders: $($_.Exception.Message)") }
+
+  # 5. Kotlin language server
+  try {
+    $gone = @(Remove-KotlinLsp $kotlinRoot $pathSubKey)
+    foreach ($n in $gone) { & $line "removed Kotlin language server: $n" }
+    if ($gone.Count -eq 0) { & $line 'no Kotlin language server' 'none' }
+  } catch { $r.Failures.Add("clean slate: Kotlin language server: $($_.Exception.Message)") }
+
+  # 6. ~/.claude.json and the state file
+  try {
+    $cj = Clear-ClaudeJson $pyScript $claudeJson $statePath $python
+    foreach ($l in $cj.Lines) { if ($l.Trim()) { & $line $l.Trim() } }
+    if (-not $cj.Ok) { $r.Failures.Add("clean slate: clean_slate.py failed: $($cj.Lines -join ' ')") }
+  } catch { $r.Failures.Add("clean slate: clean_slate.py: $($_.Exception.Message)") }
+
+  # 7. settings.json, fresh from the template (the CLI may have rewritten it while uninstalling, so this goes last)
+  try {
+    $fresh = Merge-ClaudeSettings ([pscustomobject]@{}) $template $repoDir
+    $settingsFile = Join-Path $claudeDir 'settings.json'
+    New-Item -ItemType Directory -Force (Split-Path $settingsFile) | Out-Null
+    Write-Utf8NoBom $settingsFile (($fresh | ConvertTo-Json -Depth 20) + "`n")
+    & $line 'wrote ~/.claude/settings.json fresh from the template'
+  } catch { $r.Failures.Add("clean slate: settings.json: $($_.Exception.Message)") }
+
+  if ($r.Failures.Count -eq 0) { Set-StateValue $statePath 'cleanSlate' $id }
+  return $r
+}
+
 foreach ($tool in 'claude', 'git', 'python') {
   if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
     throw "'$tool' not found on PATH. See docs/manual.md, 'Set up a new machine', for the desktop bootstrap list."
@@ -1279,14 +1128,29 @@ if (-not $Check) {
   # 1. Backup
   Write-Step "Backing up current config to $backup"
   New-Item -ItemType Directory -Force $backup | Out-Null
-  foreach ($f in 'CLAUDE.md', 'settings.json', 'statusbar.py', 'statusline.py', 'keybindings.json') {
+  foreach ($f in 'CLAUDE.md', 'settings.json', 'statusbar.py', 'statusline.py', 'keybindings.json', 'claude-setup-state.json') {
     $p = Join-Path $claudeDir $f
     if (Test-Path $p) { Copy-Item $p $backup }
   }
+  if (Test-Path (Join-Path $claudeDir 'agents')) { Copy-Item (Join-Path $claudeDir 'agents') (Join-Path $backup 'agents') -Recurse -Force }
+  $claudeJson = Join-Path $HOME '.claude.json'
+  if (Test-Path $claudeJson) { Copy-Item $claudeJson (Join-Path $backup 'claude.json') }
+
+  # 1b. Clean slate, once per PC (see Invoke-CleanSlate): plugins, marketplaces, agents, the global CLAUDE.md, the Kotlin
+  # language server and the ~/.claude.json toggles this setup once installed go; settings.json is written fresh.
+  Write-Step 'Clean slate (once per PC)'
+  $cs = Invoke-CleanSlate $cleanSlateId $claudeDir $claudeJson (Join-Path $claudeDir 'claude-setup-state.json') $repo $template `
+    (Join-Path $env:LOCALAPPDATA 'Programs\kotlin-lsp') (Join-Path $repo 'clean_slate.py')
+  if ($cs.Skipped) { Write-Color "    already done on this PC ($cleanSlateId)" 244 }
+  foreach ($l in $cs.Lines) {
+    if ($l.Kind -eq 'none') { Write-Color "    $($l.Text)" 244 }
+    elseif ($l.Kind -eq 'warn') { Write-Color "    $($l.Text)" 228 }
+    else { Write-Host "    $($l.Text)" }
+  }
+  foreach ($f in $cs.Failures) { Write-Color "    $f" 203; $failures += $f }
 
   # 2. Copy files
-  Write-Step 'Copying CLAUDE.md, statusbar.py, themes/, skills/, agents/'
-  Copy-Item (Join-Path $repo 'global\CLAUDE.md') $claudeDir -Force
+  Write-Step 'Copying statusbar.py, themes/, skills/'
   Copy-Item (Join-Path $repo 'statusbar.py') $claudeDir -Force
   # Themes: settings.json selects custom:clear, which Claude Code reads from ~/.claude/themes/clear.json.
   $themesDir = Join-Path $claudeDir 'themes'
@@ -1298,26 +1162,13 @@ if (-not $Check) {
     New-Item -ItemType Directory -Force $dest | Out-Null
     Copy-Item (Join-Path $skill.FullName '*') $dest -Recurse -Force
   }
-  # Retired user skills (moved into a plugin, or dropped) are deleted from ~/.claude/skills.
-  foreach ($n in @(Remove-RetiredSkills $retiredSkills (Join-Path $claudeDir 'skills'))) {
-    $why = if ($n -eq 'underwater-photoshop') { 'now the photo-edit plugin' } else { 'retired' }
-    Write-Host "    removed skill: $n ($why)"
-  }
-  # Agents: each file under agents/ becomes ~/.claude/agents/<name>.md (a file named like a built-in agent replaces it).
-  if (Test-Path (Join-Path $repo 'agents')) {
-    New-Item -ItemType Directory -Force (Join-Path $claudeDir 'agents') | Out-Null
-    Copy-Item (Join-Path $repo 'agents\*.md') (Join-Path $claudeDir 'agents') -Force
-  }
   # 3. Merge settings.json
   Write-Step 'Merging settings.json'
   $current = if (Test-Path $settingsPath) { Read-Utf8 $settingsPath | ConvertFrom-Json } else { [pscustomobject]@{} }
 
-  # Per-key rules (enabledPlugins, env, permissions, hooks merge; the rest is replaced) live in Merge-ClaudeSettings.
+  # Per-key rules (env and permissions merge; the rest is replaced) live in Merge-ClaudeSettings.
   $current = Merge-ClaudeSettings $current $template $repo
-  $current = Remove-RetiredHooks $current $retiredHooks
-  foreach ($d in @(Remove-RetiredSettingsPlugins $current $retiredPlugins)) { Write-Host "    removed from settings.json enabledPlugins: $d (retired)" }
   foreach ($d in @(Remove-UserAdvisor $current)) { Write-Host "    removed from settings.json: $d (the advisor is per project: advisor-switch skill)" }
-  foreach ($r in $retiredHooks) { Remove-Item (Join-Path $claudeDir "hooks\$r") -Force -ErrorAction SilentlyContinue }
   # The status bar draws Nerd Font icons; on a machine without a Nerd Font the installed command gets --labels
   # (short words instead of glyphs), so the bar reads in whatever font the terminal uses.
   $slProp = $current.PSObject.Properties['statusLine']
@@ -1327,66 +1178,7 @@ if (-not $Check) {
   }
   Write-Utf8NoBom $settingsPath (($current | ConvertTo-Json -Depth 20) + "`n")
 
-  # 4. Plugins
-  # Windows PowerShell 5.1 turns a native command's stderr into a terminating error under
-  # $ErrorActionPreference = 'Stop' ("plugin is already enabled" would abort the script), so the
-  # plugin calls run with 'Continue' and their stderr is captured, not thrown.
-  $savedEap = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  if (-not $SkipPlugins) {
-    # Retired plugins go first. The CLI may rewrite enabledPlugins while uninstalling, so prune the ids again after.
-    Write-Step 'Uninstalling retired plugins'
-    $retireFailed = New-Object 'System.Collections.Generic.List[string]'
-    $gonePlugins = @(Remove-RetiredPlugins $retiredPlugins { & claude @args } $retireFailed)
-    foreach ($id in $gonePlugins) { Write-Host "    uninstalled $id" }
-    foreach ($id in $retireFailed) { $failures += "uninstall $id" }
-    if ($gonePlugins.Count -gt 0) {
-      $cur = Read-Utf8 $settingsPath | ConvertFrom-Json
-      if (@(Remove-RetiredSettingsPlugins $cur $retiredPlugins).Count -gt 0) {
-        Write-Utf8NoBom $settingsPath (($cur | ConvertTo-Json -Depth 20) + "`n")
-      }
-    }
-    if ($gonePlugins.Count -eq 0 -and $retireFailed.Count -eq 0) { Write-Color '    none installed' 244 }
-    # Plugins from outside the official marketplace (good-css) need their marketplace known first.
-    foreach ($mp in $template.extraKnownMarketplaces.PSObject.Properties) {
-      $out = & claude plugin marketplace add $mp.Value.source.repo 2>&1
-      if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') { $failures += "marketplace $($mp.Name): $out" }
-    }
-    & claude plugin marketplace update 2>&1 | Out-Null
-    Write-Step 'Installing and enabling plugins'
-    foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
-      if ($plugin.Value -ne $true) { continue }
-      $name = $plugin.Name
-      $out = & claude plugin install $name --scope user 2>&1
-      if ($LASTEXITCODE -ne 0 -and ($out -join ' ') -notmatch 'already') { $failures += "install $name : $out" }
-      & claude plugin enable $name --scope user 2>&1 | Out-Null
-      $upd = & claude plugin update $name --scope user 2>&1
-      $ver = ($upd | Out-String).Trim() -replace '\s+', ' '
-      Write-Host "    $name  $ver"
-    }
-    # The plugins pinned false are off at user level, but a project can only switch on a plugin the PC has.
-    Write-Step 'Installing the project plugins, off until a project switches one on'
-    $keptFailed = New-Object 'System.Collections.Generic.List[string]'
-    $newKept = @(Install-KeptPlugins (Get-KeptPlugins $template.enabledPlugins) { & claude @args } $keptFailed)
-    foreach ($id in $newKept) { Write-Host "    installed $id (off)" }
-    foreach ($id in $keptFailed) { $failures += "install $id" }
-    if ($newKept.Count -eq 0 -and $keptFailed.Count -eq 0) { Write-Color '    all installed' 244 }
-    # --scope user: auto-detect would write into a project's .claude/settings.json when run inside a repo that has one.
-    # Enabling a plugin by name also flips on a same-named copy from another marketplace, so pin the false ones off afterwards.
-    foreach ($plugin in $template.enabledPlugins.PSObject.Properties) {
-      if ($plugin.Value -ne $false) { continue }
-      & claude plugin disable $plugin.Name --scope user 2>&1 | Out-Null
-    }
-  }
-  $ErrorActionPreference = $savedEap
-
-  # 4b. BigQuery MCP server is retired: drop the user-scope registration (a missing one is not an error).
-  Write-Step 'Removing BigQuery MCP server'
-  $ErrorActionPreference = 'Continue'
-  & claude mcp remove bigquery -s user 2>&1 | Out-Null
-  $ErrorActionPreference = $savedEap
-
-  # 4b2. The visual setup (theme, status line, readable-session mod, Windows Terminal Readable scheme) is retired. The
+  # 4. The visual setup (theme, status line, readable-session mod, Windows Terminal Readable scheme) is retired. The
   # settings merge keeps machine keys the repo no longer has, so an earlier install is undone here, after the merge.
   # Step 1 backed up settings.json, statusline.py and keybindings.json; Windows Terminal settings are backed up below.
   Write-Step 'Removing the retired visual setup'
@@ -1425,21 +1217,10 @@ if (-not $Check) {
   }
   if ($removed -eq 0) { Write-Color '    nothing to remove' 244 }
 
-  # 4c. Adobe connector off by default: 5k tokens a turn that only design work needs. Back up ~/.claude.json first.
-  Write-Step 'Adobe connector off in each known project (/mcp turns it back on)'
-  $claudeJson = Join-Path $HOME '.claude.json'
-  if (Test-Path $claudeJson) { Copy-Item $claudeJson (Join-Path $backup 'claude.json') }
-  & python -S (Join-Path $repo 'mcp_off.py') $claudeJson (Join-Path $claudeDir 'claude-setup-state.json') 'claude.ai Adobe'
-  if ($LASTEXITCODE -ne 0) { $failures += 'mcp_off.py failed' }
-  Write-Step 'Claude in Chrome off by default, once (/chrome or claude --chrome turns it on)'
-  & python -S (Join-Path $repo 'chrome_off.py') $claudeJson (Join-Path $claudeDir 'claude-setup-state.json')
-  if ($LASTEXITCODE -ne 0) { $failures += 'chrome_off.py failed' }
   $ranWith = @()
   if ($KeepFont) { $ranWith += '-KeepFont' }
   if ($KeepScheme) { $ranWith += '-KeepScheme' }
   if ($SkipFont) { $ranWith += '-SkipFont' }
-  if ($SkipKotlinLsp) { $ranWith += '-SkipKotlinLsp' }
-  if ($SkipLsp) { $ranWith += '-SkipLsp' }
   Set-StateRepo (Join-Path $claudeDir 'claude-setup-state.json') $repo $ranWith
 
   # 4d. Nerd Font. Best effort: a failure here warns and never fails the install.
@@ -1587,53 +1368,6 @@ if (-not $Check) {
       Write-Color "    could not update ${vsPath}: $($_.Exception.Message)" 228
     }
   }
-
-  # 4h. Kotlin language server for Claude Code's kotlin-lsp plugin (command `kotlin-lsp`), pinned and SHA-256 verified.
-  # -SkipKotlinLsp skips it. A failure is reported as a failed step and installs nothing.
-  if (-not $SkipKotlinLsp) {
-    Write-Step "Kotlin language server $kotlinLspVersion"
-    try {
-      $klRoot = Join-Path $env:LOCALAPPDATA 'Programs\kotlin-lsp'
-      $r = Install-KotlinLsp $kotlinLspVersion $env:PROCESSOR_ARCHITECTURE (Join-Path $klRoot $kotlinLspVersion) (Join-Path $klRoot 'bin')
-      Write-Host "    $r ($klRoot)"
-    } catch {
-      Write-Color "    $($_.Exception.Message)" 203
-      $failures += "kotlin-lsp: $($_.Exception.Message)"
-    }
-  }
-
-  # 4i. TypeScript language server for Claude Code's typescript-lsp plugin (command `typescript-language-server`): the
-  # pinned version installed with npm -g when the command is missing or older. -SkipLsp skips it. A failure is reported as
-  # a failed step and never aborts the rest.
-  if (-not $SkipLsp) {
-    Write-Step "TypeScript language server $typescriptLspVersion"
-    $savedEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'   # 5.1 throws on a native command's stderr under 'Stop'
-    try {
-      $r = Install-TypescriptLsp $typescriptLspVersion $typescriptVersion
-      Write-Host "    $r"
-    } catch {
-      Write-Color "    $($_.Exception.Message)" 203
-      $failures += "typescript-language-server: $($_.Exception.Message)"
-    } finally { $ErrorActionPreference = $savedEap }
-
-    # 4j. rust-analyzer for the rust-analyzer-lsp plugin (command `rust-analyzer`): the rustup component on every toolchain.
-    # No rustup is a skip, not a failure; a toolchain that refuses the component (a nightly without it) is a warning.
-    Write-Step 'rust-analyzer component for every rustup toolchain'
-    $savedEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    try {
-      $ra = Install-RustAnalyzerComponent
-      if ($ra.Skipped) { Write-Color '    rustup not found; skipped (install Rust from https://rustup.rs, then re-run)' 244 }
-      else {
-        foreach ($t in $ra.Added) { Write-Host "    added rust-analyzer to $t" }
-        foreach ($t in $ra.Failed) { Write-Color "    rustup could not add rust-analyzer to $t" 228 }
-        if ($ra.Present.Count -gt 0) { Write-Color "    already there: $($ra.Present -join ', ')" 244 }
-        if (@($ra.Added + $ra.Present + $ra.Failed).Count -eq 0) { Write-Color '    no toolchains installed' 244 }
-      }
-    } catch {
-      Write-Color "    $($_.Exception.Message)" 203
-      $failures += "rust-analyzer: $($_.Exception.Message)"
-    } finally { $ErrorActionPreference = $savedEap }
-  }
 }
 
 # 5. Verify
@@ -1763,9 +1497,6 @@ foreach ($row in $sameRows) {
   Write-Color ("    {0}  {1}  {2}  {3}" -f $row.Name.PadRight($wName), $row.Expected.PadRight($wExp), $row.Actual.PadRight($wAct), $row.Status) $color
   if ($row.Status -eq 'FAIL') { $failures += "same experience: $($row.Name): expected $($row.Expected), got $($row.Actual)" }
 }
-
-Write-Step 'MCP health'
-& claude mcp list 2>&1 | Where-Object { $_ -match 'Needs authentication|Failed|error' } | ForEach-Object { Write-Color "    $_" 228 }
 
 if ($Json) {
   $docRows = @($sameRows | ForEach-Object { [pscustomobject]@{ name = $_.Name; expected = $_.Expected; actual = $_.Actual; status = $_.Status } })

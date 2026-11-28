@@ -1,16 +1,16 @@
-"""The settings.json template keeps built-in tools and skills off at user level (projects switch them on)."""
+"""The settings.json template is a clean slate: no plugin, marketplace, hook, MCP rule or skill override (Claude Code's defaults)."""
 import json
 import os
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Superpowers skills once listed in skillOverrides. Plugin skills ignore skillOverrides (bare or plugin:skill keys),
-# so these entries did nothing; CLAUDE.md carries the rules instead.
-SUPERPOWERS_SKILLS = (
-    "brainstorming", "diagnosing-superpowers", "dispatching-parallel-agents", "receiving-code-review",
-    "requesting-code-review", "verification-before-completion", "writing-skills",
+# Keys the template once held and no longer may: each is back at Claude Code's default.
+REMOVED_KEYS = (
+    "enabledPlugins", "extraKnownMarketplaces", "hooks", "deniedMcpServers", "skillOverrides", "modelSettings",
+    "enableArtifact", "enableWorkflows",
 )
+REMOVED_ENV = ("CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_DISABLE_FAST_MODE")
 
 
 def template():
@@ -19,30 +19,34 @@ def template():
 
 
 class TemplatePolicyTest(unittest.TestCase):
-    def test_built_in_tools_are_off_at_user_level(self):
+    def test_none_of_the_removed_keys_is_present(self):
         t = template()
-        self.assertIs(t["enableArtifact"], False)
-        self.assertIs(t["enableWorkflows"], False)
+        for key in REMOVED_KEYS:
+            self.assertNotIn(key, t)
+        self.assertNotIn("deny", t["permissions"])
+        for name in REMOVED_ENV:
+            self.assertNotIn(name, t["env"])
+
+    def test_the_keys_are_exactly_these(self):
+        t = template()
+        self.assertEqual(sorted(t), sorted([
+            "permissions", "model", "theme", "env", "statusLine", "autoCompactWindow", "feedbackDrafts",
+            "autoUpdatesChannel", "skipDangerousModePermissionPrompt", "switchModelsOnFlag", "agentPushNotifEnabled",
+            "tui", "editorMode", "remoteControlAtStartup",
+        ]))
+        self.assertEqual(t["permissions"], {"defaultMode": "bypassPermissions"})
+        self.assertEqual(sorted(t["env"]), ["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "CLAUDE_CODE_NATIVE_CURSOR", "CLAUDE_CODE_PLUGIN_DIRS"])
+        self.assertEqual(t["statusLine"], {"type": "command", "command": "python -I -S ~/.claude/statusbar.py", "refreshInterval": 60})
+
+    def test_the_kept_pieces_are_wired(self):
+        t = template()
+        self.assertEqual(t["theme"], "custom:clear")
+        self.assertEqual(t["env"]["CLAUDE_CODE_PLUGIN_DIRS"], "<repo>/mods/session-cards")
         self.assertEqual(t["feedbackDrafts"], "off")
-        self.assertIs(t["enabledPlugins"]["humanizer@synced"], False)
 
-    def test_skill_overrides_name_bare_skills_only(self):
-        overrides = template()["skillOverrides"]
-        for key, value in overrides.items():
-            self.assertNotIn(":", key, "skillOverrides takes bare skill names; plugin skills ignore it")
-            self.assertIn(value, {"on", "name-only", "user-invocable-only", "off"}, key)
-        for name in SUPERPOWERS_SKILLS:
-            self.assertNotIn(name, overrides, "plugin skills ignore skillOverrides")
-
-    def test_unused_bundled_skills_are_hidden_from_claude(self):
-        overrides = template()["skillOverrides"]
-        for name in ("loop", "schedule", "init", "security-review", "simplify", "keybindings-help", "update-config",
-                     "fewer-permission-prompts", "plugin-authoring"):
-            self.assertEqual(overrides.get(name), "user-invocable-only", name)
-        for name in ("dataviz", "claude-api", "artifact-design", "artifact-diagramming", "artifact-capabilities"):
-            self.assertEqual(overrides.get(name), "off", name)
-        for name in ("code-review", "run", "workflow-authoring"):
-            self.assertNotIn(name, overrides, name)
+    def test_the_repo_holds_no_project_settings_or_hooks(self):
+        self.assertFalse(os.path.exists(os.path.join(ROOT, ".claude", "settings.json")))
+        self.assertFalse(os.path.exists(os.path.join(ROOT, ".claude", "hooks")))
 
 
 if __name__ == "__main__":

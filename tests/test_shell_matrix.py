@@ -119,6 +119,7 @@ class FlagsTest(unittest.TestCase):
         self.assertTrue(shell_matrix.commands("cmd")["install"].endswith("-Check -Json"))
 
     def test_only_the_three_keep_flags_pass_through(self):
+        # -SkipPlugins: a flag older installs recorded in the state file; it no longer exists
         got = shell_matrix.known_flags(["-KeepFont", "-Evil; calc", "-KeepScheme", "-SkipFont", "-SkipPlugins", 3])
         self.assertEqual(got, ["-KeepFont", "-KeepScheme", "-SkipFont"])
 

@@ -1,8 +1,8 @@
 # claude-setup (this repo)
 
 ## What lives where
-- Installed globally by `install.ps1`: root `settings.json`, `global/CLAUDE.md`, `statusbar.py`, `skills/`, `agents/`, `themes/`, `mods/session-cards`.
-- `.claude/` is this repo's own project config (hooks, skill, settings).
+- Installed globally by `install.ps1`: root `settings.json`, `statusbar.py`, `skills/`, `themes/`, `mods/session-cards`. No plugins, agents, hooks, MCP servers, language servers or global CLAUDE.md: the setup is a clean slate.
+- `.claude/` is this repo's own project config: the `live-check` skill only (no hooks, no settings).
 
 ## Tests
 - `python -m unittest discover -s tests -q`
@@ -10,10 +10,11 @@
 
 ## Install
 - Only from main, after merging: `pwsh -NoProfile -File install.ps1`. A worktree's install repoints `CLAUDE_CODE_PLUGIN_DIRS`.
-- `install.ps1` must parse under Windows PowerShell 5.1. A hook checks.
+- `install.ps1` must parse under Windows PowerShell 5.1. Check with `powershell -NoProfile -Command "$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('<abs path>\install.ps1',[ref]$null,[ref]$e); $e.Count"`: it must print 0.
+- The first run on a PC does the one-time clean-slate reset (`cleanSlate` key in `~/.claude/claude-setup-state.json`); `-Check` never changes anything.
 
 ## Flow
-- Work in worktrees under `.claude/worktrees/`, open a PR, run the `pre-merge-review` skill, then `gh pr merge <PR url> --squash --delete-branch --match-head-commit <full headRefOid>` (its gate hook refuses the merge until the review is recorded for the PR's head, and without that flag).
+- Work in worktrees under `.claude/worktrees/`, open a PR, run the `pre-merge-review` skill, then `gh pr merge <PR url> --squash --delete-branch`.
 - Leave the worktree directory before merging, or its removal fails.
 
 ## Engine facts

@@ -26,9 +26,8 @@ the machine is fixed by the installer, not by editing the repo.
    runs `install.cmd -Check`. Its last line is `shell matrix: all N shells match` (exit 0) or
    `shell matrix: K difference(s)` (exit 1). Quote the failing lines of the table.
 5. **Repair.** For any FAIL run `& "<repo>\install.cmd"` with the `flags` from step 1 added (only `-KeepFont`,
-   `-KeepScheme` and `-SkipFont`, so a repair never overwrites a font or scheme the user kept), plus `-SkipPlugins`
-   when only terminal rows failed. Set the PowerShell tool's timeout to 600000 ms: a full install outlasts the
-   2-minute default. Then run step 4 again. If it still fails after one repair, show the rows and stop; do not loop.
+   `-KeepScheme` and `-SkipFont`, so a repair never overwrites a font or scheme the user kept). Set the PowerShell
+   tool's timeout to 600000 ms: a full install outlasts the 2-minute default. Then run step 4 again. If it still fails after one repair, show the rows and stop; do not loop.
 6. **Hand over what the installer can't fix.** Name the row and give the exact command:
 
    | Row | Tell the user |
@@ -38,22 +37,13 @@ the machine is fixed by the installer, not by editing the repo.
    | Claude Code not signed in | Run `claude` and sign in. |
    | GitHub CLI not signed in | `gh auth login` |
 
-7. **User level is the workflow core.** `claude plugin list --json` must show, at user scope, `superpowers` and
-   `remember` (both `@claude-plugins-official`) enabled and every other user-scope plugin disabled; `~/.claude/skills`
+7. **Clean slate.** The `cleanSlate` key in the state file (read it like `repo` in step 1) must be set. Then
+   `claude plugin list --json` must show no user-scope plugin besides Claude Code's own `@builtin` ones; `~/.claude/skills`
    must hold `advisor-switch`, `setup-check` and `pre-merge-review` (and claude.ai's `synced`), with no
-   `underwater-photoshop`, `find-skills` or `codex`; `~/.claude/settings.json` must have, under `hooks.PreToolUse`, the
-   `Bash|PowerShell` entry running `~/.claude/skills/pre-merge-review/gate.py check`. Anything else means the last
-   install was skipped or failed: repair with step 5 (never `-SkipPlugins`). Then prove the gate runs, outside any
-   repository so no PR is read (`\u006d` is JSON for `m`: the gate refuses any command whose text holds a merge, this
-   one included, so the payload spells it escaped):
-   `'{"tool_name":"Bash","tool_input":{"command":"gh pr \u006derge 1"},"cwd":"C:\\"}' | python -I -S "$HOME\.claude\skills\pre-merge-review\gate.py" check`
-   must print a line with `"permissionDecision": "deny"`. No output means Python or `gate.py` is missing, and because
-   the hook command ends with `; exit 0`, every merge would then pass unchecked: install Python
-   (`winget install Python.Python.3.14`) or repair with step 5.
-8. **Photo project?** When the current folder is a photo project (RAW files, or a `.claude-work` or `edited` folder), its
-   `.claude/settings.json` must have `"photo-edit@claude-setup": true` in `enabledPlugins` and the `claude-setup` entry
-   in `extraKnownMarketplaces` (`docs/manual.md`, "Project-level plugins"). If not, give the user that block; the skill is no longer
-   in `~/.claude/skills`.
-9. **Done only when step 4 exits 0.** Quote its last line verbatim. Restart notes: Windows Terminal picks up profile
+   `underwater-photoshop`, `find-skills` or `codex`; `~/.claude/agents` must hold no file; `~/.claude/CLAUDE.md` must not
+   exist; `~/.claude/settings.json` must have no `hooks`, `enabledPlugins` or `deniedMcpServers`. A missing key or a
+   leftover means the one-time reset did not finish: repair with step 5 and read its `Clean slate` lines. A plugin the
+   user installs on purpose later is theirs; report it, do not remove it.
+8. **Done only when step 4 exits 0.** Quote its last line verbatim. Restart notes: Windows Terminal picks up profile
    changes live (a new tab is enough); Claude Code needs a restart for `settings.json` changes, so tell the user to
    restart it if step 5 ran.
