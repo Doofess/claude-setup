@@ -14,7 +14,7 @@
 - The first run on a PC does the one-time clean-slate reset (`cleanSlate` key in `~/.claude/claude-setup-state.json`); `-Check` never changes anything.
 
 ## Flow
-- Work in worktrees under `.claude/worktrees/`, open a PR, run the `pre-merge-review` skill, then `gh pr merge <PR url> --squash --delete-branch`.
+- Work in worktrees under `.claude/worktrees/`, open a PR, run the `pre-merge-review` skill, then `gh pr merge <PR url> --squash --delete-branch --match-head-commit <full headRefOid>` (the reviewed head, so a commit pushed after the review cannot merge with it).
 - Leave the worktree directory before merging, or its removal fails.
 
 ## Engine facts

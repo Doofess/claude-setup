@@ -37,7 +37,8 @@ the machine is fixed by the installer, not by editing the repo.
    | Claude Code not signed in | Run `claude` and sign in. |
    | GitHub CLI not signed in | `gh auth login` |
 
-7. **Clean slate.** The `cleanSlate` key in the state file (read it like `repo` in step 1) must be set. Then
+7. **Clean slate.** The `cleanSlate` and `cleanSlateSettings` keys in the state file (read them like `repo` in step 1)
+   must both equal `$cleanSlateId` in the clone's `install.ps1`; another value is an older reset. Then
    `claude plugin list --json` must show no user-scope plugin besides Claude Code's own `@builtin` ones; `~/.claude/skills`
    must hold `advisor-switch`, `setup-check` and `pre-merge-review` (and claude.ai's `synced`), with no
    `underwater-photoshop`, `find-skills` or `codex`; `~/.claude/agents` must hold no file; `~/.claude/CLAUDE.md` must not

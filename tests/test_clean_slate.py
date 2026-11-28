@@ -8,6 +8,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 import winreg
@@ -214,6 +215,16 @@ class CleanSlateBase:
         known = self.mkfile("known_marketplaces.json", text=json.dumps({"claude-plugins-official": {}, "good-css": {}}))
         out, calls = self.run_driver(mode="markets", marketsFail="1", known=known)
         self.assertEqual(out["Removed"], ["good-css"])
+        self.assertEqual(out["Failed"], [])
+
+    def test_no_list_and_no_known_marketplaces_file_is_a_failure(self):
+        missing = os.path.join(self.work, "known_marketplaces.json")
+        for case in ({"marketsFail": "1"}, {"markets": ""}):
+            with self.subTest(**case):
+                out, calls = self.run_driver(mode="markets", known=missing, **case)
+                self.assertEqual(out["Removed"], [])
+                self.assertEqual(len(out["Failed"]), 1, out)
+                self.assertEqual([c for c in calls if "remove" in c], [])
 
     def test_nothing_to_remove_makes_no_remove_call(self):
         out, calls = self.run_driver(mode="markets", markets=json.dumps([{"name": "claude-plugins-official"}]))
@@ -578,6 +589,25 @@ class MainTest(unittest.TestCase):
         self.addCleanup(setattr, clean_slate, "_save", real_save)
         self.assertEqual(clean_slate.main([self.cfg, self.state]), 0)
         self.assertEqual(json.loads(self.raw(self.cfg)), {"k": 1})
+
+    def test_a_lock_claude_code_took_over_during_the_save_is_left_to_it(self):
+        self.write(self.cfg, '{"claudeInChromeDefaultEnabled": false, "k": 1}')
+        real_save = clean_slate._save
+        lock = self.cfg + ".lock"
+
+        def save_while_claude_code_takes_over(path, data):
+            real_save(path, data)
+            if path == self.cfg:
+                os.rmdir(lock)
+                os.mkdir(lock)
+                later = time.time() + 5
+                os.utime(lock, (later, later))   # proper-lockfile refreshes the mtime of the lock it holds
+
+        clean_slate._save = save_while_claude_code_takes_over
+        self.addCleanup(setattr, clean_slate, "_save", real_save)
+        self.addCleanup(lambda: os.path.isdir(lock) and os.rmdir(lock))
+        self.assertEqual(clean_slate.main([self.cfg, self.state]), 0)
+        self.assertTrue(os.path.isdir(lock))   # Claude Code's lock: not ours to remove
 
 
 def setattr_all(saved):

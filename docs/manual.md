@@ -253,7 +253,7 @@ Not versioned on purpose: `~/.claude.json` (login state; the reset edits two tog
 The user level (`settings.json` here, written into `~/.claude/settings.json`) holds only:
 
 - the status line, the `custom:clear` theme, the session-cards mod, permissions (`bypassPermissions`), the model (`opus`)
-  and a few preferences (`autoCompactWindow`, `feedbackDrafts`, `autoUpdatesChannel`, `tui`, `editorMode` and others);
+  and a few preferences (`autoCompactWindow`, `feedbackDrafts`, `autoUpdatesChannel`, `tui`, `editorMode` and others), plus `remoteControlAtStartup: true`: every session starts with Remote Control on, in bypass-permissions mode, so it can be driven from claude.ai or the phone app (a deliberate choice: the installer writes it back on every run);
 - skills: `advisor-switch`, `setup-check` and `pre-merge-review`.
 
 It sets no plugin, marketplace, hook, MCP rule, skill override, model setting, agent or global CLAUDE.md: all of those

@@ -973,6 +973,11 @@ function Remove-Marketplaces([scriptblock]$claude = { & claude @args }, [string]
     try { $names = @((Read-Utf8 $knownPath | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $_.Name }) } catch { $names = $null }
   }
   $removed = @()
+  if ($null -eq $names) {
+    # Neither the CLI nor the file said which marketplaces exist: not knowing is a failure, so the reset runs again.
+    if ($null -ne $failed) { $failed.Add('marketplace list: the claude CLI printed no readable JSON and known_marketplaces.json gave no names') }
+    return $removed
+  }
   foreach ($n in @($names)) {
     if (-not $n -or $n -eq $keep) { continue }
     $global:LASTEXITCODE = 0
@@ -1070,7 +1075,7 @@ function Invoke-CleanSlate([string]$id, [string]$claudeDir, [string]$claudeJson,
     $pl = Remove-AllUserPlugins $claude $failed
     foreach ($p in $pl.Removed) { & $line "uninstalled plugin $p" }
     foreach ($e in $pl.Elsewhere) {
-      & $line "plugin $($e.Id) is installed at $($e.Scope) scope in $($e.Path); not touched. To remove it: cd `"$($e.Path)`"; claude plugin uninstall $($e.Id) --scope $($e.Scope)" 'warn'
+      & $line "plugin $($e.Id) is installed at $($e.Scope) scope in $($e.Path); not touched, though step 2 removes its marketplace. To remove it: cd `"$($e.Path)`"; claude plugin uninstall $($e.Id) --scope $($e.Scope)" 'warn'
     }
     foreach ($f in $failed) { $r.Failures.Add("clean slate: $f"); & $line "failed: $f" 'warn' }
     if ($pl.Removed.Count -eq 0 -and $pl.Elsewhere.Count -eq 0 -and $failed.Count -eq 0) { & $line 'no user plugins to uninstall' 'none' }

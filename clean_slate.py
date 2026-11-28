@@ -111,6 +111,14 @@ def _lock(path):
     return False
 
 
+def _stamp(lock):
+    """The lock directory's mtime in ns, or None when it is gone."""
+    try:
+        return os.stat(lock).st_mtime_ns
+    except OSError:
+        return None
+
+
 def main(argv):
     cfg_path, state_path = argv
     lines = []
@@ -118,6 +126,7 @@ def main(argv):
         if not _lock(cfg_path):
             print(f"{cfg_path} stayed locked by Claude Code; run the installer again", file=sys.stderr)
             return 1
+        mine = _stamp(cfg_path + ".lock")
         try:
             cfg = _load(cfg_path)
             done = clean_config(cfg)
@@ -128,11 +137,14 @@ def main(argv):
             print(f"{cfg_path} is not valid JSON ({e}); nothing changed", file=sys.stderr)
             return 1
         finally:
-            # Gone already when Claude Code took it over as stale during a slow save; the save itself still stands.
-            try:
-                os.rmdir(cfg_path + ".lock")
-            except OSError:
-                pass
+            # During a save slower than LOCK_STALE, Claude Code may take the lock over as stale (a new directory, and
+            # proper-lockfile refreshes its mtime): remove it only while it is still the one we made. Gone already is
+            # fine too; the save itself still stands.
+            if mine is not None and _stamp(cfg_path + ".lock") == mine:
+                try:
+                    os.rmdir(cfg_path + ".lock")
+                except OSError:
+                    pass
     try:
         state = _load(state_path)
     except ValueError as e:
