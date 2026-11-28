@@ -297,6 +297,7 @@ param([string]$Path)
 $errors = $null
 [void][System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errors)
 foreach ($e in $errors) { [Console]::Out.WriteLine(('{0}:{1}: {2}' -f $e.Extent.StartLineNumber, $e.Extent.StartColumnNumber, $e.Message)) }
+[Console]::Out.WriteLine('parsed')
 """
 
 
@@ -311,7 +312,8 @@ class ParseBase:
             f.write(PARSE_SCRIPT)
         r = run_engine(self.engine, script, os.path.join(ROOT, "install.ps1"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.strip(), "", "parse errors:\n" + r.stdout)
+        # "parsed" alone: ParseFile ran to the end (a throw would skip the line) and reported no error.
+        self.assertEqual(r.stdout.strip(), "parsed", "parse errors:\n" + r.stdout + r.stderr)
 
 
 per_engine(ParseBase, globals())

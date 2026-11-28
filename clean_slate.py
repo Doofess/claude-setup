@@ -6,7 +6,8 @@ Usage: python clean_slate.py <~/.claude.json> <state.json>
 disabledMcpServers from every entry under projects (the old installer put the claude.ai Adobe connector there). Every
 other key stays as it is, and the file stays UTF-8.
 state.json: deletes the keys the old installer kept there ("claude.ai Adobe", "claudeInChromeDefaultEnabled").
-Prints one line per thing removed. A file that is missing or has nothing to remove is not written.
+Prints one line per thing removed. A file that is missing, empty (a save cut short) or has nothing to remove is not
+written, and counts as cleaned.
 """
 import json
 import os
