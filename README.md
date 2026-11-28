@@ -41,7 +41,7 @@ Claude Code runs `statusbar.py` every 60 s: session JSON in, one line out. The c
 
 ## Testing
 
-293 Python test methods in 8 `unittest` files and 91 cases in the mod's 5 test files. `unittest` reports 364, because the installer-helper tests run once under each PowerShell engine. The installer tests check its functions and source text; two opt-in tests run `-Check` on the real machine. There is no CI.
+Python `unittest` files under `tests/`, and the mod's own test files. `unittest` reports more tests than there are methods, because the installer-helper tests (and the 5.1 parse check) run once under each PowerShell engine. The installer tests check its functions and source text; two opt-in tests run `-Check` on the real machine. There is no CI.
 
 ```powershell
 python -m unittest discover -s tests -q

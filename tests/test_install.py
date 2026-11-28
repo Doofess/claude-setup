@@ -292,6 +292,31 @@ if ($Mode -eq 'apply') {
 per_engine(FontCheckBase, globals())
 
 
+PARSE_SCRIPT = r"""
+param([string]$Path)
+$errors = $null
+[void][System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errors)
+foreach ($e in $errors) { [Console]::Out.WriteLine(('{0}:{1}: {2}' -f $e.Extent.StartLineNumber, $e.Extent.StartColumnNumber, $e.Message)) }
+"""
+
+
+class ParseBase:
+    """install.ps1 must parse under Windows PowerShell 5.1 as well as pwsh 7; this is the check that guards it."""
+
+    def test_install_ps1_parses(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        script = os.path.join(tmp, "parse.ps1")
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(PARSE_SCRIPT)
+        r = run_engine(self.engine, script, os.path.join(ROOT, "install.ps1"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "", "parse errors:\n" + r.stdout)
+
+
+per_engine(ParseBase, globals())
+
+
 ROW_DRIVER = """param([string]$ListPath, [string]$FontKept, [string]$KeepScheme)
 $ErrorActionPreference = 'Stop'
 {HELPERS}

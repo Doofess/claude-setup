@@ -558,6 +558,14 @@ class MainTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.cfg))
         self.assertFalse(os.path.exists(self.state))
 
+    def test_empty_files_are_left_alone(self):
+        self.write(self.cfg, "")
+        self.write(self.state, "  \n")
+        self.assertEqual(clean_slate.main([self.cfg, self.state]), 0)
+        self.assertEqual(self.raw(self.cfg), b"")
+        self.assertEqual(self.raw(self.state), b"  \n")
+        self.assertFalse(os.path.exists(self.cfg + ".lock"))
+
     def test_invalid_json_is_an_error_and_changes_nothing(self):
         self.write(self.cfg, "{not json")
         self.assertEqual(clean_slate.main([self.cfg, self.state]), 1)

@@ -55,11 +55,13 @@ def clean_state(state):
 
 def _load(path):
     # utf-8-sig also reads a file a hand edit or Windows PowerShell 5.1 saved with a BOM; _save writes none.
+    # An empty file (a save cut short) holds nothing to remove, the same as a missing one, so it is left alone.
     try:
         with open(path, encoding="utf-8-sig") as f:
-            return json.load(f)
+            text = f.read()
     except FileNotFoundError:
         return None
+    return json.loads(text) if text.strip() else None
 
 
 def _dumps(data):
