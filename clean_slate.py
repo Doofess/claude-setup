@@ -54,8 +54,9 @@ def clean_state(state):
 
 
 def _load(path):
+    # utf-8-sig also reads a file a hand edit or Windows PowerShell 5.1 saved with a BOM; _save writes none.
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:
             return json.load(f)
     except FileNotFoundError:
         return None
@@ -127,7 +128,11 @@ def main(argv):
             print(f"{cfg_path} is not valid JSON ({e}); nothing changed", file=sys.stderr)
             return 1
         finally:
-            os.rmdir(cfg_path + ".lock")
+            # Gone already when Claude Code took it over as stale during a slow save; the save itself still stands.
+            try:
+                os.rmdir(cfg_path + ".lock")
+            except OSError:
+                pass
     try:
         state = _load(state_path)
     except ValueError as e:

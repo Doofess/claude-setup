@@ -50,11 +50,16 @@ $env:FAKE_LIST = [string]$in.list
 $env:FAKE_MARKETS = [string]$in.markets
 $env:FAKE_MARKETS_FAIL = [string]$in.marketsFail
 $env:FAKE_FAIL = [string]$in.fail
+$env:FAKE_LIST_EXIT = [string]$in.listExit
 $env:PY_EXE = [string]$in.python
 
 $fakeClaude = {
   Add-Content -LiteralPath $env:FAKE_LOG -Value ('claude ' + ($args -join ' '))
-  if ($args[0] -eq 'plugin' -and $args[1] -eq 'list') { Write-Output $env:FAKE_LIST; $global:LASTEXITCODE = 0; return }
+  if ($args[0] -eq 'plugin' -and $args[1] -eq 'list') {
+    if ($env:FAKE_LIST) { Write-Output $env:FAKE_LIST }
+    $global:LASTEXITCODE = if ($env:FAKE_LIST_EXIT) { [int]$env:FAKE_LIST_EXIT } else { 0 }
+    return
+  }
   if ($args[1] -eq 'marketplace' -and $args[2] -eq 'list') {
     if ($env:FAKE_MARKETS_FAIL) { $global:LASTEXITCODE = 1; return }
     Write-Output $env:FAKE_MARKETS; $global:LASTEXITCODE = 0; return
@@ -186,6 +191,14 @@ class CleanSlateBase:
     def test_an_empty_plugin_list_does_nothing(self):
         out, calls = self.run_driver(mode="plugins", list="[]")
         self.assertEqual((out["Removed"], out["Elsewhere"], out["Failed"]), ([], [], []))
+
+    def test_a_plugin_list_that_fails_or_prints_nothing_is_a_failure(self):
+        for case in ({"list": "", "listExit": 1}, {"list": "", "listExit": 0}, {"list": "[]", "listExit": 1}):
+            with self.subTest(**case):
+                out, calls = self.run_driver(mode="plugins", **case)
+                self.assertEqual(out["Removed"], [])
+                self.assertEqual(len(out["Failed"]), 1, out)
+                self.assertEqual([c for c in calls if "uninstall" in c], [])
 
     # Marketplaces
 
@@ -347,7 +360,7 @@ class CleanSlateBase:
         self.assertEqual(self.load(".claude.json"), {
             "numStartups": 7, "projects": {"C:/dev/x": {"allowedTools": []}, "C:/dev/y": {}}})
         self.assertEqual(self.load(".claude", "claude-setup-state.json"), {
-            "repo": "C:/clone", "flags": ["-KeepFont"], "cleanSlate": "2026-11-28"})
+            "repo": "C:/clone", "flags": ["-KeepFont"], "cleanSlateSettings": "2026-11-28", "cleanSlate": "2026-11-28"})
 
     def test_a_second_run_does_nothing(self):
         paths = self.machine()
@@ -374,11 +387,17 @@ class CleanSlateBase:
         self.assertIn("claude plugin uninstall b@m --scope user", calls)
         self.assertNotIn("cleanSlate", self.load(".claude", "claude-setup-state.json"))
         self.assertEqual(os.listdir(os.path.join(self.work, ".claude", "agents")), [])   # the other pieces still ran
+        self.assertNotIn("enabledPlugins", self.load(".claude", "settings.json"))        # settings.json was still reset
+        # What is added between the two runs stays: the second run does not write settings.json fresh again.
+        with open(os.path.join(self.work, ".claude", "settings.json"), "w", encoding="utf-8") as f:
+            f.write('{"theme": "mine"}')
         out, calls = self.run_driver(mode="clean", list=listing, markets="[]", subKey=sub, **paths)
         self.assertFalse(out["Skipped"])
         self.assertEqual(out["Failures"], [])
         self.assertIn("claude plugin uninstall a@m --scope user", calls)
         self.assertEqual(self.load(".claude", "claude-setup-state.json")["cleanSlate"], "2026-11-28")
+        self.assertEqual(self.load(".claude", "settings.json"), {"theme": "mine"})
+        self.assertIn("none: settings.json was already written fresh by an earlier run", out["Lines"])
 
     def test_a_clean_pc_prints_nothing_to_reset(self):
         claude_dir = os.path.join(self.work, ".claude")
@@ -396,7 +415,8 @@ class CleanSlateBase:
         self.assertEqual(out["Failures"], [])
         nones = [l for l in out["Lines"] if l.startswith("none: ")]
         self.assertEqual(len(nones), 5, out["Lines"])
-        self.assertEqual(self.load(".claude", "claude-setup-state.json"), {"cleanSlate": "2026-11-28"})
+        self.assertEqual(self.load(".claude", "claude-setup-state.json"),
+                         {"cleanSlateSettings": "2026-11-28", "cleanSlate": "2026-11-28"})
 
 
 def _delete_value(sub):
@@ -477,14 +497,14 @@ class MainTest(unittest.TestCase):
             return f.read()
 
     def test_round_trip_keeps_unrelated_keys_and_stays_utf8(self):
-        cfg = {"claudeInChromeDefaultEnabled": False, "name": "Rotem \u2714 \u00e9", "n": 12345678901234567890, "f": 1.5,
+        cfg = {"claudeInChromeDefaultEnabled": False, "name": "Ada\u2714 \u00e9", "n": 12345678901234567890, "f": 1.5,
                "nested": {"a": [1, {"b": None}], "t": True},
                "projects": {"C:/dev/\u05d0": {"disabledMcpServers": ["x"], "history": ["\u2713"]}}}
         self.write(self.cfg, json.dumps(cfg, indent=2, ensure_ascii=False))
         self.write(self.state, json.dumps({"repo": "r", "claude.ai Adobe": []}))
         self.assertEqual(clean_slate.main([self.cfg, self.state]), 0)
         raw = self.raw(self.cfg)
-        self.assertIn("Rotem \u2714 \u00e9".encode("utf-8"), raw)   # not turned into \u escapes
+        self.assertIn("Ada\u2714 \u00e9".encode("utf-8"), raw)   # not turned into \u escapes
         want = dict(cfg)
         del want["claudeInChromeDefaultEnabled"]
         want["projects"] = {"C:/dev/\u05d0": {"history": ["\u2713"]}}
@@ -535,6 +555,29 @@ class MainTest(unittest.TestCase):
         self.write(self.cfg, '{"claudeInChromeDefaultEnabled": false, "bad": "\\ud800"}')
         self.assertEqual(clean_slate.main([self.cfg, self.state]), 0)
         self.assertEqual(json.loads(self.raw(self.cfg).decode("utf-8")), {"bad": "\ud800"})
+
+    def test_a_file_with_a_bom_is_read_and_written_back_without_one(self):
+        self.write(self.cfg, '﻿{"claudeInChromeDefaultEnabled": false, "k": 1}')
+        self.write(self.state, '﻿{"repo": "r", "claude.ai Adobe": []}')
+        self.assertEqual(clean_slate.main([self.cfg, self.state]), 0)
+        self.assertEqual(self.raw(self.cfg)[:1], b"{")
+        self.assertEqual(json.loads(self.raw(self.cfg)), {"k": 1})
+        self.assertEqual(json.loads(self.raw(self.state)), {"repo": "r"})
+
+    def test_a_lock_taken_over_during_the_save_still_counts_as_done(self):
+        # Claude Code may take over the lock as stale while a slow save runs, and release it before ours is removed.
+        self.write(self.cfg, '{"claudeInChromeDefaultEnabled": false, "k": 1}')
+        real_save = clean_slate._save
+
+        def save_then_lose_the_lock(path, data):
+            real_save(path, data)
+            if path == self.cfg:
+                os.rmdir(self.cfg + ".lock")
+
+        clean_slate._save = save_then_lose_the_lock
+        self.addCleanup(setattr, clean_slate, "_save", real_save)
+        self.assertEqual(clean_slate.main([self.cfg, self.state]), 0)
+        self.assertEqual(json.loads(self.raw(self.cfg)), {"k": 1})
 
 
 def setattr_all(saved):

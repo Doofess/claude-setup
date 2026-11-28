@@ -11,4 +11,3 @@ ignore = [
     "RUF059",   # unused unpacked variable in a test; the unpacking documents the tuple shape
     "TRY004",   # advisor.py raises ValueError by design; TypeError would change what callers catch
 ]
-

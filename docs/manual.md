@@ -162,10 +162,12 @@ to do. In this order:
 6. `clean_slate.py` deletes `claudeInChromeDefaultEnabled` and every project's `disabledMcpServers` from `~/.claude.json`
    (read, edit, swap in under Claude Code's own lock; every other key stays), and the keys `mcp_off.py` and
    `chrome_off.py` kept in the state file.
-7. Writes `~/.claude/settings.json` fresh from the template, so every retired key is gone. Later runs merge instead.
+7. Writes `~/.claude/settings.json` fresh from the template, so every retired key is gone. This happens once, even when
+   another step failed and a later run repeats the reset. Later runs merge instead.
 
-Everything deleted is in the run's backup folder first, except the skill folders and `~/.claude/photo-edit`, which
-are not backed up (the skills are in this repo's git history).
+Everything deleted is in the run's backup folder first, except these: the skill folders, `~/.claude/photo-edit` and
+the Kotlin language server are not backed up (the skills are in this repo's git history), and the plugins can be
+installed again from their marketplaces.
 
 ### Check a machine
 

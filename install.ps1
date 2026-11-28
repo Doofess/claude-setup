@@ -903,7 +903,9 @@ function Test-StatusBar([string]$command, [string]$sample) {
 # installed is taken off the PC, and settings.json is written fresh from the template. It runs once per PC: a finished run
 # (no failure) records $cleanSlateId under "cleanSlate" in the state file, and a later run sees it and does nothing.
 # The pieces are functions with the CLI and the paths as parameters, so the tests run them against a fake `claude` and a
-# temp folder. The step-1 backup holds everything they delete.
+# temp folder. The step-1 backup holds the agents, the global CLAUDE.md, settings.json, ~/.claude.json and the state
+# file. The retired skill folders, ~/.claude/photo-edit and the Kotlin server are not backed up, and the plugins can be
+# installed again from their marketplaces.
 $cleanSlateId = '2026-11-28'
 
 function Get-StateValue([string]$statePath, [string]$name) {
@@ -929,7 +931,12 @@ function Set-StateValue([string]$statePath, [string]$name, $value) {
 function Remove-AllUserPlugins([scriptblock]$claude = { & claude @args }, $failed = $null) {
   $r = [pscustomobject]@{ Removed = @(); Elsewhere = @() }
   try {
-    $parsed = (& $claude plugin list --json 2>$null | Out-String) | ConvertFrom-Json
+    # An empty string goes through ConvertFrom-Json without an error, so a CLI that failed and printed nothing would read
+    # as "no plugins" and the reset would be recorded as done.
+    $global:LASTEXITCODE = 0
+    $text = (& $claude plugin list --json 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $text) { throw 'plugin list failed' }
+    $parsed = $text | ConvertFrom-Json
     $listed = @($parsed | ForEach-Object { $_ } | Where-Object { $_ -and $_.id })   # Windows PowerShell 5.1 returns a JSON array as one object
   } catch {
     if ($null -ne $failed) { $failed.Add('plugin list: the claude CLI printed no readable JSON') }
@@ -1106,14 +1113,20 @@ function Invoke-CleanSlate([string]$id, [string]$claudeDir, [string]$claudeJson,
     if (-not $cj.Ok) { $r.Failures.Add("clean slate: clean_slate.py failed: $($cj.Lines -join ' ')") }
   } catch { $r.Failures.Add("clean slate: clean_slate.py: $($_.Exception.Message)") }
 
-  # 7. settings.json, fresh from the template (the CLI may have rewritten it while uninstalling, so this goes last)
-  try {
-    $fresh = Merge-ClaudeSettings ([pscustomobject]@{}) $template $repoDir
-    $settingsFile = Join-Path $claudeDir 'settings.json'
-    New-Item -ItemType Directory -Force (Split-Path $settingsFile) | Out-Null
-    Write-Utf8NoBom $settingsFile (($fresh | ConvertTo-Json -Depth 20) + "`n")
-    & $line 'wrote ~/.claude/settings.json fresh from the template'
-  } catch { $r.Failures.Add("clean slate: settings.json: $($_.Exception.Message)") }
+  # 7. settings.json, fresh from the template (the CLI may have rewritten it while uninstalling, so this goes last). Once:
+  # "cleanSlateSettings" records it, so a run that repeats the reset after a failure keeps what was added since.
+  if ((Get-StateValue $statePath 'cleanSlateSettings') -eq $id) {
+    & $line 'settings.json was already written fresh by an earlier run' 'none'
+  } else {
+    try {
+      $fresh = Merge-ClaudeSettings ([pscustomobject]@{}) $template $repoDir
+      $settingsFile = Join-Path $claudeDir 'settings.json'
+      New-Item -ItemType Directory -Force (Split-Path $settingsFile) | Out-Null
+      Write-Utf8NoBom $settingsFile (($fresh | ConvertTo-Json -Depth 20) + "`n")
+      Set-StateValue $statePath 'cleanSlateSettings' $id
+      & $line 'wrote ~/.claude/settings.json fresh from the template'
+    } catch { $r.Failures.Add("clean slate: settings.json: $($_.Exception.Message)") }
+  }
 
   if ($r.Failures.Count -eq 0) { Set-StateValue $statePath 'cleanSlate' $id }
   return $r
