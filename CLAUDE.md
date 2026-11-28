@@ -10,7 +10,7 @@
 
 ## Install
 - Only from main, after merging: `pwsh -NoProfile -File install.ps1`. A worktree's install repoints `CLAUDE_CODE_PLUGIN_DIRS`.
-- `install.ps1` must parse under Windows PowerShell 5.1. Check with `powershell -NoProfile -Command "$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('<abs path>\install.ps1',[ref]$null,[ref]$e); $e.Count"`: it must print 0.
+- `install.ps1` must parse under Windows PowerShell 5.1. The tests check it under both engines (`ParseTest_powershell` and `ParseTest_pwsh` in `tests/test_install.py`).
 - The first run on a PC does the one-time clean-slate reset (`cleanSlate` key in `~/.claude/claude-setup-state.json`); `-Check` never changes anything.
 
 ## Flow
